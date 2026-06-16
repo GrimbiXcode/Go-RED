@@ -1,8 +1,8 @@
-name: Web UI Build
+name: Web UI Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'web/**'
       - '.github/workflows/**'
@@ -13,8 +13,8 @@ on:
       - '.github/workflows/**'
 
 jobs:
-  build:
-    name: Build
+  test:
+    name: Run Tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -39,16 +39,5 @@ jobs:
       - name: Run ESLint
         run: npm run lint || echo "ESLint found issues but continuing"
 
-      - name: Run tests
-        run: npm test || echo "Tests failed but continuing"
-
-      - name: Build for production
-        run: npm run build
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: web-build
-          path: dist/
-          retention-days: 7
+      - name: Run unit tests
+        run: npm test
