@@ -3,8 +3,14 @@ name: Web UI Security Scan
 on:
   push:
     branches: [main, develop]
+    paths:
+      - 'web/**'
+      - '.github/workflows/**'
   pull_request:
     branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/**'
   schedule:
     - cron: '0 0 * * *'
 
