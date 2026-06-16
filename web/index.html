@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go—RED</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eaeaea; height: 100vh; display: flex; flex-direction: column; }
+        header { background: #16213e; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #0f3460; }
+        .logo { font-size: 1.5rem; font-weight: bold; color: #e94560; }
+        .status { display: flex; align-items: center; gap: 0.5rem; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #e94560; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        main { flex: 1; display: flex; overflow: hidden; }
+        .sidebar { width: 250px; background: #16213e; padding: 1rem; border-right: 1px solid #0f3460; overflow-y: auto; }
+        .sidebar h2 { font-size: 1rem; margin-bottom: 1rem; color: #0f3460; text-transform: uppercase; letter-spacing: 1px; }
+        .node-palette { display: flex; flex-direction: column; gap: 0.5rem; }
+        .node-category { font-size: 0.875rem; color: #0f3460; margin-top: 1rem; margin-bottom: 0.5rem; text-transform: uppercase; }
+        .node-item { padding: 0.5rem; background: #1a1a2e; border-radius: 4px; cursor: grab; display: flex; align-items: center; gap: 0.5rem; transition: background 0.2s; }
+        .node-item:hover { background: #0f3460; }
+        .node-item .icon { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; color: #e94560; }
+        .node-item .label { font-size: 0.875rem; }
+        .canvas-container { flex: 1; background: #0a0a1a; position: relative; overflow: hidden; }
+        .canvas { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+        .properties-panel { width: 300px; background: #16213e; padding: 1rem; border-left: 1px solid #0f3460; overflow-y: auto; }
+        .properties-panel h2 { font-size: 1rem; margin-bottom: 1rem; color: #0f3460; text-transform: uppercase; letter-spacing: 1px; }
+        .property-group { margin-bottom: 1.5rem; }
+        .property-group h3 { font-size: 0.875rem; color: #eaeaea; margin-bottom: 0.5rem; }
+        .property { margin-bottom: 1rem; }
+        .property label { display: block; font-size: 0.75rem; color: #0f3460; margin-bottom: 0.25rem; }
+        .property input, .property select, .property textarea { width: 100%; padding: 0.5rem; background: #1a1a2e; border: 1px solid #0f3460; border-radius: 4px; color: #eaeaea; font-family: inherit; font-size: 0.875rem; }
+        .property input:focus, .property select:focus, .property textarea:focus { outline: none; border-color: #e94560; }
+        .property textarea { min-height: 100px; resize: vertical; }
+        .toolbar { background: #16213e; padding: 0.5rem 1rem; border-top: 1px solid #0f3460; display: flex; justify-content: space-between; align-items: center; }
+        .toolbar button { padding: 0.5rem 1rem; background: #e94560; color: white; border: none; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 0.875rem; transition: background 0.2s; }
+        .toolbar button:hover { background: #c81e45; }
+        .toolbar button:disabled { background: #0f3460; cursor: not-allowed; }
+        .empty-state { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #0f3460; }
+        .empty-state h3 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+        .empty-state p { font-size: 1rem; }
+        .debug-console { margin-top: 1rem; background: #0a0a1a; border-radius: 4px; padding: 1rem; max-height: 300px; overflow-y: auto; }
+        .debug-console h3 { font-size: 0.875rem; color: #0f3460; margin-bottom: 0.5rem; text-transform: uppercase; }
+        .debug-message { font-family: monospace; font-size: 0.75rem; padding: 0.25rem; border-bottom: 1px solid #1a1a2e; white-space: pre-wrap; word-break: break-all; }
+        .debug-message.info { color: #2196F3; }
+        .debug-message.error { color: #e94560; }
+        .debug-message.warn { color: #FF9800; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">Go—RED</div>
+        <div class="status">
+            <div class="status-dot"></div>
+            <span>Running</span>
+        </div>
+    </header>
+    
+    <main>
+        <aside class="sidebar">
+            <h2>Nodes</h2>
+            <div class="node-palette">
+                <div class="node-category">Input</div>
+                <div class="node-item" draggable="true" data-node-type="inject">
+                    <div class="icon">+</div>
+                    <div class="label">Inject</div>
+                </div>
+                
+                <div class="node-category">Function</div>
+                <div class="node-item" draggable="true" data-node-type="function">
+                    <div class="icon">⚡</div>
+                    <div class="label">Function</div>
+                </div>
+                
+                <div class="node-category">Output</div>
+                <div class="node-item" draggable="true" data-node-type="debug">
+                    <div class="icon">🐞</div>
+                    <div class="label">Debug</div>
+                </div>
+            </div>
+        </aside>
+        
+        <div class="canvas-container">
+            <div class="canvas">
+                <div class="empty-state">
+                    <h3>Welcome to Go—RED</h3>
+                    <p>Drag nodes from the palette to start building your flow</p>
+                </div>
+            </div>
+        </div>
+        
+        <aside class="properties-panel">
+            <h2>Properties</h2>
+            <div class="property-group">
+                <h3>Node Configuration</h3>
+                <p style="color: #0f3460; font-size: 0.875rem;">
+                    Select a node to view and edit its properties
+                </p>
+            </div>
+            
+            <div class="debug-console">
+                <h3>Debug Console</h3>
+                <div id="debug-output"></div>
+            </div>
+        </aside>
+    </main>
+    
+    <div class="toolbar">
+        <div>
+            <button onclick="deployFlow()">Deploy</button>
+            <button onclick="saveFlow()">Save</button>
+        </div>
+        <div>
+            <button onclick="clearConsole()">Clear Console</button>
+        </div>
+    </div>
+    
+    <script>
+        let debugOutput = document.getElementById('debug-output');
+        
+        function addDebugMessage(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = 'debug-message ' + type;
+            div.textContent = '[' + new Date().toLocaleTimeString() + '] ' + message;
+            debugOutput.appendChild(div);
+            debugOutput.scrollTop = debugOutput.scrollHeight;
+        }
+        
+        function clearConsole() {
+            debugOutput.innerHTML = '';
+            addDebugMessage('Console cleared', 'info');
+        }
+        
+        function deployFlow() {
+            addDebugMessage('Deploying flow...', 'info');
+        }
+        
+        function saveFlow() {
+            addDebugMessage('Saving flow...', 'info');
+        }
+        
+        window.addEventListener('load', function() {
+            addDebugMessage('Go—RED initialized', 'info');
+            addDebugMessage('Flow engine started', 'info');
+        });
+        
+        let draggedNodeType = null;
+        document.querySelectorAll('.node-item').forEach(function(item) {
+            item.addEventListener('dragstart', function(e) {
+                draggedNodeType = e.target.dataset.nodeType;
+                e.dataTransfer.setData('text/plain', draggedNodeType);
+            });
+        });
+        
+        document.querySelector('.canvas').addEventListener('dragover', function(e) {
+            e.preventDefault();
+        });
+        
+        document.querySelector('.canvas').addEventListener('drop', function(e) {
+            e.preventDefault();
+            const nodeType = e.dataTransfer.getData('text/plain');
+            addDebugMessage('Node added: ' + nodeType, 'info');
+        });
+    </script>
+</body>
+</html>
