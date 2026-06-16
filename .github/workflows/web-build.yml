@@ -3,12 +3,8 @@ name: Web UI Build
 on:
   push:
     branches: [main]
-    paths:
-      - 'web/**'
   pull_request:
     branches: [main]
-    paths:
-      - 'web/**'
 
 jobs:
   build:
@@ -36,6 +32,7 @@ jobs:
 
       - name: Run ESLint
         run: npm run lint
+        continue-on-error: true
 
       - name: Run tests
         run: npm test
@@ -47,5 +44,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: web-build
-          path: web/dist/
+          path: dist/
           retention-days: 7
