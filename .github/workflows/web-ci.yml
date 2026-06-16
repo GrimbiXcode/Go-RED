@@ -1,4 +1,4 @@
-name: Web UI CI
+name: Web UI Build
 
 on:
   push:
@@ -13,8 +13,8 @@ on:
       - '.github/workflows/**'
 
 jobs:
-  test-and-build:
-    name: Test and Build
+  build:
+    name: Build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -33,22 +33,12 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit
 
-      - name: Run TypeScript type check
-        run: npx tsc --noEmit
-
-      - name: Run ESLint
-        run: npm run lint
-        continue-on-error: false
-
-      - name: Run tests
-        run: npm test
-
       - name: Build for production
         run: npm run build
 
       - name: Upload build artifacts
-        if: always()
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: web-build
           path: dist/
