@@ -118,10 +118,40 @@ export interface StatsResponse {
   averageProcessingTime: number;
 }
 
-type Flow = import('./flow').Flow;
-type FlowNode = import('./flow').FlowNode;
-type NodeConnection = import('./flow').NodeConnection;
-type FlowConfig = import('./flow').FlowConfig;
-type FlowStatus = import('./flow').FlowStatus;
-type NodeMetadata = import('./node').NodeMetadata;
-type MessageLogEntry = import('./message').MessageLogEntry;
+export interface PluginLoadRequest {
+  pluginId: string;
+}
+
+export interface DeployRequest {
+  flowId: string;
+  force?: boolean;
+}
+
+export interface UndeployRequest {
+  flowId: string;
+}
+
+export interface UndeployResponse {
+  flowId: string;
+  status: string;
+  message?: string;
+  errors?: string[];
+}
+
+export interface MessageLogRequest {
+  flowId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface FlowExportRequest {
+  flowId: string;
+}
+
+export interface FlowImportRequest {
+  flow: Flow;
+}
+
+export type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus } from './flow';
+export type { NodeMetadata } from './node';
+export type { MessageLogEntry, WebSocketMessageType } from './message';

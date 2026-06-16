@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import type { Flow, FlowSummary } from '../types/flow';
+import type { Flow } from '../types/flow';
+import type { FlowSummary } from '../types/api';
 
 interface ToolbarProps {
   flows: FlowSummary[];

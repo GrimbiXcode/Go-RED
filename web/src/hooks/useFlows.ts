@@ -15,8 +15,10 @@ import {
   generateId,
 } from '../utils/api';
 
+import type { FlowSummary } from '../types/api';
+
 export interface FlowState {
-  flows: Flow[];
+  flows: FlowSummary[];
   loading: boolean;
   error: Error | null;
   selectedFlowId: string | null;
