@@ -1,4 +1,4 @@
-name: Web UI Build
+name: Web UI Build and Test
 
 on:
   push:
@@ -14,7 +14,7 @@ on:
 
 jobs:
   build:
-    name: Build Web UI
+    name: Build and Test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,14 +31,14 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-audit
 
       - name: Run TypeScript type check
-        run: npm run typecheck
+        run: npx tsc --noEmit
 
       - name: Run ESLint
         run: npm run lint
-        continue-on-error: true
+        continue-on-error: false
 
       - name: Run tests
         run: npm test
@@ -48,6 +48,7 @@ jobs:
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: web-build
           path: dist/
