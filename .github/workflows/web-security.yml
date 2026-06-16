@@ -3,12 +3,8 @@ name: Web UI Security Scan
 on:
   push:
     branches: [main, develop]
-    paths:
-      - 'web/**'
   pull_request:
     branches: [main]
-    paths:
-      - 'web/**'
   schedule:
     - cron: '0 0 * * *'
 
@@ -41,7 +37,7 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
-          scan-ref: web
+          scan-ref: .
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
