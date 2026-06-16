@@ -3,8 +3,14 @@ name: Web UI Tests
 on:
   push:
     branches: [main, develop]
+    paths:
+      - 'web/**'
+      - '.github/workflows/**'
   pull_request:
     branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/**'
 
 jobs:
   test:
