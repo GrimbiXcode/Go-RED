@@ -54,20 +54,20 @@ func NewInjectNode() *InjectNode {
 }
 
 // Execute processes the input message and returns output.
-func (n *InjectNode) Execute(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+func (n *InjectNode) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
 	if input != nil {
 		n.lastPayload = input
 	}
 	
 	if n.config.Interval > 0 {
-		go n.startIntervalInjection(ctx)
+		go n.startIntervalInjection(ctx.(context.Context))
 	}
 	
 	if n.config.InjectOnce {
-		return n.injectPayload(ctx)
+		return n.injectPayload(ctx.(context.Context))
 	}
 	
-	return n.injectPayload(ctx)
+	return n.injectPayload(ctx.(context.Context))
 }
 
 func (n *InjectNode) startIntervalInjection(ctx context.Context) {
@@ -166,7 +166,7 @@ func init() {
 				"injectOnce": {Type: "boolean", Description: "Inject only once at startup", Default: false},
 			},
 		},
-		Icon: "<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#4CAF50"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>",
+		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#4CAF50"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>`,
 		Tags: []string{"input", "inject", "trigger"},
 	})
 	if err != nil {

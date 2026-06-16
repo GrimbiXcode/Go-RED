@@ -2,11 +2,10 @@
 package function
 
 import (
-	"context"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/dop251/goja"
@@ -36,7 +35,7 @@ func NewFunctionNode() *FunctionNode {
 	}
 }
 
-func (n *FunctionNode) Execute(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+func (n *FunctionNode) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	
@@ -44,24 +43,21 @@ func (n *FunctionNode) Execute(ctx context.Context, input map[string]interface{}
 		return nil, errors.New("JavaScript compilation error: " + n.errorMessage)
 	}
 	
-	vm := goja.New()
-	n.setupSafeGlobals(vm)
-	
 	if n.config.UseMsg {
-		msgObj := vm.NewObject()
-		setObjectProperty(vm, msgObj, "payload", input["payload"])
-		setObjectProperty(vm, msgObj, "topic", input["topic"])
+		msgObj := n.vm.NewObject()
+		setObjectProperty(n.vm, msgObj, "payload", input["payload"])
+		setObjectProperty(n.vm, msgObj, "topic", input["topic"])
 		for k, v := range input {
 			if k != "payload" && k != "topic" {
-				setObjectProperty(vm, msgObj, k, v)
+				setObjectProperty(n.vm, msgObj, k, v)
 			}
 		}
-		vm.Set("msg", msgObj)
+		n.vm.Set("msg", msgObj)
 	} else {
-		vm.Set("input", input)
+		n.vm.Set("input", input)
 	}
 	
-	val, err := n.compiledFunc(nil, vm.GlobalObject())
+	val, err := n.compiledFunc(n.vm.GlobalObject(), n.vm.ToValue(input))
 	if err != nil {
 		return nil, errors.New("JavaScript execution error: " + err.Error())
 	}
@@ -80,7 +76,7 @@ func (n *FunctionNode) Execute(ctx context.Context, input map[string]interface{}
 
 func (n *FunctionNode) compileCode() error {
 	n.vm = goja.New()
-	n.setupSafeGlobals()
+	n.setupSafeGlobals(n.vm)
 	
 	fullCode := "function process() {" + n.config.Code + "}"
 	program, err := goja.Compile("", fullCode, false)
@@ -104,38 +100,44 @@ func (n *FunctionNode) compileCode() error {
 		return errors.New("process function not found in JavaScript code")
 	}
 	
-	n.compiledFunc = processFunc.(goja.Callable)
+	if callable, ok := goja.AssertFunction(processFunc); ok {
+		n.compiledFunc = callable
+	} else {
+		n.hasError = true
+		n.errorMessage = "process is not a function"
+		return errors.New("process is not a function")
+	}
 	n.hasError = false
 	n.errorMessage = ""
 	return nil
 }
 
-func (n *FunctionNode) setupSafeGlobals() {
-	math := n.vm.NewObject()
-	math.Set("abs", n.vm.ToValue(func(x float64) float64 { return abs(x) }))
-	math.Set("ceil", n.vm.ToValue(func(x float64) float64 { return ceil(x) }))
-	math.Set("floor", n.vm.ToValue(func(x float64) float64 { return floor(x) }))
-	math.Set("round", n.vm.ToValue(func(x float64) float64 { return round(x) }))
-	math.Set("max", n.vm.ToValue(func(args ...float64) float64 {
+func (n *FunctionNode) setupSafeGlobals(vm *goja.Runtime) {
+	math := vm.NewObject()
+	math.Set("abs", vm.ToValue(func(x float64) float64 { return abs(x) }))
+	math.Set("ceil", vm.ToValue(func(x float64) float64 { return ceil(x) }))
+	math.Set("floor", vm.ToValue(func(x float64) float64 { return floor(x) }))
+	math.Set("round", vm.ToValue(func(x float64) float64 { return round(x) }))
+	math.Set("max", vm.ToValue(func(args ...float64) float64 {
 		max := args[0]
 		for _, v := range args[1:] {
 			if v > max { max = v }
 		}
 		return max
 	}))
-	math.Set("min", n.vm.ToValue(func(args ...float64) float64 {
+	math.Set("min", vm.ToValue(func(args ...float64) float64 {
 		min := args[0]
 		for _, v := range args[1:] {
 			if v < min { min = v }
 		}
 		return min
 	}))
-	n.vm.Set("Math", math)
+	vm.Set("Math", math)
 	
-	console := n.vm.NewObject()
-	console.Set("log", n.vm.ToValue(func(args ...interface{}) { log.Println(args...) }))
-	console.Set("error", n.vm.ToValue(func(args ...interface{}) { log.Println("ERROR:", args...) }))
-	n.vm.Set("console", console)
+	console := vm.NewObject()
+	console.Set("log", vm.ToValue(func(args ...interface{}) { log.Println(fmt.Sprint(args...)) }))
+	console.Set("error", vm.ToValue(func(args ...interface{}) { log.Println("ERROR: " + fmt.Sprint(args...)) }))
+	vm.Set("console", console)
 }
 
 func abs(x float64) float64 { if x < 0 { return -x }; return x }
@@ -215,7 +217,7 @@ func init() {
 			},
 			Required: []string{"code"},
 		},
-		Icon: "<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#2196F3"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>",
+		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#2196F3"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>`,
 		Tags: []string{"function", "javascript", "script", "process"},
 	})
 	if err != nil { panic(err) }

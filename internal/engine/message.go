@@ -94,28 +94,4 @@ func (m *Message) Clone() Message {
 	}
 }
 
-// cloneMap creates a deep copy of a map[string]interface{}.
-func cloneMap(m map[string]interface{}) map[string]interface{} {
-	if m == nil {
-		return nil
-	}
-	
-	clone := make(map[string]interface{}, len(m))
-	for k, v := range m {
-		clone[k] = v // Note: This is a shallow copy for values
-	}
-	return clone
-}
 
-// cloneStringMap creates a deep copy of a map[string]string.
-func cloneStringMap(m map[string]string) map[string]string {
-	if m == nil {
-		return nil
-	}
-	
-	clone := make(map[string]string, len(m))
-	for k, v := range m {
-		clone[k] = v
-	}
-	return clone
-}

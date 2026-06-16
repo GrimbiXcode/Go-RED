@@ -3,6 +3,8 @@ package engine
 import (
 	"errors"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // FlowStatus represents the current status of a flow.

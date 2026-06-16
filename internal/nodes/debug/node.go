@@ -2,7 +2,6 @@
 package debug
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -45,7 +44,7 @@ func NewDebugNode() *DebugNode {
 	}
 }
 
-func (n *DebugNode) Execute(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+func (n *DebugNode) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
 	if !n.config.Enabled {
 		return input, nil
 	}
@@ -169,7 +168,7 @@ func init() {
 				"showPath": {Type: "boolean", Description: "Show message path in debug output", Default: true},
 			},
 		},
-		Icon: "<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#FF5722"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>",
+		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#FF5722"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>`,
 		Tags: []string{"output", "debug", "log"},
 	})
 	if err != nil {
