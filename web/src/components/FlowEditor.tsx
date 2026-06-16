@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useFlowContext } from './FlowProvider';
 import { FlowCanvas } from './FlowCanvas';
 import { NodePalette } from './NodePalette';
