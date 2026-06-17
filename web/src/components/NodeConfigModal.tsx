@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import type { FlowNode } from '../types/flow';
 import type { NodeMetadata } from '../types/node';
 
@@ -11,7 +11,6 @@ interface NodeConfigModalProps {
 
 export function NodeConfigModal({ node, nodeTypes, onClose, onSave }: NodeConfigModalProps) {
   const [config, setConfig] = useState<Record<string, any>>({ ...node.config });
-  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const nodeMetadata = nodeTypes.find((nt) => nt.type === node.type);
 
@@ -28,7 +27,6 @@ export function NodeConfigModal({ node, nodeTypes, onClose, onSave }: NodeConfig
   }, [config, onSave]);
 
   const renderInputField = (key: string, schema: any, value: any) => {
-    const error = errors[key];
     switch (schema.type) {
       case 'string':
         return (
@@ -40,10 +38,9 @@ export function NodeConfigModal({ node, nodeTypes, onClose, onSave }: NodeConfig
               type="text"
               value={value || ''}
               onChange={(e) => handleInputChange(key, e.target.value)}
-              className={`w-full p-2 border rounded text-sm ${error ? 'border-red-500' : 'border-gray-300'}`}
+              className="w-full p-2 border rounded text-sm border-gray-300"
               placeholder={schema.default || ''}
             />
-            {error && <div className="text-xs text-red-500 mt-1">{error}</div>}
           </div>
         );
       case 'number':
@@ -57,12 +54,11 @@ export function NodeConfigModal({ node, nodeTypes, onClose, onSave }: NodeConfig
               type="number"
               value={value || ''}
               onChange={(e) => handleInputChange(key, schema.type === 'integer' ? parseInt(e.target.value) || 0 : parseFloat(e.target.value) || 0)}
-              className={`w-full p-2 border rounded text-sm ${error ? 'border-red-500' : 'border-gray-300'}`}
+              className="w-full p-2 border rounded text-sm border-gray-300"
               min={schema.min}
               max={schema.max}
               placeholder={schema.default || ''}
             />
-            {error && <div className="text-xs text-red-500 mt-1">{error}</div>}
           </div>
         );
       case 'boolean':
@@ -94,11 +90,10 @@ export function NodeConfigModal({ node, nodeTypes, onClose, onSave }: NodeConfig
                   handleInputChange(key, e.target.value);
                 }
               }}
-              className={`w-full p-2 border rounded text-sm font-mono ${error ? 'border-red-500' : 'border-gray-300'}`}
+              className="w-full p-2 border rounded text-sm font-mono border-gray-300"
               rows={5}
               placeholder="Enter JSON object"
             />
-            {error && <div className="text-xs text-red-500 mt-1">{error}</div>}
           </div>
         );
       case 'array':
@@ -116,11 +111,10 @@ export function NodeConfigModal({ node, nodeTypes, onClose, onSave }: NodeConfig
                   handleInputChange(key, e.target.value);
                 }
               }}
-              className={`w-full p-2 border rounded text-sm font-mono ${error ? 'border-red-500' : 'border-gray-300'}`}
+              className="w-full p-2 border rounded text-sm font-mono border-gray-300"
               rows={3}
               placeholder="Enter JSON array"
             />
-            {error && <div className="text-xs text-red-500 mt-1">{error}</div>}
           </div>
         );
       default:
@@ -133,16 +127,14 @@ export function NodeConfigModal({ node, nodeTypes, onClose, onSave }: NodeConfig
               type="text"
               value={value || ''}
               onChange={(e) => handleInputChange(key, e.target.value)}
-              className={`w-full p-2 border rounded text-sm ${error ? 'border-red-500' : 'border-gray-300'}`}
+              className="w-full p-2 border rounded text-sm border-gray-300"
             />
-            {error && <div className="text-xs text-red-500 mt-1">{error}</div>}
           </div>
         );
     }
   };
 
   const renderEnumSelector = (key: string, schema: any, value: any) => {
-    const error = errors[key];
     return (
       <div>
         <label className="block text-sm font-medium text-gray-600 mb-1">
@@ -151,7 +143,7 @@ export function NodeConfigModal({ node, nodeTypes, onClose, onSave }: NodeConfig
         <select
           value={value || ''}
           onChange={(e) => handleInputChange(key, e.target.value)}
-          className={`w-full p-2 border rounded text-sm ${error ? 'border-red-500' : 'border-gray-300'}`}
+          className="w-full p-2 border rounded text-sm border-gray-300"
         >
           {schema.enum?.map((option: any) => (
             <option key={option} value={option}>
@@ -159,7 +151,6 @@ export function NodeConfigModal({ node, nodeTypes, onClose, onSave }: NodeConfig
             </option>
           ))}
         </select>
-        {error && <div className="text-xs text-red-500 mt-1">{error}</div>}
       </div>
     );
   };

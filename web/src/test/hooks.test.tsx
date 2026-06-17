@@ -1,4 +1,5 @@
-import { renderHook, act } from '@testing-library/react';
+import { renderHook } from '@testing-library/react';
+import { vi } from 'vitest';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useFlows } from '../hooks/useFlows';
 

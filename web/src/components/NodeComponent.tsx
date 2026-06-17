@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { Handle, Position, NodeProps } from 'reactflow';
 import type { FlowNode } from '../types/flow';
 

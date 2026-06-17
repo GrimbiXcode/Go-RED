@@ -12,20 +12,12 @@ import type {
   NodeMetadata,
   PluginListResponse,
   PluginInfo,
-  PluginLoadRequest,
   DeployRequest,
   DeployResponse,
   UndeployRequest,
-  UndeployResponse,
-  MessageLogRequest,
-  MessageLogResponse,
-  HealthCheckResponse,
-  StatsResponse,
-  FlowExportRequest,
-  FlowImportRequest,
 } from '../types/api';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 async function apiRequest<T, U = undefined>(
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH',
@@ -64,7 +56,10 @@ export const fetchFlows = async (): Promise<FlowSummary[]> => {
 
 export const fetchFlow = async (flowId: string): Promise<Flow> => {
   const response = await apiRequest<FlowDetailResponse>('GET', `/flows/${flowId}`);
-  return response.data?.flow;
+  if (!response.data?.flow) {
+    throw new Error('Flow not found in response');
+  }
+  return response.data.flow;
 };
 
 export const createFlow = async (flowData: FlowCreateRequest): Promise<Flow> => {
@@ -73,7 +68,10 @@ export const createFlow = async (flowData: FlowCreateRequest): Promise<Flow> => 
     '/flows',
     flowData
   );
-  return response.data?.flow;
+  if (!response.data?.flow) {
+    throw new Error('Flow not found in response');
+  }
+  return response.data.flow;
 };
 
 export const updateFlow = async (
@@ -85,7 +83,10 @@ export const updateFlow = async (
     `/flows/${flowId}`,
     flowData
   );
-  return response.data?.flow;
+  if (!response.data?.flow) {
+    throw new Error('Flow not found in response');
+  }
+  return response.data.flow;
 };
 
 export const deleteFlow = async (flowId: string): Promise<void> => {
@@ -98,6 +99,9 @@ export const deployFlow = async (flowId: string, force = false): Promise<DeployR
     `/flows/${flowId}/deploy`,
     { flowId, force }
   );
+  if (!response.data) {
+    throw new Error('No data in response');
+  }
   return response.data;
 };
 
@@ -107,6 +111,9 @@ export const undeployFlow = async (flowId: string): Promise<DeployResponse> => {
     `/flows/${flowId}/undeploy`,
     { flowId }
   );
+  if (!response.data) {
+    throw new Error('No data in response');
+  }
   return response.data;
 };
 
@@ -117,7 +124,10 @@ export const getNodes = async (): Promise<NodeMetadata[]> => {
 
 export const getNode = async (nodeType: string): Promise<NodeMetadata> => {
   const response = await apiRequest<NodeDetailResponse>('GET', `/nodes/${nodeType}`);
-  return response.data?.metadata;
+  if (!response.data?.metadata) {
+    throw new Error('Node metadata not found in response');
+  }
+  return response.data.metadata;
 };
 
 export const getPlugins = async (): Promise<PluginInfo[]> => {

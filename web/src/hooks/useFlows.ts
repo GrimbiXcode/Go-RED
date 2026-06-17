@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Flow, FlowNode, NodeConnection, FlowStatus, FlowConfig } from '../types/flow';
 import type { NodeMetadata } from '../types/node';
-import type { WebSocketMessageType } from '../types/message';
 import { useWebSocket } from './useWebSocket';
 import {
   fetchFlows,
@@ -111,9 +110,6 @@ export function useFlows(): UseFlowsReturn {
     setState((prev) => ({
       ...prev,
       selectedFlow: updatedFlow,
-      flows: prev.flows.map((flow) =>
-        flow.id === updatedFlow.id ? updatedFlow : flow
-      ),
     }));
   }, [state.selectedFlowId]);
   const deleteCurrentFlow = useCallback(async () => {
@@ -164,14 +160,18 @@ export function useFlows(): UseFlowsReturn {
       ),
     }));
   }, [state.selectedFlowId, state.flows]);
-  const selectFlow = useCallback((flowId: string) => {
-    const flow = state.flows.find((f) => f.id === flowId);
-    setState((prev) => ({
-      ...prev,
-      selectedFlowId: flowId,
-      selectedFlow: flow || null,
-    }));
-  }, [state.flows]);
+  const selectFlow = useCallback(async (flowId: string) => {
+    try {
+      const flow = await fetchFlow(flowId);
+      setState((prev) => ({
+        ...prev,
+        selectedFlowId: flowId,
+        selectedFlow: flow,
+      }));
+    } catch (error) {
+      console.error('Failed to load flow:', error);
+    }
+  }, []);
   const deselectFlow = useCallback(() => {
     setState((prev) => ({
       ...prev,
@@ -338,7 +338,7 @@ export function useFlows(): UseFlowsReturn {
           flows: prev.flows.map((flow) =>
             flow.id === data.flowId ? { ...flow, status: data.status } : flow
           ),
-          selectedFlow: prev.selectedFlow?.id === data.flowId
+          selectedFlow: prev.selectedFlow?.id === data.flowId && prev.selectedFlow
             ? { ...prev.selectedFlow, status: data.status }
             : prev.selectedFlow,
         }));
@@ -348,7 +348,7 @@ export function useFlows(): UseFlowsReturn {
       if (data.nodeId && data.flowId) {
         setState((prev) => ({
           ...prev,
-          selectedFlow: prev.selectedFlow?.id === data.flowId
+          selectedFlow: prev.selectedFlow?.id === data.flowId && prev.selectedFlow
             ? {
                 ...prev.selectedFlow,
                 nodes: {

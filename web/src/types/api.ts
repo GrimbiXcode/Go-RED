@@ -1,4 +1,9 @@
 // API response types for Go-RED REST API
+import type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus } from './flow';
+import type { NodeMetadata } from './node';
+import type { MessageLogEntry, WebSocketMessageType } from './message';
+
+export type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus, NodeMetadata, MessageLogEntry, WebSocketMessageType };
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -151,7 +156,3 @@ export interface FlowExportRequest {
 export interface FlowImportRequest {
   flow: Flow;
 }
-
-export type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus } from './flow';
-export type { NodeMetadata } from './node';
-export type { MessageLogEntry, WebSocketMessageType } from './message';

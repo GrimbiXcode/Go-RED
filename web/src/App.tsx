@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { FlowEditor } from './components/FlowEditor';
 import { FlowProvider } from './components/FlowProvider';
 

@@ -4,7 +4,6 @@ import type { NodeMetadata, NodeCategory } from '../types/node';
 interface NodePaletteProps {
   nodeTypes: NodeMetadata[];
   loading: boolean;
-  onAddNode: (nodeType: string, position: { x: number; y: number }) => void;
 }
 
 const categoryIcons: Record<NodeCategory, string> = {
@@ -130,7 +129,7 @@ function CategorySection({
   );
 }
 
-export function NodePalette({ nodeTypes, loading, onAddNode }: NodePaletteProps) {
+export function NodePalette({ nodeTypes, loading }: NodePaletteProps) {
   const [expandedCategories, setExpandedCategories] = useState<Set<NodeCategory>>(new Set());
   const groupedNodes = groupByCategory(nodeTypes);
   const categories = getCategories(nodeTypes);

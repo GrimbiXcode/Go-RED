@@ -5,8 +5,6 @@ import ReactFlow, {
   Controls,
   Edge,
   Node,
-  NodeChange,
-  EdgeChange,
   Connection,
   useNodesState,
   useEdgesState,

@@ -1,13 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
-  fetchFlows,
-  fetchFlow,
-  createFlow,
-  updateFlow,
-  deleteFlow,
-  deployFlow,
-  undeployFlow,
-  getNodes,
   getWebSocketUrl,
   generateId,
   sleep,
@@ -15,7 +7,7 @@ import {
 
 describe('API utility functions', () => {
   beforeEach(() => {
-    global.fetch = vi.fn();
+    vi.fn();
   });
 
   describe('generateId', () => {
@@ -39,13 +31,19 @@ describe('API utility functions', () => {
 
   describe('getWebSocketUrl', () => {
     it('should return wss URL for https', () => {
-      global.window = { location: { protocol: 'https:', host: 'example.com' } } as any;
+      Object.defineProperty(globalThis, 'window', {
+        value: { location: { protocol: 'https:', host: 'example.com' } },
+        writable: true,
+      });
       const url = getWebSocketUrl();
       expect(url).toBe('wss://example.com/ws');
     });
 
     it('should return ws URL for http', () => {
-      global.window = { location: { protocol: 'http:', host: 'localhost:3000' } } as any;
+      Object.defineProperty(globalThis, 'window', {
+        value: { location: { protocol: 'http:', host: 'localhost:3000' } },
+        writable: true,
+      });
       const url = getWebSocketUrl();
       expect(url).toBe('ws://localhost:3000/ws');
     });

@@ -40,6 +40,7 @@ export interface WebSocketMessage {
 }
 
 export type WebSocketMessageType = 
+  | '*'
   | 'flow:list'
   | 'flow:get'
   | 'flow:create'

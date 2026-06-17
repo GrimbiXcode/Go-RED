@@ -25,7 +25,7 @@ export interface WebSocketHook {
   close: () => void;
 }
 
-export function useWebSocket(flowId?: string): WebSocketHook {
+export function useWebSocket(): WebSocketHook {
   const [state, setState] = useState<WebSocketState>({
     connected: false,
     connecting: true,

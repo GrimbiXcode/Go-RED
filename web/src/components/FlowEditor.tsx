@@ -99,7 +99,6 @@ export function FlowEditor() {
         <NodePalette
           nodeTypes={nodeTypes}
           loading={nodeTypesLoading}
-          onAddNode={addNode}
         />
       </div>
 
