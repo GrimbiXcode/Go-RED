@@ -7,6 +7,7 @@ GOBUILD=$(GOCMD) build
 GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
+GOPATH=$(HOME)/go
 
 # Binary name
 BINARY_NAME=go-red
@@ -60,10 +61,25 @@ build-web:
 # Build everything
 build-all: build build-web
 
+# Run frontend dev server
+run-frontend:
+	@echo "Starting frontend dev server..."
+	cd web && npm run dev
+
 # Run with hot reload (requires air)
 run-dev:
-	@echo "Running with hot reload..."
-	air -c .air.toml
+	@echo "Starting both frontend and backend dev servers..."
+	@echo "To see frontend logs: tail -f /tmp/frontend.log"
+	@echo "To stop: make stop-dev"
+	cd web && npm run dev > /tmp/frontend.log 2>&1 & \
+	$(GOPATH)/bin/air -c .air.toml
+
+# Stop both dev servers
+stop-dev:
+	@echo "Stopping frontend and backend dev servers..."
+	@pkill -f 'npm run dev' || true
+	@pkill -f 'air' || true
+	@echo "Dev servers stopped"
 
 # Build Docker image
 docker-build:
@@ -83,10 +99,13 @@ docker-clean:
 
 help:
 	@echo "Available commands:"
-	@echo "  make all       - Build the application"
-	@echo "  make run       - Run the application"
-	@echo "  make test      - Run tests"
-	@echo "  make clean     - Clean build artifacts"
-	@echo "  make deps      - Download dependencies"
-	@echo "  make fmt       - Format code"
-	@echo "  make build-web - Build WebUI"
+	@echo "  make all          - Build the application"
+	@echo "  make run          - Run the application"
+	@echo "  make run-dev      - Run both backend and frontend dev servers"
+	@echo "  make run-frontend - Run only frontend dev server"
+	@echo "  make stop-dev     - Stop both backend and frontend dev servers"
+	@echo "  make test         - Run tests"
+	@echo "  make clean        - Clean build artifacts"
+	@echo "  make deps         - Download dependencies"
+	@echo "  make fmt          - Format code"
+	@echo "  make build-web    - Build WebUI"
