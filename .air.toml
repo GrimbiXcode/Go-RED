@@ -1,0 +1,48 @@
+# Go—RED Air Configuration for Hot Reload
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  # Command to build the application
+  cmd = "go build -o tmp/go-red -v ./cmd/go-red"
+  
+  # Binary file name
+  bin = "tmp/go-red"
+  
+  # Full binary path (used for watching)
+  full_bin = "tmp/go-red"
+  
+  # Working directory
+  include_dir = []
+  
+  # Files/directories to exclude from watching
+  exclude_dir = ["tmp", "vendor", "node_modules", "web/node_modules", ".git", "dist"]
+  
+  # File patterns to include
+  include_file = []
+  
+  # File patterns to exclude
+  exclude_file = []
+  
+  # Regex patterns to exclude
+  exclude_regex = ["_test\\.go"]
+  
+  # Regex patterns to include
+  include_regex = []
+
+[log]
+  # Log level (debug, info, warn, error, silent)
+  level = "info"
+
+[color]
+  # Enable colored output
+  app = ""
+  build = "yellow"
+  main = "cyan"
+  runner = "green"
+  watcher = "magenta"
+
+[misc]
+  # Clean up tmp directory on exit
+  cleanup_on_exit = true

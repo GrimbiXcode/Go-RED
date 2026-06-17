@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -86,7 +87,7 @@ func main() {
 	})
 	mux.Handle("/", http.FileServer(http.Dir(config.WebUIDir)))
 	
-	server := &http.Server{Addr: ":" + string(rune(config.Port)), Handler: mux}
+	server := &http.Server{Addr: ":" + strconv.Itoa(config.Port), Handler: mux}
 	
 	go func() {
 		log.Printf("Server listening on port %d", config.Port)
