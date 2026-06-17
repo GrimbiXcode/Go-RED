@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/cmd/go-red/websocket"
 	"github.com/GrimbiXcode/Go-RED/internal/engine"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/state"
@@ -62,7 +63,12 @@ func main() {
 		log.Fatalf("Failed to start flow engine: %v", err)
 	}
 	defer flowEngine.Stop()
-	
+
+	// Initialize WebSocket hub and handler
+	wsHub := websocket.NewHub()
+	wsHandler := websocket.NewWebSocketHandler(wsHub, flowEngine, nodeRegistry)
+	go wsHub.Run()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/flows", func(w http.ResponseWriter, r *http.Request) {
 		handleGetFlows(w, r, flowEngine)
@@ -72,6 +78,12 @@ func main() {
 	})
 	mux.HandleFunc("GET /api/flows/{id}", func(w http.ResponseWriter, r *http.Request) {
 		handleGetFlow(w, r, flowEngine)
+	})
+	mux.HandleFunc("PUT /api/flows/{id}", func(w http.ResponseWriter, r *http.Request) {
+		handleUpdateFlow(w, r, flowEngine)
+	})
+	mux.HandleFunc("DELETE /api/flows/{id}", func(w http.ResponseWriter, r *http.Request) {
+		handleDeleteFlow(w, r, flowEngine)
 	})
 	mux.HandleFunc("POST /api/flows/{id}/deploy", func(w http.ResponseWriter, r *http.Request) {
 		handleDeployFlow(w, r, flowEngine)
@@ -85,12 +97,16 @@ func main() {
 	mux.HandleFunc("GET /api/nodes/{type}", func(w http.ResponseWriter, r *http.Request) {
 		handleGetNode(w, r, nodeRegistry)
 	})
+	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
+		wsHandler.ServeWebSocket(w, r)
+	})
 	mux.Handle("/", http.FileServer(http.Dir(config.WebUIDir)))
-	
+
 	server := &http.Server{Addr: ":" + strconv.Itoa(config.Port), Handler: mux}
 	
 	go func() {
 		log.Printf("Server listening on port %d", config.Port)
+		log.Printf("WebSocket available at ws://localhost:%d/ws", config.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}
@@ -176,6 +192,63 @@ func handleGetFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(flow)
+}
+
+func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
+	flowID := r.PathValue("id")
+	
+	var request struct {
+		Name        string `json:"name,omitempty"`
+		Description string `json:"description,omitempty"`
+		Nodes       map[string]interface{} `json:"nodes,omitempty"`
+		Connections []interface{} `json:"connections,omitempty"`
+		Config      map[string]interface{} `json:"config,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	// Get existing flow
+	flow, err := e.GetFlow(flowID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	
+	// Update flow
+	if request.Name != "" {
+		flow.Name = request.Name
+	}
+	if request.Description != "" {
+		flow.Description = request.Description
+	}
+	
+	flow.UpdatedAt = time.Now().UTC()
+	
+	// Save the flow
+	if e.GetStateManager() != nil {
+		e.GetStateManager().SaveFlow(flow)
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(flow)
+}
+
+func handleDeleteFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
+	flowID := r.PathValue("id")
+	
+	// First undeploy the flow if it's active
+	e.Undeploy(flowID)
+	
+	// Delete from state manager
+	if e.GetStateManager() != nil {
+		e.GetStateManager().DeleteFlow(flowID)
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "deleted", "flowId": flowID})
 }
 
 func handleDeployFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {

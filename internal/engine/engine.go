@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
+	"github.com/google/uuid"
 )
 
 // EngineConfig contains configuration options for the FlowEngine.
@@ -122,6 +123,11 @@ func NewFlowEngine(config EngineConfig, registry *registry.NodeRegistry) *FlowEn
 // SetStateManager sets the state manager for the engine.
 func (e *FlowEngine) SetStateManager(sm StateManager) {
 	e.stateManager = sm
+}
+
+// GetStateManager returns the state manager for the engine.
+func (e *FlowEngine) GetStateManager() StateManager {
+	return e.stateManager
 }
 
 // Start starts the FlowEngine.
@@ -465,7 +471,11 @@ func (e *FlowEngine) InjectMessage(flowID, nodeID string, payload map[string]int
 }
 
 // CreateFlow creates a new flow with the given ID and name.
+// If id is empty, a UUID will be generated.
 func (e *FlowEngine) CreateFlow(id, name string) (*Flow, error) {
+	if id == "" {
+		id = "flow-" + uuid.New().String()
+	}
 	flow := NewFlow(id, name)
 	
 	// If state manager is set, save the flow
