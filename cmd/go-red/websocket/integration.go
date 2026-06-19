@@ -235,7 +235,9 @@ func (h *WebSocketHandler) handleFlowGet(client *Client, flowID string) {
 		})
 		return
 	}
-	h.BroadcastToClient(client, MessageTypeFlowGet, flow)
+	log.Printf("[BACKEND] handleFlowGet - Converting flow to frontend format")
+	flowResponse := convertFlowToFrontend(flow)
+	h.BroadcastToClient(client, MessageTypeFlowGet, flowResponse)
 }
 
 func (h *WebSocketHandler) handleFlowCreate(client *Client, name, description string) {
@@ -259,19 +261,8 @@ func (h *WebSocketHandler) handleFlowCreate(client *Client, name, description st
 		h.flowEngine.GetStateManager().SaveFlow(flow)
 	}
 	
-	// Convert flow to safe response format
-	flowResponse := map[string]interface{}{
-		"id":          flow.ID,
-		"name":        flow.Name,
-		"description": flow.Description,
-		"status":      string(flow.Status),
-		"nodes":       flow.Nodes,
-		"connections": flow.Connections,
-		"config":      flow.Config,
-		"createdAt":   flow.CreatedAt.Format(time.RFC3339),
-		"updatedAt":   flow.UpdatedAt.Format(time.RFC3339),
-		"version":     flow.Version,
-	}
+	// Convert flow to frontend format
+	flowResponse := convertFlowToFrontend(flow)
 	
 	// Broadcast to client
 	h.BroadcastToClient(client, MessageTypeFlowCreate, flowResponse)
@@ -355,7 +346,9 @@ func (h *WebSocketHandler) handleFlowUpdate(client *Client, flowID string, flowD
 	}
 	
 	// Broadcast updates
-	h.BroadcastToClient(client, MessageTypeFlowUpdate, flow)
+	log.Printf("[BACKEND] handleFlowUpdate - Converting flow to frontend format")
+	flowResponse := convertFlowToFrontend(flow)
+	h.BroadcastToClient(client, MessageTypeFlowUpdate, flowResponse)
 	h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlows())
 }
 
@@ -507,8 +500,11 @@ func (h *WebSocketHandler) handleNodeAdd(client *Client, nodeData struct {
 		"node": map[string]interface{}{
 			"id":       node.ID,
 			"type":     node.Type,
+			"name":     node.Name,
 			"config":   node.Config,
 			"position": map[string]float64{"x": node.X, "y": node.Y},
+			"status":   map[string]interface{}{"state": "idle"},
+			"disabled":  node.Disabled,
 		},
 	})
 }
@@ -605,8 +601,11 @@ func (h *WebSocketHandler) handleNodeUpdate(client *Client, nodeData struct {
 		"node": map[string]interface{}{
 			"id":       node.ID,
 			"type":     node.Type,
+			"name":     node.Name,
 			"config":   node.Config,
 			"position": map[string]float64{"x": node.X, "y": node.Y},
+			"status":   map[string]interface{}{"state": "idle"},
+			"disabled":  node.Disabled,
 		},
 	})
 }
@@ -745,6 +744,102 @@ func generateID() string {
 // GetHub returns the underlying hub
 func (h *WebSocketHandler) GetHub() *Hub {
 	return h.hub
+}
+
+// convertFlowToFrontend converts a Go flow to frontend-compatible format
+func convertFlowToFrontend(flow *engine.Flow) map[string]interface{} {
+	log.Printf("[BACKEND] convertFlowToFrontend - Converting flow %s with %d nodes", flow.ID, len(flow.Nodes))
+	
+	// Convert nodes
+	nodesMap := make(map[string]interface{})
+	for id, node := range flow.Nodes {
+		nodeMap := map[string]interface{}{
+			"id":       node.ID,
+			"type":     node.Type,
+			"name":     node.Name,
+			"position": map[string]float64{"x": node.X, "y": node.Y},
+			"config":   node.Config,
+			"status":   convertNodeStatus(node),
+			"disabled":  node.Disabled,
+		}
+		nodesMap[id] = nodeMap
+		log.Printf("[BACKEND] convertFlowToFrontend - Converted node %s: position=(%.1f, %.1f)", id, node.X, node.Y)
+	}
+	
+	// Convert connections
+	connectionsList := make([]interface{}, len(flow.Connections))
+	for i, conn := range flow.Connections {
+		connMap := map[string]interface{}{
+			"id":           conn.ID,
+			"sourceNode":   conn.SourceNode,
+			"sourcePort":   conn.SourcePort,
+			"targetNode":   conn.TargetNode,
+			"targetPort":   conn.TargetPort,
+		}
+		connectionsList[i] = connMap
+	}
+	
+	// Convert flow config
+	flowConfigMap := map[string]interface{}{
+		"timeout":        flow.Config.Timeout.String(),
+		"maxConcurrency": flow.Config.MaxConcurrency,
+		"retryPolicy": map[string]interface{}{
+			"maxRetries":  flow.Config.RetryPolicy.MaxRetries,
+			"backoff":     flow.Config.RetryPolicy.Backoff.String(),
+			"maxBackoff":  flow.Config.RetryPolicy.MaxBackoff.String(),
+			"retryOn":     flow.Config.RetryPolicy.RetryOn,
+		},
+		"environment": flow.Config.Environment,
+	}
+	
+	// Convert flow status
+	frontendStatus := convertFlowStatus(flow.Status)
+	
+	return map[string]interface{}{
+		"id":          flow.ID,
+		"name":        flow.Name,
+		"description": flow.Description,
+		"nodes":       nodesMap,
+		"connections": connectionsList,
+		"status":      frontendStatus,
+		"config":      flowConfigMap,
+		"createdAt":   flow.CreatedAt.Format(time.RFC3339),
+		"updatedAt":   flow.UpdatedAt.Format(time.RFC3339),
+		"version":     flow.Version,
+	}
+}
+
+// convertFlowStatus converts Go flow status to frontend status
+func convertFlowStatus(status engine.FlowStatus) string {
+	switch status {
+	case engine.FlowStatusInactive:
+		return "stopped"
+	case engine.FlowStatusActive:
+		return "running"
+	case engine.FlowStatusError:
+		return "error"
+	case engine.FlowStatusDeploying:
+		return "deploying"
+	case engine.FlowStatusUndeploying:
+		return "undeploying"
+	default:
+		return string(status)
+	}
+}
+
+// convertNodeStatus converts Go node to frontend node status
+func convertNodeStatus(node *engine.Node) map[string]interface{} {
+	// For now, return a basic status based on disabled state
+	// This can be enhanced later with actual node status tracking
+	if node.Disabled {
+		return map[string]interface{}{
+			"state": "idle",
+			"message": "Node is disabled",
+		}
+	}
+	return map[string]interface{}{
+		"state": "idle",
+	}
 }
 
 // ServeWebSocket serves WebSocket connections

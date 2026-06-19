@@ -33,10 +33,12 @@ const nodeTypes: NodeTypes = {
 const edgeTypes: EdgeTypes = {};
 
 function flowNodeToReactFlowNode(flowNode: FlowNode): Node {
+  // Ensure position is always defined with default values if missing
+  const position = flowNode.position || { x: 0, y: 0 };
   return {
     id: flowNode.id,
     type: 'default',
-    position: flowNode.position,
+    position: position,
     data: {
       label: flowNode.type,
       node: flowNode,
@@ -70,12 +72,16 @@ export function FlowCanvas({
 
   const flowNodes = useMemo(() => {
     if (!flow) return [];
-    return Object.values(flow.nodes).map(flowNodeToReactFlowNode);
+    const nodes = Object.values(flow.nodes);
+    console.log('[FlowCanvas] flowNodes - Converting nodes:', nodes.map(n => ({id: n.id, position: n.position})));
+    return nodes.map(flowNodeToReactFlowNode);
   }, [flow]);
 
   const flowEdges = useMemo(() => {
     if (!flow) return [];
-    return (flow.connections || []).map(connectionToEdge);
+    const connections = flow.connections || [];
+    console.log('[FlowCanvas] flowEdges - Converting connections:', connections.length);
+    return connections.map(connectionToEdge);
   }, [flow]);
 
   React.useEffect(() => {

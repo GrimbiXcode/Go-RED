@@ -27,6 +27,7 @@ export interface FlowNode {
   position: { x: number; y: number };
   config: Record<string, any>;
   status?: NodeStatus;
+  disabled?: boolean;
 }
 
 export type FlowStatus = 'draft' | 'deployed' | 'running' | 'stopped' | 'error' | 'paused';

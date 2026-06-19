@@ -153,6 +153,90 @@ func parseFlags() Config {
 	return config
 }
 
+// convertFlowToFrontendAPI converts a Go flow to frontend-compatible format for REST API
+func convertFlowToFrontendAPI(flow *engine.Flow) map[string]interface{} {
+	// Convert nodes
+	nodesMap := make(map[string]interface{})
+	for id, node := range flow.Nodes {
+		nodeMap := map[string]interface{}{
+			"id":       node.ID,
+			"type":     node.Type,
+			"name":     node.Name,
+			"position": map[string]float64{"x": node.X, "y": node.Y},
+			"config":   node.Config,
+			"status": map[string]interface{}{
+				"state":       "idle",
+				"message":     "",
+				"timestamp":   "",
+				"processingCount": 0,
+				"errorCount": 0,
+			},
+			"disabled": node.Disabled,
+		}
+		nodesMap[id] = nodeMap
+	}
+	
+	// Convert connections
+	connectionsList := make([]interface{}, len(flow.Connections))
+	for i, conn := range flow.Connections {
+		connMap := map[string]interface{}{
+			"id":          conn.ID,
+			"sourceNode":  conn.SourceNode,
+			"sourcePort":  conn.SourcePort,
+			"targetNode":  conn.TargetNode,
+			"targetPort":  conn.TargetPort,
+		}
+		connectionsList[i] = connMap
+	}
+	
+	// Convert flow config
+	flowConfigMap := map[string]interface{}{
+		"timeout":       int(flow.Config.Timeout.Seconds()),
+		"maxConcurrency": flow.Config.MaxConcurrency,
+		"retryPolicy": map[string]interface{}{
+			"maxRetries":  flow.Config.RetryPolicy.MaxRetries,
+			"backoff":     int(flow.Config.RetryPolicy.Backoff.Seconds()),
+			"maxBackoff":  int(flow.Config.RetryPolicy.MaxBackoff.Seconds()),
+			"retryOn":     flow.Config.RetryPolicy.RetryOn,
+		},
+		"environment": flow.Config.Environment,
+	}
+	
+	// Convert flow status
+	frontendStatus := convertFlowStatusAPI(flow.Status)
+	
+	return map[string]interface{}{
+		"id":          flow.ID,
+		"name":        flow.Name,
+		"description": flow.Description,
+		"nodes":       nodesMap,
+		"connections": connectionsList,
+		"status":      frontendStatus,
+		"config":      flowConfigMap,
+		"createdAt":   flow.CreatedAt.Format(time.RFC3339),
+		"updatedAt":   flow.UpdatedAt.Format(time.RFC3339),
+		"version":     flow.Version,
+	}
+}
+
+// convertFlowStatusAPI converts Go flow status to frontend status
+func convertFlowStatusAPI(status engine.FlowStatus) string {
+	switch status {
+	case engine.FlowStatusInactive:
+		return "draft"
+	case engine.FlowStatusActive:
+		return "running"
+	case engine.FlowStatusError:
+		return "error"
+	case engine.FlowStatusDeploying:
+		return "deploying"
+	case engine.FlowStatusUndeploying:
+		return "undeploying"
+	default:
+		return string(status)
+	}
+}
+
 func handleGetFlows(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
 	flows := e.GetAllFlows()
 	type flowResponse struct {
@@ -191,7 +275,9 @@ func handleCreateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(flow)
+	// Convert flow to frontend format for REST API
+	flowResponse := convertFlowToFrontendAPI(flow)
+	json.NewEncoder(w).Encode(flowResponse)
 }
 
 func handleGetFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
@@ -202,7 +288,9 @@ func handleGetFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(flow)
+	// Convert flow to frontend format for REST API
+	flowResponse := convertFlowToFrontendAPI(flow)
+	json.NewEncoder(w).Encode(flowResponse)
 }
 
 func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
@@ -343,7 +431,9 @@ func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
 	}
 	
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(flow)
+	// Convert flow to frontend format for REST API
+	flowResponse := convertFlowToFrontendAPI(flow)
+	json.NewEncoder(w).Encode(flowResponse)
 }
 
 func handleDeleteFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
