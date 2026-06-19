@@ -108,6 +108,10 @@ func (r *NodeRegistry) RegisterNode(node *Node) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	
+	if node.Type == "" {
+		return errors.New("node type cannot be empty")
+	}
+	
 	if _, exists := r.nodes[node.Type]; exists {
 		return errors.New("node type already registered: " + node.Type)
 	}
