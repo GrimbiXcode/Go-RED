@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/GrimbiXcode/Go-RED/cmd/go-red/websocket"
 	"github.com/GrimbiXcode/Go-RED/internal/engine"
@@ -62,7 +65,6 @@ func main() {
 	if err := flowEngine.Start(); err != nil {
 		log.Fatalf("Failed to start flow engine: %v", err)
 	}
-	defer flowEngine.Stop()
 
 	// Initialize WebSocket hub and handler
 	wsHub := websocket.NewHub()
@@ -96,6 +98,15 @@ func main() {
 	})
 	mux.HandleFunc("GET /api/nodes/{type}", func(w http.ResponseWriter, r *http.Request) {
 		handleGetNode(w, r, nodeRegistry)
+	})
+	mux.HandleFunc("GET /api/messages", func(w http.ResponseWriter, r *http.Request) {
+		handleGetMessages(w, r, flowEngine)
+	})
+	mux.HandleFunc("GET /api/flows/{id}/export", func(w http.ResponseWriter, r *http.Request) {
+		handleExportFlow(w, r, flowEngine)
+	})
+	mux.HandleFunc("POST /api/flows/import", func(w http.ResponseWriter, r *http.Request) {
+		handleImportFlow(w, r, flowEngine)
 	})
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		wsHandler.ServeWebSocket(w, r)
@@ -197,14 +208,9 @@ func handleGetFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine)
 func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
 	flowID := r.PathValue("id")
 	
-	var request struct {
-		Name        string `json:"name,omitempty"`
-		Description string `json:"description,omitempty"`
-		Nodes       map[string]interface{} `json:"nodes,omitempty"`
-		Connections []interface{} `json:"connections,omitempty"`
-		Config      map[string]interface{} `json:"config,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	// First, read the raw request body to handle custom JSON structure
+	var rawBody map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&rawBody); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -216,12 +222,117 @@ func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
 		return
 	}
 	
-	// Update flow
-	if request.Name != "" {
-		flow.Name = request.Name
+	// Update flow fields
+	if name, ok := rawBody["name"].(string); ok && name != "" {
+		flow.Name = name
 	}
-	if request.Description != "" {
-		flow.Description = request.Description
+	if description, ok := rawBody["description"].(string); ok && description != "" {
+		flow.Description = description
+	}
+	
+	// Update nodes - handle frontend position object
+	if nodes, ok := rawBody["nodes"].(map[string]interface{}); ok && nodes != nil {
+		for nodeID, nodeData := range nodes {
+			if nodeMap, ok := nodeData.(map[string]interface{}); ok {
+				// Check if node exists
+				if existingNode, exists := flow.Nodes[nodeID]; exists {
+					// Update existing node
+					if nodeType, ok := nodeMap["type"].(string); ok {
+						existingNode.Type = nodeType
+					}
+					if config, ok := nodeMap["config"].(map[string]interface{}); ok {
+						existingNode.Config = config
+					}
+					if position, ok := nodeMap["position"].(map[string]interface{}); ok {
+						if x, ok := position["x"].(float64); ok {
+							existingNode.X = x
+						}
+						if y, ok := position["y"].(float64); ok {
+							existingNode.Y = y
+						}
+					}
+					if disabled, ok := nodeMap["disabled"].(bool); ok {
+						existingNode.Disabled = disabled
+					}
+				} else {
+					// Create new node
+					newNode := &engine.Node{
+						ID: nodeID,
+					}
+					if nodeType, ok := nodeMap["type"].(string); ok {
+						newNode.Type = nodeType
+					}
+					if config, ok := nodeMap["config"].(map[string]interface{}); ok {
+						newNode.Config = config
+					}
+					if position, ok := nodeMap["position"].(map[string]interface{}); ok {
+						if x, ok := position["x"].(float64); ok {
+							newNode.X = x
+						}
+						if y, ok := position["y"].(float64); ok {
+							newNode.Y = y
+						}
+					}
+					if disabled, ok := nodeMap["disabled"].(bool); ok {
+						newNode.Disabled = disabled
+					}
+					flow.Nodes[nodeID] = newNode
+				}
+			}
+		}
+	}
+	
+	// Update connections
+	if connections, ok := rawBody["connections"].([]interface{}); ok && connections != nil {
+		var newConnections []engine.NodeConnection
+		for _, connData := range connections {
+			if connMap, ok := connData.(map[string]interface{}); ok {
+				newConn := engine.NodeConnection{}
+				if id, ok := connMap["id"].(string); ok {
+					newConn.ID = id
+				}
+				if sourceNode, ok := connMap["sourceNode"].(string); ok {
+					newConn.SourceNode = sourceNode
+				}
+				if sourcePort, ok := connMap["sourcePort"].(string); ok {
+					newConn.SourcePort = sourcePort
+				}
+				if targetNode, ok := connMap["targetNode"].(string); ok {
+					newConn.TargetNode = targetNode
+				}
+				if targetPort, ok := connMap["targetPort"].(string); ok {
+					newConn.TargetPort = targetPort
+				}
+				newConnections = append(newConnections, newConn)
+			}
+		}
+		flow.Connections = newConnections
+	}
+	
+	// Update config
+	if config, ok := rawBody["config"].(map[string]interface{}); ok && config != nil {
+		if timeout, ok := config["timeout"].(float64); ok {
+			flow.Config.Timeout = time.Duration(timeout) * time.Second
+		}
+		if maxMessages, ok := config["maxMessages"].(float64); ok {
+			// Frontend sends maxMessages, backend uses MaxConcurrency
+			flow.Config.MaxConcurrency = int(maxMessages)
+		}
+		if maxConcurrency, ok := config["maxConcurrency"].(float64); ok {
+			flow.Config.MaxConcurrency = int(maxConcurrency)
+		}
+		if env, ok := config["environment"].(map[string]interface{}); ok {
+			for k, v := range env {
+				if strVal, ok := v.(string); ok {
+					flow.Config.Environment[k] = strVal
+				}
+			}
+		}
+		// Handle autoDeploy if present (frontend-specific)
+		if autoDeploy, ok := config["autoDeploy"].(bool); ok {
+			// Could set some flag or auto-deploy, but for now just ignore
+			_ = autoDeploy
+		}
 	}
 	
 	flow.UpdatedAt = time.Now().UTC()
@@ -291,4 +402,155 @@ func handleGetNode(w http.ResponseWriter, r *http.Request, reg *registry.NodeReg
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(metadata)
+}
+
+func handleGetMessages(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
+	// Get query parameters for filtering
+	flowID := r.URL.Query().Get("flowId")
+	limitStr := r.URL.Query().Get("limit")
+	
+	var messages []engine.Message
+	
+	if flowID != "" {
+		// Get messages for specific flow
+		messages = e.GetMessageLogForFlow(flowID)
+	} else {
+		// Get all messages
+		messages = e.GetMessageLog()
+	}
+	
+	// Apply limit if specified
+	if limitStr != "" {
+		limit, err := strconv.Atoi(limitStr)
+		if err == nil && limit > 0 {
+			startIndex := len(messages) - limit
+			if startIndex < 0 {
+				startIndex = 0
+			}
+			messages = messages[startIndex:]
+		}
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(messages)
+}
+
+func handleExportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
+	flowID := r.PathValue("id")
+	
+	// Get the flow
+	flow, err := e.GetFlow(flowID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	
+	// Set headers for file download
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=flow-%s.json", flowID))
+	
+	// Create export structure
+	exportData := map[string]interface{}{
+		"id":          flow.ID,
+		"name":        flow.Name,
+		"description": flow.Description,
+		"nodes":       flow.Nodes,
+		"connections": flow.Connections,
+		"config":      flow.Config,
+		"createdAt":   flow.CreatedAt.Format(time.RFC3339),
+		"updatedAt":   flow.UpdatedAt.Format(time.RFC3339),
+		"status":      flow.Status,
+	}
+	
+	json.NewEncoder(w).Encode(exportData)
+}
+
+func handleImportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
+	// Only accept POST requests
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	// Parse the request body
+	var importData struct {
+		ID          string                 `json:"id"`
+		Name        string                 `json:"name"`
+		Description string                 `json:"description"`
+		Nodes       map[string]*engine.Node `json:"nodes"`
+		Connections []engine.NodeConnection `json:"connections"`
+		Config      map[string]interface{}  `json:"config"`
+	}
+	
+	if err := json.NewDecoder(r.Body).Decode(&importData); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	// Validate required fields
+	if importData.Name == "" {
+		http.Error(w, "Flow name is required", http.StatusBadRequest)
+		return
+	}
+	
+	// Create a new flow with a new ID (to avoid conflicts)
+	// But keep the original ID for reference in the response
+	originalID := importData.ID
+	importData.ID = ""
+	
+	// Create the flow with a new UUID
+	flow := engine.NewFlow(uuid.New().String(), importData.Name)
+	flow.Description = importData.Description
+	
+	// Import nodes
+	for nodeID, node := range importData.Nodes {
+		// Create a copy to avoid pointer issues
+		newNode := *node
+		newNode.ID = nodeID
+		flow.Nodes[nodeID] = &newNode
+	}
+	
+	// Import connections
+	for _, conn := range importData.Connections {
+		flow.Connections = append(flow.Connections, conn)
+	}
+	
+	// Import config - convert from map[string]interface{} to FlowConfig
+	// For now, keep the default FlowConfig from NewFlow as the import format
+	// uses a generic map which may not match the FlowConfig structure exactly
+	// This can be enhanced later with proper type conversion
+	if importData.Config != nil {
+		// Try to convert config values if they match the expected types
+		if timeout, ok := importData.Config["timeout"].(float64); ok {
+			flow.Config.Timeout = time.Duration(timeout) * time.Second
+		}
+		if maxConcurrency, ok := importData.Config["maxConcurrency"].(float64); ok {
+			flow.Config.MaxConcurrency = int(maxConcurrency)
+		}
+		if env, ok := importData.Config["environment"].(map[string]interface{}); ok {
+			for k, v := range env {
+				if strVal, ok := v.(string); ok {
+					flow.Config.Environment[k] = strVal
+				}
+			}
+		}
+	}
+	
+	// Save the flow to state manager
+	if e.GetStateManager() != nil {
+		if err := e.GetStateManager().SaveFlow(flow); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to save flow: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+	
+	// Return success response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "imported",
+		"flowId":    flow.ID,
+		"originalId": originalID,
+		"name":      flow.Name,
+		"message":   "Flow imported successfully",
+	})
 }

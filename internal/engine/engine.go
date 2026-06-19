@@ -67,7 +67,11 @@ type FlowEngine struct {
 	// ctx and cancel are used for graceful shutdown.
 	ctx    context.Context
 	cancel context.CancelFunc
-	
+
+	// stopped prevents Stop from being called multiple times.
+	stopped bool
+	stopMu  sync.Mutex
+
 	// config contains the engine configuration.
 	config EngineConfig
 	
@@ -81,6 +85,12 @@ type FlowEngine struct {
 	messageIDCounter uint64
 	// messageIDMu protects messageIDCounter.
 	messageIDMu sync.Mutex
+
+	// messageLog stores recent messages for debugging and monitoring.
+	// This is thread-safe and has a maximum size to prevent memory issues.
+	messageLog    []Message
+	messageLogMu  sync.RWMutex
+	maxMessageLog int
 }
 
 // ActiveFlow represents an active (deployed) flow.
@@ -117,6 +127,8 @@ func NewFlowEngine(config EngineConfig, registry *registry.NodeRegistry) *FlowEn
 		cancel:      cancel,
 		config:      config,
 		messageIDCounter: 0,
+		messageLog:   make([]Message, 0),
+		maxMessageLog: 1000, // Store last 1000 messages
 	}
 }
 
@@ -151,6 +163,14 @@ func (e *FlowEngine) Start() error {
 
 // Stop stops the FlowEngine and waits for all goroutines to complete.
 func (e *FlowEngine) Stop() error {
+	e.stopMu.Lock()
+	defer e.stopMu.Unlock()
+	
+	if e.stopped {
+		return nil
+	}
+	e.stopped = true
+	
 	log.Println("Stopping FlowEngine...")
 	
 	// Cancel the main context
@@ -199,6 +219,9 @@ func (e *FlowEngine) processMessages() {
 
 // processMessage processes a single message.
 func (e *FlowEngine) processMessage(msg Message) {
+	// Add message to log for debugging
+	e.AddMessageToLog(msg)
+
 	e.mu.RLock()
 	activeFlow, exists := e.flows[msg.FlowID]
 	e.mu.RUnlock()
@@ -478,6 +501,15 @@ func (e *FlowEngine) CreateFlow(id, name string) (*Flow, error) {
 	}
 	flow := NewFlow(id, name)
 	
+	// Add flow to the engine's flow map
+	e.mu.Lock()
+	e.flows[id] = &ActiveFlow{
+		Flow:   flow,
+		Status: FlowStatusInactive,
+		msgChan: make(chan Message, e.config.MessageBufferSize),
+	}
+	e.mu.Unlock()
+	
 	// If state manager is set, save the flow
 	if e.stateManager != nil {
 		if err := e.stateManager.SaveFlow(flow); err != nil {
@@ -529,11 +561,79 @@ func (e *FlowEngine) LoadAllFlows() error {
 	}
 	
 	for _, flow := range flows {
+		// Try to deploy the flow, but if it fails (e.g., validation), add it as inactive
 		if err := e.Deploy(flow); err != nil {
 			log.Printf("Failed to deploy flow %s: %v", flow.ID, err)
+			// Add flow as inactive so it can still be accessed and edited
+			e.mu.Lock()
+			e.flows[flow.ID] = &ActiveFlow{
+				Flow:   flow,
+				Status: FlowStatusInactive,
+				msgChan: make(chan Message, e.config.MessageBufferSize),
+			}
+			e.mu.Unlock()
 			// Continue with other flows
 		}
 	}
 	
 	return nil
+}
+
+// AddMessageToLog adds a message to the message log for debugging.
+// Messages are stored in a circular buffer with maxMessageLog size.
+func (e *FlowEngine) AddMessageToLog(msg Message) {
+	e.messageLogMu.Lock()
+	defer e.messageLogMu.Unlock()
+
+	// Append the message
+	e.messageLog = append(e.messageLog, msg)
+	
+	// Trim if we exceed max size
+	if len(e.messageLog) > e.maxMessageLog {
+		e.messageLog = e.messageLog[len(e.messageLog)-e.maxMessageLog:]
+	}
+}
+
+// GetMessageLog returns all messages in the log.
+// The returned slice is a copy to prevent external modification.
+func (e *FlowEngine) GetMessageLog() []Message {
+	e.messageLogMu.RLock()
+	defer e.messageLogMu.RUnlock()
+
+	// Create a copy of the slice
+	messages := make([]Message, len(e.messageLog))
+	copy(messages, e.messageLog)
+	return messages
+}
+
+// GetMessageLogForFlow returns messages for a specific flow.
+func (e *FlowEngine) GetMessageLogForFlow(flowID string) []Message {
+	e.messageLogMu.RLock()
+	defer e.messageLogMu.RUnlock()
+
+	var flowMessages []Message
+	for _, msg := range e.messageLog {
+		if msg.FlowID == flowID {
+			flowMessages = append(flowMessages, msg)
+		}
+	}
+	return flowMessages
+}
+
+// ClearMessageLog clears all messages from the log.
+func (e *FlowEngine) ClearMessageLog() {
+	e.messageLogMu.Lock()
+	defer e.messageLogMu.Unlock()
+	e.messageLog = make([]Message, 0)
+}
+
+// SetMaxMessageLog sets the maximum number of messages to keep in the log.
+func (e *FlowEngine) SetMaxMessageLog(max int) {
+	e.messageLogMu.Lock()
+	defer e.messageLogMu.Unlock()
+	e.maxMessageLog = max
+	// Trim existing log if necessary
+	if len(e.messageLog) > e.maxMessageLog {
+		e.messageLog = e.messageLog[len(e.messageLog)-e.maxMessageLog:]
+	}
 }

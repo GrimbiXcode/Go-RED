@@ -1,5 +1,6 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
 import type { NodeMetadata, NodeCategory } from '../types/node';
+import DOMPurify from 'dompurify';
 
 interface NodePaletteProps {
   nodeTypes: NodeMetadata[];
@@ -76,7 +77,14 @@ function NodePaletteItem({ node, onDragStart }: NodePaletteItemProps) {
       onDragStart={handleDragStart}
       title={node.description || node.name}
     >
-      <span className="text-lg">{node.icon || '⚙️'}</span>
+      {node.icon && node.icon.startsWith('<svg') ? (
+        <span 
+          className="text-lg"
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(node.icon) }}
+        />
+      ) : (
+        <span className="text-lg">{node.icon || '⚙️'}</span>
+      )}
       <span className="text-sm flex-1">{node.name}</span>
     </div>
   );
@@ -107,7 +115,13 @@ function CategorySection({
         onClick={onToggle}
       >
         <div className="flex items-center gap-2">
-          <span>{icon}</span>
+          {icon.startsWith('<svg') ? (
+            <span 
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(icon) }}
+            />
+          ) : (
+            <span>{icon}</span>
+          )}
           <span className="capitalize text-sm">{category}</span>
           <span className="text-xs text-gray-500">{nodes.length}</span>
         </div>
@@ -131,14 +145,27 @@ function CategorySection({
 
 export function NodePalette({ nodeTypes, loading }: NodePaletteProps) {
   const [expandedCategories, setExpandedCategories] = useState<Set<NodeCategory>>(new Set());
-  const groupedNodes = groupByCategory(nodeTypes);
-  const categories = getCategories(nodeTypes);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredNodeTypes = useMemo(() => {
+    if (!searchQuery.trim()) return nodeTypes;
+    const query = searchQuery.toLowerCase();
+    return nodeTypes.filter((node) => 
+      node.name.toLowerCase().includes(query) ||
+      node.description?.toLowerCase().includes(query) ||
+      node.type.toLowerCase().includes(query) ||
+      node.tags?.some((tag) => tag.toLowerCase().includes(query))
+    );
+  }, [nodeTypes, searchQuery]);
+
+  const filteredGroupedNodes = groupByCategory(filteredNodeTypes);
+  const filteredCategories = getCategories(filteredNodeTypes);
 
   React.useEffect(() => {
-    if (categories.length > 0 && expandedCategories.size === 0) {
-      setExpandedCategories(new Set([categories[0]]));
+    if (filteredCategories.length > 0 && expandedCategories.size === 0) {
+      setExpandedCategories(new Set([filteredCategories[0]]));
     }
-  }, [categories.length, expandedCategories.size]);
+  }, [filteredCategories.length, expandedCategories.size]);
 
   const handleDragStart = useCallback(
     (event: React.DragEvent<HTMLDivElement>, nodeType: string) => {
@@ -169,17 +196,29 @@ export function NodePalette({ nodeTypes, loading }: NodePaletteProps) {
 
   return (
     <div className="p-2 h-full">
-      <div className="text-sm font-semibold text-gray-700 mb-4">Node Palette</div>
+      <div className="text-sm font-semibold text-gray-700 mb-2">Node Palette</div>
       
-      {categories.length === 0 ? (
-        <div className="text-sm text-gray-500">No node types available</div>
+      <div className="mb-2">
+        <input
+          type="text"
+          className="w-full p-2 text-sm border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          placeholder="Search nodes..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+      </div>
+      
+      {filteredCategories.length === 0 ? (
+        <div className="text-sm text-gray-500 p-2">
+          {searchQuery ? 'No nodes match your search' : 'No node types available'}
+        </div>
       ) : (
         <div className="space-y-1">
-          {categories.map((category) => (
+          {filteredCategories.map((category) => (
             <CategorySection
               key={category}
               category={category}
-              nodes={groupedNodes[category] || []}
+              nodes={filteredGroupedNodes[category] || []}
               onDragStart={handleDragStart}
               isExpanded={expandedCategories.has(category)}
               onToggle={() => toggleCategory(category)}

@@ -44,7 +44,7 @@ export function Sidebar({ flow, selectedNode, onConfigureNode }: SidebarProps) {
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">Position</label>
             <div className="text-sm text-gray-800 bg-gray-50 p-2 rounded">
-              X: {selectedNode.position.x.toFixed(1)}, Y: {selectedNode.position.y.toFixed(1)}
+              X: {(selectedNode.position?.x ?? 0).toFixed(1)}, Y: {(selectedNode.position?.y ?? 0).toFixed(1)}
             </div>
           </div>
 
@@ -116,11 +116,11 @@ export function Sidebar({ flow, selectedNode, onConfigureNode }: SidebarProps) {
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-gray-50 p-2 rounded">
               <div className="text-xs text-gray-500">Nodes</div>
-              <div className="text-lg font-semibold text-gray-800">{Object.keys(flow.nodes).length}</div>
+              <div className="text-lg font-semibold text-gray-800">{flow.nodes ? Object.keys(flow.nodes).length : 0}</div>
             </div>
             <div className="bg-gray-50 p-2 rounded">
               <div className="text-xs text-gray-500">Connections</div>
-              <div className="text-lg font-semibold text-gray-800">{flow.connections.length}</div>
+              <div className="text-lg font-semibold text-gray-800">{flow.connections ? flow.connections.length : 0}</div>
             </div>
           </div>
         </div>

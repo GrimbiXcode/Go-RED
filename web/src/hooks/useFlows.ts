@@ -103,10 +103,14 @@ export function useFlows(): UseFlowsReturn {
     return newFlow;
   }, [loadFlows]);
   const updateCurrentFlow = useCallback(async (updates: Partial<Flow>) => {
+    console.log('[FRONTEND] updateCurrentFlow - Starting update with:', updates);
     if (!state.selectedFlowId) {
+      console.error('[FRONTEND] updateCurrentFlow - No flow selected');
       throw new Error('No flow selected');
     }
+    console.log('[FRONTEND] updateCurrentFlow - Sending to backend:', { flowId: state.selectedFlowId, updates });
     const updatedFlow = await updateFlow(state.selectedFlowId, updates);
+    console.log('[FRONTEND] updateCurrentFlow - Received updated flow:', updatedFlow);
     setState((prev) => ({
       ...prev,
       selectedFlow: updatedFlow,
@@ -125,10 +129,14 @@ export function useFlows(): UseFlowsReturn {
     }));
   }, [state.selectedFlowId, state.flows]);
   const deployCurrentFlow = useCallback(async (force = false) => {
+    console.log('[FRONTEND] deployCurrentFlow - Starting deploy:', { flowId: state.selectedFlowId, force });
     if (!state.selectedFlowId) {
+      console.error('[FRONTEND] deployCurrentFlow - No flow selected');
       throw new Error('No flow selected');
     }
+    console.log('[FRONTEND] deployCurrentFlow - Sending to backend:', { flowId: state.selectedFlowId, force });
     await deployFlow(state.selectedFlowId, force);
+    console.log('[FRONTEND] deployCurrentFlow - Deploy successful');
     setState((prev) => ({
       ...prev,
       selectedFlow: prev.selectedFlow ? {
@@ -143,10 +151,14 @@ export function useFlows(): UseFlowsReturn {
     }));
   }, [state.selectedFlowId, state.flows]);
   const undeployCurrentFlow = useCallback(async () => {
+    console.log('[FRONTEND] undeployCurrentFlow - Starting undeploy:', { flowId: state.selectedFlowId });
     if (!state.selectedFlowId) {
+      console.error('[FRONTEND] undeployCurrentFlow - No flow selected');
       throw new Error('No flow selected');
     }
+    console.log('[FRONTEND] undeployCurrentFlow - Sending to backend:', { flowId: state.selectedFlowId });
     await undeployFlow(state.selectedFlowId);
+    console.log('[FRONTEND] undeployCurrentFlow - Undeploy successful');
     setState((prev) => ({
       ...prev,
       selectedFlow: prev.selectedFlow ? {
@@ -202,6 +214,11 @@ export function useFlows(): UseFlowsReturn {
       position,
       config: {},
     };
+    console.log('[FRONTEND] addNode - Adding node to local state:', {
+      nodeId: newNode.id,
+      nodeType: newNode.type,
+      flowId: state.selectedFlow.id
+    });
     setState((prev) => ({
       ...prev,
       selectedFlow: prev.selectedFlow ? {
@@ -212,6 +229,10 @@ export function useFlows(): UseFlowsReturn {
         },
       } : null,
     }));
+    console.log('[FRONTEND] addNode - Sending to backend:', {
+      nodeId: newNode.id,
+      flowId: state.selectedFlow.id
+    });
     ws.sendMessage('node:add', {
       node: newNode,
       flowId: state.selectedFlow.id,
@@ -271,6 +292,13 @@ export function useFlows(): UseFlowsReturn {
       ...connection,
       id: generateId(),
     };
+    console.log('[FRONTEND] addConnection - Attempting to add connection:', {
+      connectionId: newConnection.id,
+      sourceNode: newConnection.sourceNode,
+      targetNode: newConnection.targetNode,
+      flowId: state.selectedFlow.id,
+      availableNodes: Object.keys(state.selectedFlow.nodes || {})
+    });
     setState((prev) => ({
       ...prev,
       selectedFlow: prev.selectedFlow ? {
@@ -278,6 +306,10 @@ export function useFlows(): UseFlowsReturn {
         connections: [...prev.selectedFlow.connections, newConnection],
       } : null,
     }));
+    console.log('[FRONTEND] addConnection - Sending to backend:', {
+      connection: newConnection,
+      flowId: state.selectedFlow.id
+    });
     ws.sendMessage('connection:add', {
       connection: newConnection,
       flowId: state.selectedFlow.id,

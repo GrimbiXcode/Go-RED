@@ -82,16 +82,22 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
 	// Node-related messages
 	case "node:add":
 		var nodeData struct {
-			NodeType string `json:"nodeType"`
-			FlowID   string `json:"flowId"`
-			Position struct {
-				X float64 `json:"x"`
-				Y float64 `json:"y"`
-			} `json:"position"`
-			Config map[string]interface{} `json:"config,omitempty"`
+			Node struct {
+				ID       string                 `json:"id"`
+				Type     string                 `json:"type"`
+				Position struct {
+					X float64 `json:"x"`
+					Y float64 `json:"y"`
+				} `json:"position"`
+				Config map[string]interface{} `json:"config,omitempty"`
+			} `json:"node"`
+			FlowID string `json:"flowId"`
 		}
 		if err := json.Unmarshal(data, &nodeData); err == nil {
+			log.Printf("[BACKEND] node:add received - flowId: %s, nodeId: %s, type: %s", nodeData.FlowID, nodeData.Node.ID, nodeData.Node.Type)
 			h.handleNodeAdd(client, nodeData)
+		} else {
+			log.Printf("[BACKEND] node:add parse error: %v, data: %s", err, string(data))
 		}
 	case "node:remove":
 		var nodeData struct {
@@ -103,12 +109,22 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
 		}
 	case "node:update":
 		var nodeData struct {
-			NodeID    string                 `json:"nodeId"`
-			FlowID    string                 `json:"flowId"`
-			Updates   map[string]interface{} `json:"updates"`
+			Node struct {
+				ID       string                 `json:"id"`
+				Type     string                 `json:"type"`
+				Position struct {
+					X float64 `json:"x"`
+					Y float64 `json:"y"`
+				} `json:"position"`
+				Config map[string]interface{} `json:"config,omitempty"`
+			} `json:"node"`
+			FlowID string `json:"flowId"`
 		}
 		if err := json.Unmarshal(data, &nodeData); err == nil {
+			log.Printf("[BACKEND] node:update received - flowId: %s, nodeId: %s", nodeData.FlowID, nodeData.Node.ID)
 			h.handleNodeUpdate(client, nodeData)
+		} else {
+			log.Printf("[BACKEND] node:update parse error: %v, data: %s", err, string(data))
 		}
 	case "node:config":
 		var nodeData struct {
@@ -131,15 +147,20 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
 	// Connection-related messages
 	case "connection:add":
 		var connData struct {
-			ConnectionID string `json:"connectionId,omitempty"`
-			SourceNode  string `json:"sourceNode"`
-			SourcePort  string `json:"sourcePort,omitempty"`
-			TargetNode  string `json:"targetNode"`
-			TargetPort  string `json:"targetPort,omitempty"`
-			FlowID      string `json:"flowId"`
+			Connection struct {
+				ID          string `json:"id,omitempty"`
+				SourceNode  string `json:"sourceNode"`
+				SourcePort  string `json:"sourcePort,omitempty"`
+				TargetNode  string `json:"targetNode"`
+				TargetPort  string `json:"targetPort,omitempty"`
+			} `json:"connection"`
+			FlowID string `json:"flowId"`
 		}
 		if err := json.Unmarshal(data, &connData); err == nil {
+			log.Printf("[BACKEND] connection:add received - flowId: %s, sourceNode: %s, targetNode: %s", connData.FlowID, connData.Connection.SourceNode, connData.Connection.TargetNode)
 			h.handleConnectionAdd(client, connData)
+		} else {
+			log.Printf("[BACKEND] connection:add parse error: %v, data: %s", err, string(data))
 		}
 	case "connection:remove":
 		var connData struct {
@@ -218,7 +239,7 @@ func (h *WebSocketHandler) handleFlowGet(client *Client, flowID string) {
 }
 
 func (h *WebSocketHandler) handleFlowCreate(client *Client, name, description string) {
-	log.Printf("Handling flow:create request for flow: %s", name)
+	log.Printf("[BACKEND] handleFlowCreate - Creating flow: name=%s, description=%s", name, description)
 	flow, err := h.flowEngine.CreateFlow("", name)
 	if err != nil {
 		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
@@ -257,7 +278,7 @@ func (h *WebSocketHandler) handleFlowCreate(client *Client, name, description st
 }
 
 func (h *WebSocketHandler) handleFlowUpdate(client *Client, flowID string, flowData map[string]interface{}) {
-	log.Printf("Handling flow:update request for flow: %s", flowID)
+	log.Printf("[BACKEND] handleFlowUpdate - Updating flow: flowId=%s, data=%v", flowID, flowData)
 	
 	// Get the existing flow
 	flow, err := h.flowEngine.GetFlow(flowID)
@@ -297,7 +318,7 @@ func (h *WebSocketHandler) handleFlowUpdate(client *Client, flowID string, flowD
 }
 
 func (h *WebSocketHandler) handleFlowDelete(client *Client, flowID string) {
-	log.Printf("Handling flow:delete request for flow: %s", flowID)
+	log.Printf("[BACKEND] handleFlowDelete - Deleting flow: flowId=%s", flowID)
 	
 	// First undeploy the flow if it's active
 	h.flowEngine.Undeploy(flowID)
@@ -388,16 +409,19 @@ func (h *WebSocketHandler) handleFlowUndeploy(client *Client, flowID string) {
 }
 
 func (h *WebSocketHandler) handleNodeAdd(client *Client, nodeData struct {
-	NodeType string `json:"nodeType"`
-	FlowID   string `json:"flowId"`
-	Position struct {
-		X float64 `json:"x"`
-		Y float64 `json:"y"`
-	} `json:"position"`
-	Config map[string]interface{} `json:"config,omitempty"`
+	Node struct {
+		ID       string                 `json:"id"`
+		Type     string                 `json:"type"`
+		Position struct {
+			X float64 `json:"x"`
+			Y float64 `json:"y"`
+		} `json:"position"`
+		Config map[string]interface{} `json:"config,omitempty"`
+	} `json:"node"`
+	FlowID string `json:"flowId"`
 }) {
-	log.Printf("Handling node:add request for flow %s, type %s at position (%.1f, %.1f)", 
-		nodeData.FlowID, nodeData.NodeType, nodeData.Position.X, nodeData.Position.Y)
+	log.Printf("[BACKEND] handleNodeAdd - flowId: %s, nodeId: %s, type: %s, position: (%.1f, %.1f)", 
+		nodeData.FlowID, nodeData.Node.ID, nodeData.Node.Type, nodeData.Node.Position.X, nodeData.Node.Position.Y)
 	
 	// Get the flow
 	flow, err := h.flowEngine.GetFlow(nodeData.FlowID)
@@ -410,15 +434,16 @@ func (h *WebSocketHandler) handleNodeAdd(client *Client, nodeData struct {
 		return
 	}
 	
-	// Create new node
+	// Create new node - use the node ID from frontend
 	node := &engine.Node{
-		ID:       "node-" + generateID(),
-		Type:     nodeData.NodeType,
-		Config:   nodeData.Config,
-		X:        nodeData.Position.X,
-		Y:        nodeData.Position.Y,
+		ID:       nodeData.Node.ID,
+		Type:     nodeData.Node.Type,
+		Config:   nodeData.Node.Config,
+		X:        nodeData.Node.Position.X,
+		Y:        nodeData.Node.Position.Y,
 		Disabled:  false,
 	}
+	log.Printf("[BACKEND] handleNodeAdd - Created node with ID: %s, type: %s", node.ID, node.Type)
 	
 	// Add node to flow
 	if err := flow.AddNode(node); err != nil {
@@ -482,11 +507,18 @@ func (h *WebSocketHandler) handleNodeRemove(client *Client, nodeID, flowID strin
 }
 
 func (h *WebSocketHandler) handleNodeUpdate(client *Client, nodeData struct {
-	NodeID   string                 `json:"nodeId"`
-	FlowID   string                 `json:"flowId"`
-	Updates  map[string]interface{} `json:"updates"`
+	Node struct {
+		ID       string                 `json:"id"`
+		Type     string                 `json:"type"`
+		Position struct {
+			X float64 `json:"x"`
+			Y float64 `json:"y"`
+		} `json:"position"`
+		Config map[string]interface{} `json:"config,omitempty"`
+	} `json:"node"`
+	FlowID string `json:"flowId"`
 }) {
-	log.Printf("Handling node:update request for node: %s in flow: %s", nodeData.NodeID, nodeData.FlowID)
+	log.Printf("[BACKEND] handleNodeUpdate - flowId: %s, nodeId: %s", nodeData.FlowID, nodeData.Node.ID)
 	
 	// Get the flow
 	flow, err := h.flowEngine.GetFlow(nodeData.FlowID)
@@ -500,28 +532,21 @@ func (h *WebSocketHandler) handleNodeUpdate(client *Client, nodeData struct {
 	}
 	
 	// Get the node
-	node, exists := flow.Nodes[nodeData.NodeID]
+	node, exists := flow.Nodes[nodeData.Node.ID]
 	if !exists {
 		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
 			"error":   "node not found",
-			"nodeId":  nodeData.NodeID,
+			"nodeId":  nodeData.Node.ID,
 			"message": "node not found in flow",
 		})
 		return
 	}
 	
-	// Apply updates
-	if config, ok := nodeData.Updates["config"].(map[string]interface{}); ok {
-		for k, v := range config {
-			node.Config[k] = v
-		}
-	}
-	if x, ok := nodeData.Updates["x"].(float64); ok {
-		node.X = x
-	}
-	if y, ok := nodeData.Updates["y"].(float64); ok {
-		node.Y = y
-	}
+	// Apply updates from the node data
+	node.Type = nodeData.Node.Type
+	node.Config = nodeData.Node.Config
+	node.X = nodeData.Node.Position.X
+	node.Y = nodeData.Node.Position.Y
 	
 	// Update flow timestamp
 	flow.UpdatedAt = time.Now().UTC()
@@ -534,7 +559,7 @@ func (h *WebSocketHandler) handleNodeUpdate(client *Client, nodeData struct {
 	// Broadcast node update
 	h.hub.Broadcast(MessageTypeNodeUpdate, map[string]interface{}{
 		"flowId": nodeData.FlowID,
-		"nodeId": nodeData.NodeID,
+		"nodeId": nodeData.Node.ID,
 		"node": map[string]interface{}{
 			"id":       node.ID,
 			"type":     node.Type,
@@ -555,15 +580,17 @@ func (h *WebSocketHandler) handleNodeConfig(client *Client, nodeID string, confi
 }
 
 func (h *WebSocketHandler) handleConnectionAdd(client *Client, connData struct {
-	ConnectionID string `json:"connectionId,omitempty"`
-	SourceNode  string `json:"sourceNode"`
-	SourcePort  string `json:"sourcePort,omitempty"`
-	TargetNode  string `json:"targetNode"`
-	TargetPort  string `json:"targetPort,omitempty"`
-	FlowID      string `json:"flowId"`
+	Connection struct {
+		ID          string `json:"id,omitempty"`
+		SourceNode  string `json:"sourceNode"`
+		SourcePort  string `json:"sourcePort,omitempty"`
+		TargetNode  string `json:"targetNode"`
+		TargetPort  string `json:"targetPort,omitempty"`
+	} `json:"connection"`
+	FlowID string `json:"flowId"`
 }) {
-	log.Printf("Handling connection:add request for flow: %s, %s -> %s", 
-		connData.FlowID, connData.SourceNode, connData.TargetNode)
+	log.Printf("[BACKEND] handleConnectionAdd - flowId: %s, sourceNode: %s, targetNode: %s", 
+		connData.FlowID, connData.Connection.SourceNode, connData.Connection.TargetNode)
 	
 	// Get the flow
 	flow, err := h.flowEngine.GetFlow(connData.FlowID)
@@ -578,12 +605,13 @@ func (h *WebSocketHandler) handleConnectionAdd(client *Client, connData struct {
 	
 	// Create connection
 	conn := engine.NodeConnection{
-		ID:          connData.ConnectionID,
-		SourceNode:  connData.SourceNode,
-		SourcePort:  connData.SourcePort,
-		TargetNode:  connData.TargetNode,
-		TargetPort:  connData.TargetPort,
+		ID:          connData.Connection.ID,
+		SourceNode:  connData.Connection.SourceNode,
+		SourcePort:  connData.Connection.SourcePort,
+		TargetNode:  connData.Connection.TargetNode,
+		TargetPort:  connData.Connection.TargetPort,
 	}
+	log.Printf("[BACKEND] handleConnectionAdd - Creating connection: %s -> %s", connData.Connection.SourceNode, connData.Connection.TargetNode)
 	
 	// Add connection to flow
 	if err := flow.AddConnection(conn); err != nil {

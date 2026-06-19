@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import type { Flow } from '../types/flow';
 import type { FlowSummary } from '../types/api';
+import { WebSocketStatus } from './WebSocketStatus';
 
 interface ToolbarProps {
   flows: FlowSummary[];
@@ -9,6 +10,10 @@ interface ToolbarProps {
   onSelectFlow: (flowId: string) => void;
   onDeploy: () => void;
   onUndeploy: () => void;
+  onSave: () => void;
+  onToggleMessageLog: () => void;
+  onExport: () => void;
+  onImport: () => void;
 }
 
 export function Toolbar({
@@ -18,6 +23,10 @@ export function Toolbar({
   onSelectFlow,
   onDeploy,
   onUndeploy,
+  onSave,
+  onToggleMessageLog,
+  onExport,
+  onImport,
 }: ToolbarProps) {
   const [showFlowsDropdown, setShowFlowsDropdown] = useState(false);
 
@@ -97,10 +106,37 @@ export function Toolbar({
         </div>
 
         <button
-          className="px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-sm"
+          className="px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={!selectedFlow}
+          onClick={onSave}
+          title={!selectedFlow ? 'Select a flow to save' : 'Save flow'}
         >
           💾 Save
+        </button>
+        
+        <button
+          className="px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={!selectedFlow}
+          onClick={onExport}
+          title={!selectedFlow ? 'Select a flow to export' : 'Export flow'}
+        >
+          📤 Export
+        </button>
+        
+        <button
+          className="px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-sm"
+          onClick={onImport}
+          title="Import flow"
+        >
+          📥 Import
+        </button>
+        
+        <button
+          className="px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-sm"
+          onClick={onToggleMessageLog}
+          title="Show/hide message log"
+        >
+          📜 Log
         </button>
       </div>
 
@@ -138,6 +174,8 @@ export function Toolbar({
         >
           □ Stop
         </button>
+
+        <WebSocketStatus />
 
         <div className="flex items-center gap-1">
           <button

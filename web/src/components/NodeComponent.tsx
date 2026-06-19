@@ -1,17 +1,20 @@
 
 import { Handle, Position, NodeProps } from 'reactflow';
 import type { FlowNode } from '../types/flow';
+import type { NodeMetadata, Port } from '../types/node';
+import DOMPurify from 'dompurify';
 
 interface NodeData {
   label: string;
   node: FlowNode;
+  metadata: NodeMetadata | null;
 }
 
 interface NodeComponentProps extends NodeProps {
   data: NodeData;
 }
 
-const nodeIcons: Record<string, string> = {
+const categoryIcons: Record<string, string> = {
   input: '📥',
   output: '📤',
   function: '🔄',
@@ -24,7 +27,7 @@ const nodeIcons: Record<string, string> = {
   custom: '⚙️',
 };
 
-const nodeColors: Record<string, string> = {
+const categoryColors: Record<string, string> = {
   input: 'bg-blue-500',
   output: 'bg-green-500',
   function: 'bg-purple-500',
@@ -38,23 +41,10 @@ const nodeColors: Record<string, string> = {
 };
 
 export function NodeComponent({ data, selected }: NodeComponentProps) {
-  const { label, node } = data;
-  const getNodeMetadata = (): { category: string; name: string; description: string } => {
-    const category = node.type.includes('input') ? 'input' :
-                     node.type.includes('output') ? 'output' :
-                     node.type.includes('function') ? 'function' :
-                     node.type.includes('http') ? 'network' :
-                     'custom';
-    return {
-      category,
-      name: label,
-      description: `Node for ${node.type}`,
-    };
-  };
-
-  const metadata = getNodeMetadata();
-  const icon = nodeIcons[metadata.category] || '⚙️';
-  const color = nodeColors[metadata.category] || 'bg-gray-500';
+  const { label, node, metadata } = data;
+  
+  const icon = metadata?.icon || categoryIcons[metadata?.category || 'custom'] || '⚙️';
+  const color = metadata?.color || categoryColors[metadata?.category || 'custom'] || 'bg-gray-500';
 
   const getStatusColor = () => {
     if (!node.status) return 'bg-gray-200';
@@ -67,13 +57,29 @@ export function NodeComponent({ data, selected }: NodeComponentProps) {
     }
   };
 
+  const getHandleColor = (port: Port) => {
+    if (port.required) return 'bg-red-500';
+    return 'bg-blue-500';
+  };
+
+  const inputPorts = metadata?.inputs || [];
+  const outputPorts = metadata?.outputs || [];
+
   return (
     <div
       className={`rounded-md border-2 ${selected ? 'border-blue-500' : 'border-gray-300'} bg-white shadow-sm`}
+      title={metadata?.description || `Node: ${metadata?.name || node.type}`}
     >
       <div className={`flex items-center justify-between p-2 rounded-t-md ${color} text-white`}>
         <div className="flex items-center gap-2">
-          <span className="text-lg">{icon}</span>
+          {icon.startsWith('<svg') ? (
+            <span 
+              className="text-lg"
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(icon) }}
+            />
+          ) : (
+            <span className="text-lg">{icon}</span>
+          )}
           <span className="font-medium text-sm">{label}</span>
         </div>
         <div className={`w-3 h-3 rounded-full ${getStatusColor()}`} />
@@ -91,23 +97,62 @@ export function NodeComponent({ data, selected }: NodeComponentProps) {
         )}
       </div>
 
-      <div className="flex justify-center gap-1">
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="input"
-          className="w-3 h-3 bg-blue-500"
-        />
-      </div>
+      {inputPorts.length > 0 && (
+        <div className="flex flex-col items-start gap-1 px-1">
+          {inputPorts.map((port) => (
+            <div key={port.id} className="flex items-center gap-1">
+              <Handle
+                type="target"
+                position={Position.Left}
+                id={port.id}
+                className={`w-3 h-3 ${getHandleColor(port)}`}
+              />
+              {port.name && (
+                <span className="text-xs text-gray-600 bg-white px-1 rounded">{port.name}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
-      <div className="flex justify-center gap-1">
-        <Handle
-          type="source"
-          position={Position.Right}
-          id="output"
-          className="w-3 h-3 bg-green-500"
-        />
-      </div>
+      {outputPorts.length > 0 && (
+        <div className="flex flex-col items-end gap-1 px-1">
+          {outputPorts.map((port) => (
+            <div key={port.id} className="flex items-center gap-1">
+              {port.name && (
+                <span className="text-xs text-gray-600 bg-white px-1 rounded">{port.name}</span>
+              )}
+              <Handle
+                type="source"
+                position={Position.Right}
+                id={port.id}
+                className={`w-3 h-3 ${getHandleColor(port)}`}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {inputPorts.length === 0 && outputPorts.length === 0 && (
+        <>
+          <div className="flex justify-center gap-1">
+            <Handle
+              type="target"
+              position={Position.Left}
+              id="input"
+              className="w-3 h-3 bg-blue-500"
+            />
+          </div>
+          <div className="flex justify-center gap-1">
+            <Handle
+              type="source"
+              position={Position.Right}
+              id="output"
+              className="w-3 h-3 bg-green-500"
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

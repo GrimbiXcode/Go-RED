@@ -31,6 +31,9 @@ type Node struct {
 	// Type is the type of node (e.g., "http-request", "function").
 	Type string `json:"type"`
 	
+	// Name is an optional display name for the node.
+	Name string `json:"name,omitempty"`
+	
 	// Config contains the configuration for this node.
 	Config map[string]interface{} `json:"config"`
 	

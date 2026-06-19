@@ -75,7 +75,7 @@ export function FlowCanvas({
 
   const flowEdges = useMemo(() => {
     if (!flow) return [];
-    return flow.connections.map(connectionToEdge);
+    return (flow.connections || []).map(connectionToEdge);
   }, [flow]);
 
   React.useEffect(() => {
