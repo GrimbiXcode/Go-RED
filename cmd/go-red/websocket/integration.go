@@ -292,16 +292,58 @@ func (h *WebSocketHandler) handleFlowUpdate(client *Client, flowID string, flowD
 	}
 	
 	// Apply updates from flowData to the flow
-	// This is a simplified update - in a real implementation, you'd have proper merging
 	if name, ok := flowData["name"].(string); ok && name != "" {
 		flow.Name = name
 	}
 	if desc, ok := flowData["description"].(string); ok {
 		flow.Description = desc
 	}
+	// Config update - TODO: Implement proper FlowConfig merging
 	if flowConfig, ok := flowData["config"].(map[string]interface{}); ok {
-		// Update flow config - this would need proper merging logic
+		// For now, just log that config was received
+		log.Printf("[BACKEND] handleFlowUpdate - Config update received (not implemented yet)")
 		_ = flowConfig
+	}
+	
+	// Update nodes if provided
+	if nodes, ok := flowData["nodes"].(map[string]interface{}); ok {
+		log.Printf("[BACKEND] handleFlowUpdate - Updating nodes: %v", nodes)
+		// Clear existing nodes and add new ones
+		flow.Nodes = make(map[string]*engine.Node)
+		for id, nodeData := range nodes {
+			if nodeMap, ok := nodeData.(map[string]interface{}); ok {
+				node := &engine.Node{
+					ID:       id,
+					Type:     nodeMap["type"].(string),
+					Name:     getString(nodeMap, "name"),
+					X:        getFloat64(nodeMap, "position", "x"),
+					Y:        getFloat64(nodeMap, "position", "y"),
+					Config:   getConfig(nodeMap, "config"),
+					Disabled: false,
+				}
+				flow.Nodes[id] = node
+			}
+		}
+		log.Printf("[BACKEND] handleFlowUpdate - Updated %d nodes", len(flow.Nodes))
+	}
+	
+	// Update connections if provided
+	if connections, ok := flowData["connections"].([]interface{}); ok {
+		log.Printf("[BACKEND] handleFlowUpdate - Updating connections: %v", connections)
+		flow.Connections = make([]engine.NodeConnection, len(connections))
+		for i, connData := range connections {
+			if connMap, ok := connData.(map[string]interface{}); ok {
+				conn := engine.NodeConnection{
+					ID:          connMap["id"].(string),
+					SourceNode:  connMap["sourceNode"].(string),
+					SourcePort:  getString(connMap, "sourcePort"),
+					TargetNode:  connMap["targetNode"].(string),
+					TargetPort:  getString(connMap, "targetPort"),
+				}
+				flow.Connections[i] = conn
+			}
+		}
+		log.Printf("[BACKEND] handleFlowUpdate - Updated %d connections", len(flow.Connections))
 	}
 	
 	// Update the flow's updated timestamp
@@ -706,6 +748,30 @@ func (h *WebSocketHandler) GetHub() *Hub {
 }
 
 // ServeWebSocket serves WebSocket connections
+// Helper functions for type-safe map access
+func getString(m map[string]interface{}, key string) string {
+	if val, ok := m[key].(string); ok {
+		return val
+	}
+	return ""
+}
+
+func getFloat64(m map[string]interface{}, positionKey, coordKey string) float64 {
+	if pos, ok := m[positionKey].(map[string]interface{}); ok {
+		if val, ok := pos[coordKey].(float64); ok {
+			return val
+		}
+	}
+	return 0
+}
+
+func getConfig(m map[string]interface{}, configKey string) map[string]interface{} {
+	if val, ok := m[configKey].(map[string]interface{}); ok {
+		return val
+	}
+	return make(map[string]interface{})
+}
+
 func (h *WebSocketHandler) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	h.hub.ServeWebSocket(w, r, h.HandleMessage)
 }
