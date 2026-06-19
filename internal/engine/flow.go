@@ -304,6 +304,7 @@ func (f *Flow) Clone() *Flow {
 		clone.Nodes[k] = &Node{
 			ID:       v.ID,
 			Type:     v.Type,
+			Name:     v.Name,
 			Config:   cloneMap(v.Config),
 			X:        v.X,
 			Y:        v.Y,

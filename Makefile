@@ -35,8 +35,16 @@ run: go.mod
 	$(GOCMD) run ./$(CMD_DIR)
 
 test: go.mod
-	@echo "Running tests..."
+	@echo "Running Go backend tests..."
 	$(GOTEST) -v -race ./...
+
+# Run frontend tests
+test-frontend:
+	@echo "Running frontend tests..."
+	cd web && npm test
+
+# Run all tests
+test-all: test test-frontend
 
 clean:
 	@echo "Cleaning..."
