@@ -452,6 +452,38 @@ func (e *FlowEngine) GetAllFlows() []*Flow {
 	return flows
 }
 
+// FlowSummary represents a summary of a flow for listings
+type FlowSummary struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	Status      FlowStatus `json:"status"`
+	NodeCount   int       `json:"nodeCount"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// GetAllFlowsSummary returns a summary of all flows for listings
+func (e *FlowEngine) GetAllFlowsSummary() []FlowSummary {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	
+	summaries := make([]FlowSummary, 0, len(e.flows))
+	for _, activeFlow := range e.flows {
+		flow := activeFlow.Flow
+		summaries = append(summaries, FlowSummary{
+			ID:          flow.ID,
+			Name:        flow.Name,
+			Description: flow.Description,
+			Status:      flow.Status,
+			NodeCount:   len(flow.Nodes),
+			CreatedAt:   flow.CreatedAt,
+			UpdatedAt:   flow.UpdatedAt,
+		})
+	}
+	return summaries
+}
+
 // GetFlowStatus returns the status of a flow.
 func (e *FlowEngine) GetFlowStatus(flowID string) (FlowStatus, error) {
 	e.mu.RLock()

@@ -349,7 +349,7 @@ func (h *WebSocketHandler) handleFlowUpdate(client *Client, flowID string, flowD
 	log.Printf("[BACKEND] handleFlowUpdate - Converting flow to frontend format")
 	flowResponse := convertFlowToFrontend(flow)
 	h.BroadcastToClient(client, MessageTypeFlowUpdate, flowResponse)
-	h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlows())
+	h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlowsSummary())
 }
 
 func (h *WebSocketHandler) handleFlowDelete(client *Client, flowID string) {
@@ -367,7 +367,7 @@ func (h *WebSocketHandler) handleFlowDelete(client *Client, flowID string) {
 	h.hub.Broadcast(MessageTypeFlowDelete, map[string]interface{}{
 		"flowId": flowID,
 	})
-	h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlows())
+	h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlowsSummary())
 }
 
 func (h *WebSocketHandler) handleFlowDeploy(client *Client, flowID string, force bool) {
@@ -416,7 +416,7 @@ func (h *WebSocketHandler) handleFlowDeploy(client *Client, flowID string, force
 		"flowId": flowID,
 		"status": "deployed",
 	})
-	h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlows())
+	h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlowsSummary())
 }
 
 func (h *WebSocketHandler) handleFlowUndeploy(client *Client, flowID string) {
@@ -440,7 +440,7 @@ func (h *WebSocketHandler) handleFlowUndeploy(client *Client, flowID string) {
 		"flowId": flowID,
 		"status": "inactive",
 	})
-	h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlows())
+	h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlowsSummary())
 }
 
 func (h *WebSocketHandler) handleNodeAdd(client *Client, nodeData struct {
