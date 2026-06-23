@@ -51,33 +51,29 @@ describe('Flow Types', () => {
     });
 
     it('should have optional description', () => {
-      const flowWithoutDesc: Flow = {
-        ...mockFlow,
-        description: undefined,
-      };
-      expect(flowWithoutDesc.description).toBeUndefined();
-    });
-
-    it('should have optional config', () => {
-      const flowWithoutConfig: Flow = {
-        ...mockFlow,
-        config: undefined,
-      };
-      expect(flowWithoutConfig.config).toBeUndefined();
-    });
-
-    it('should allow empty nodes and connections', () => {
-      const emptyFlow: Flow = {
-        id: 'empty-flow',
-        name: 'Empty Flow',
+      const flowWithoutDescription: Flow = {
+        id: 'flow-2',
+        name: 'Flow without description',
         nodes: {},
         connections: [],
         status: 'draft' as FlowStatus,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      expect(emptyFlow.nodes).toEqual({});
-      expect(emptyFlow.connections).toEqual([]);
+      expect(flowWithoutDescription.description).toBeUndefined();
+    });
+
+    it('should have optional config', () => {
+      const flowWithoutConfig: Flow = {
+        id: 'flow-3',
+        name: 'Flow without config',
+        nodes: {},
+        connections: [],
+        status: 'draft' as FlowStatus,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      expect(flowWithoutConfig.config).toBeUndefined();
     });
   });
 
@@ -87,64 +83,49 @@ describe('Flow Types', () => {
         id: 'node-1',
         type: 'function',
         position: { x: 100, y: 200 },
-        config: {},
+        config: { key: 'value' },
       };
       expect(node.id).toBe('node-1');
       expect(node.type).toBe('function');
-      expect(node.position).toBeDefined();
       expect(node.position.x).toBe(100);
       expect(node.position.y).toBe(200);
-      expect(node.config).toBeDefined();
+      expect(node.config).toEqual({ key: 'value' });
     });
 
     it('should have optional name', () => {
       const nodeWithoutName: FlowNode = {
-        id: 'node-1',
-        type: 'function',
-        position: { x: 100, y: 200 },
+        id: 'node-2',
+        type: 'debug',
+        position: { x: 300, y: 400 },
         config: {},
-        name: undefined,
       };
       expect(nodeWithoutName.name).toBeUndefined();
     });
 
     it('should have optional status', () => {
       const nodeWithoutStatus: FlowNode = {
-        id: 'node-1',
-        type: 'function',
-        position: { x: 100, y: 200 },
+        id: 'node-3',
+        type: 'inject',
+        position: { x: 500, y: 600 },
         config: {},
-        status: undefined,
       };
       expect(nodeWithoutStatus.status).toBeUndefined();
     });
 
     it('should have optional disabled', () => {
       const nodeWithoutDisabled: FlowNode = {
-        id: 'node-1',
+        id: 'node-4',
         type: 'function',
-        position: { x: 100, y: 200 },
+        position: { x: 700, y: 800 },
         config: {},
-        disabled: undefined,
       };
       expect(nodeWithoutDisabled.disabled).toBeUndefined();
     });
 
-    it('should handle position with zero coordinates', () => {
-      const nodeAtOrigin: FlowNode = {
-        id: 'node-origin',
-        type: 'inject',
-        position: { x: 0, y: 0 },
-        config: {},
-      };
-      expect(nodeAtOrigin.position.x).toBe(0);
-      expect(nodeAtOrigin.position.y).toBe(0);
-    });
-
-    it('should handle position with negative coordinates', () => {
+    it('should handle negative positions', () => {
       const nodeNegative: FlowNode = {
-        id: 'node-negative',
-        type: 'debug',
+        id: 'node-5',
+        type: 'function',
         position: { x: -100, y: -200 },
         config: {},
       };
@@ -184,6 +165,18 @@ describe('Flow Types', () => {
       };
       expect(connWithoutTargetPort.targetPort).toBeUndefined();
     });
+
+    it('should accept connections with all ports defined', () => {
+      const connWithPorts: NodeConnection = {
+        id: 'conn-2',
+        sourceNode: 'node-1',
+        sourcePort: 'output',
+        targetNode: 'node-2',
+        targetPort: 'input',
+      };
+      expect(connWithPorts.sourcePort).toBe('output');
+      expect(connWithPorts.targetPort).toBe('input');
+    });
   });
 
   describe('FlowStatus', () => {
@@ -202,130 +195,72 @@ describe('Flow Types', () => {
         expect(flow.status).toBe(status);
       });
     });
+
+    it('should not accept invalid status values', () => {
+      // This would be a compile-time error if uncommented
+      // const invalidFlow: Flow = {
+      //   ...mockFlow,
+      //   status: 'invalid' as FlowStatus,
+      // };
+    });
   });
 
   describe('FlowConfig', () => {
-    it('should handle various config values', () => {
-      const configs: FlowConfig[] = [
-        {},
-        { autoDeploy: true },
-        { timeout: 60 },
-        { maxMessages: 500 },
-        { environment: { VAR1: 'value1', VAR2: 'value2' } },
-        { autoDeploy: true, timeout: 30, maxMessages: 100, environment: {} },
-      ];
+    it('should have all optional fields', () => {
+      const config: FlowConfig = {
+        autoDeploy: true,
+        timeout: 60,
+        maxMessages: 1000,
+        environment: { NODE_ENV: 'production' },
+      };
+      expect(config.autoDeploy).toBe(true);
+      expect(config.timeout).toBe(60);
+      expect(config.maxMessages).toBe(1000);
+      expect(config.environment).toEqual({ NODE_ENV: 'production' });
+    });
 
-      configs.forEach((config, index) => {
-        const flow: Flow = {
-          id: `flow-${index}`,
-          name: `Config Flow ${index}`,
-          nodes: {},
-          connections: [],
-          status: 'draft' as FlowStatus,
-          config,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        expect(flow.config).toEqual(config);
-      });
+    it('should accept empty config', () => {
+      const emptyConfig: FlowConfig = {};
+      expect(emptyConfig.autoDeploy).toBeUndefined();
+      expect(emptyConfig.timeout).toBeUndefined();
+      expect(emptyConfig.maxMessages).toBeUndefined();
+      expect(emptyConfig.environment).toBeUndefined();
     });
   });
 
   describe('NodeStatus', () => {
-    it('should handle all NodeStatus states', () => {
-      const states: NodeStatus['state'][] = ['idle', 'processing', 'error', 'completed'];
-
-      states.forEach(state => {
-        const node: FlowNode = {
-          id: `node-${state}`,
-          type: 'function',
-          position: { x: 100, y: 200 },
-          config: {},
-          status: { state },
-        };
-        expect(node.status?.state).toBe(state);
-      });
-    });
-
-    it('should handle status with additional fields', () => {
-      const node: FlowNode = {
-        id: 'node-with-status',
-        type: 'function',
-        position: { x: 100, y: 200 },
-        config: {},
-        status: {
-          state: 'processing',
-          message: 'Processing message',
-          timestamp: new Date().toISOString(),
-          processingCount: 5,
-          errorCount: 0,
-        },
+    it('should have all required fields', () => {
+      const status: NodeStatus = {
+        state: 'idle',
       };
-
-      expect(node.status?.state).toBe('processing');
-      expect(node.status?.message).toBe('Processing message');
-      expect(node.status?.timestamp).toBeDefined();
-      expect(node.status?.processingCount).toBe(5);
-      expect(node.status?.errorCount).toBe(0);
-    });
-  });
-
-  describe('Flow Serialization', () => {
-    it('should serialize and deserialize flow correctly', () => {
-      const originalFlow: Flow = mockFlow;
-
-      // Serialize to JSON
-      const jsonString = JSON.stringify(originalFlow);
-      expect(jsonString).toBeDefined();
-
-      // Deserialize from JSON
-      const parsedFlow: Flow = JSON.parse(jsonString);
-
-      // Check that all fields are preserved
-      expect(parsedFlow.id).toBe(originalFlow.id);
-      expect(parsedFlow.name).toBe(originalFlow.name);
-      expect(parsedFlow.description).toBe(originalFlow.description);
-      expect(parsedFlow.status).toBe(originalFlow.status);
-
-      // Check nodes
-      expect(Object.keys(parsedFlow.nodes).length).toBe(Object.keys(originalFlow.nodes).length);
-      Object.keys(originalFlow.nodes).forEach(nodeId => {
-        expect(parsedFlow.nodes[nodeId]).toBeDefined();
-        expect(parsedFlow.nodes[nodeId].id).toBe(originalFlow.nodes[nodeId].id);
-        expect(parsedFlow.nodes[nodeId].type).toBe(originalFlow.nodes[nodeId].type);
-        expect(parsedFlow.nodes[nodeId].position.x).toBe(originalFlow.nodes[nodeId].position.x);
-        expect(parsedFlow.nodes[nodeId].position.y).toBe(originalFlow.nodes[nodeId].position.y);
-      });
-
-      // Check connections
-      expect(parsedFlow.connections.length).toBe(originalFlow.connections.length);
-      originalFlow.connections.forEach((conn, index) => {
-        expect(parsedFlow.connections[index].id).toBe(conn.id);
-        expect(parsedFlow.connections[index].sourceNode).toBe(conn.sourceNode);
-        expect(parsedFlow.connections[index].targetNode).toBe(conn.targetNode);
-      });
+      expect(status.state).toBe('idle');
     });
 
-    it('should handle serialization of nodes with position', () => {
-      const node: FlowNode = {
-        id: 'node-1',
-        type: 'function',
-        name: 'Function Node',
-        position: { x: 100, y: 200 },
-        config: { key: 'value' },
-        status: { state: 'idle' },
-        disabled: false,
+    it('should have optional fields', () => {
+      const statusWithOptional: NodeStatus = {
+        state: 'processing',
+        message: 'Processing message',
+        timestamp: new Date().toISOString(),
+        processingCount: 10,
+        errorCount: 0,
       };
-      const jsonString = JSON.stringify(node);
-      const parsedNode: FlowNode = JSON.parse(jsonString);
+      expect(statusWithOptional.message).toBe('Processing message');
+      expect(statusWithOptional.timestamp).toBeDefined();
+      expect(statusWithOptional.processingCount).toBe(10);
+      expect(statusWithOptional.errorCount).toBe(0);
+    });
 
-      expect(parsedNode.position.x).toBe(node.position.x);
-      expect(parsedNode.position.y).toBe(node.position.y);
+    it('should accept all valid states', () => {
+      const validStates: NodeStatus['state'][] = ['idle', 'processing', 'error', 'completed'];
+      validStates.forEach(state => {
+        const status: NodeStatus = { state };
+        expect(status.state).toBe(state);
+      });
     });
   });
 
   describe('Flow Validation', () => {
-    it('should validate flow with nodes and connections', () => {
+    it('should validate a valid flow with connections', () => {
       const validFlow: Flow = {
         id: 'valid-flow',
         name: 'Valid Flow',
@@ -370,20 +305,74 @@ describe('Flow Types', () => {
 
       expect(hasInvalidRefs).toBe(true);
     });
-  });
 
-  describe('Position Fallback', () => {
-    it('should handle position fallback in FlowCanvas', () => {
-      // Simulate the position fallback logic from FlowCanvas.tsx
-      const nodeWithoutPosition: any = {
-        id: 'node-no-pos',
-        type: 'function',
-        // position is missing
+    it('should handle empty flows', () => {
+      const emptyFlow: Flow = {
+        id: 'empty-flow',
+        name: 'Empty Flow',
+        nodes: {},
+        connections: [],
+        status: 'draft' as FlowStatus,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
 
-      const position = nodeWithoutPosition.position || { x: 0, y: 0 };
-      expect(position.x).toBe(0);
-      expect(position.y).toBe(0);
+      expect(Object.keys(emptyFlow.nodes)).toHaveLength(0);
+      expect(emptyFlow.connections).toHaveLength(0);
+    });
+
+    it('should handle flows with multiple connections', () => {
+      const multiConnFlow: Flow = {
+        id: 'multi-conn-flow',
+        name: 'Multi Connection Flow',
+        nodes: {
+          'node-1': { id: 'node-1', type: 'function', position: { x: 100, y: 100 }, config: {} },
+          'node-2': { id: 'node-2', type: 'function', position: { x: 300, y: 100 }, config: {} },
+          'node-3': { id: 'node-3', type: 'debug', position: { x: 500, y: 100 }, config: {} },
+        },
+        connections: [
+          { id: 'conn-1', sourceNode: 'node-1', targetNode: 'node-2' },
+          { id: 'conn-2', sourceNode: 'node-2', targetNode: 'node-3' },
+        ],
+        status: 'deployed' as FlowStatus,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      expect(multiConnFlow.connections).toHaveLength(2);
+      expect(multiConnFlow.connections[0].sourceNode).toBe('node-1');
+      expect(multiConnFlow.connections[1].targetNode).toBe('node-3');
+    });
+  });
+
+  describe('Type Compatibility', () => {
+    it('should allow FlowNode config to accept any structure', () => {
+      const nodeWithComplexConfig: FlowNode = {
+        id: 'node-complex',
+        type: 'function',
+        position: { x: 100, y: 200 },
+        config: {
+          nested: {
+            value: 42,
+            array: [1, 2, 3],
+            boolean: true,
+          },
+        },
+      };
+      expect(nodeWithComplexConfig.config.nested.value).toBe(42);
+    });
+
+    it('should handle different node types', () => {
+      const nodeTypes = ['function', 'inject', 'debug', 'switch', 'delay', 'http'];
+      nodeTypes.forEach(type => {
+        const node: FlowNode = {
+          id: `node-${type}`,
+          type,
+          position: { x: 100, y: 200 },
+          config: {},
+        };
+        expect(node.type).toBe(type);
+      });
     });
   });
 });

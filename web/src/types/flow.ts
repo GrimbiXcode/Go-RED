@@ -3,9 +3,9 @@
 export interface NodeConnection {
   id: string;
   sourceNode: string;
-  sourcePort: string;
+  sourcePort?: string;
   targetNode: string;
-  targetPort: string;
+  targetPort?: string;
 }
 
 export interface Flow {
