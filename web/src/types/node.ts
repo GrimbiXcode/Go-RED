@@ -91,7 +91,3 @@ export interface NodePaletteItem {
   description?: string;
   tags?: string[];
 }
-
-export interface NodeRegistry {
-  [nodeType: string]: NodeMetadata;
-}

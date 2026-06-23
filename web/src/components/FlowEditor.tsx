@@ -253,7 +253,6 @@ export function FlowEditor() {
               onNodeDeselect={handleNodeDeselect}
               onAddNode={addNode}
               onRemoveNode={removeNode}
-              onUpdateNode={updateNode}
               onAddConnection={addConnection}
               onRemoveConnection={removeConnection}
             />

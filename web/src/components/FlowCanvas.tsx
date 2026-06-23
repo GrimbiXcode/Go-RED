@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import ReactFlow, {
   ReactFlowProvider,
   Background,
@@ -13,11 +13,14 @@ import ReactFlow, {
   EdgeTypes,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import type { Flow, FlowNode, NodeConnection } from '../types/flow';
+import type { Flow, FlowNode, NodeConnection, NodeRegistry } from '../types/flow';
 import { NodeComponent } from './NodeComponent';
+import { InjectNode } from './InjectNode';
+import { DebugNode } from './DebugNode';
 
 interface FlowCanvasProps {
   flow: Flow | null;
+  availableNodeTypes?: NodeRegistry;
   onNodeSelect: (node: FlowNode) => void;
   onNodeDeselect: () => void;
   onAddNode: (nodeType: string, position: { x: number; y: number }) => void;
@@ -26,22 +29,30 @@ interface FlowCanvasProps {
   onRemoveConnection: (connectionId: string) => void;
 }
 
-const nodeTypes: NodeTypes = {
+const nodeTypeComponents: NodeTypes = {
   default: NodeComponent,
+  inject: InjectNode,
+  debug: DebugNode,
 };
 
 const edgeTypes: EdgeTypes = {};
 
-function flowNodeToReactFlowNode(flowNode: FlowNode): Node {
+function flowNodeToReactFlowNode(flowNode: FlowNode, nodeTypes: NodeRegistry, flowId?: string): Node {
   // Ensure position is always defined with default values if missing
   const position = flowNode.position || { x: 0, y: 0 };
+  
+  // Get metadata for this node type
+  const metadata = nodeTypes[flowNode.type] || null;
+  
   return {
     id: flowNode.id,
-    type: 'default',
+    type: flowNode.type || 'default',
     position: position,
     data: {
-      label: flowNode.type,
+      label: flowNode.name || flowNode.type,
       node: flowNode,
+      metadata: metadata,
+      flowId: flowId,
     },
   };
 }
@@ -58,6 +69,7 @@ function connectionToEdge(connection: NodeConnection): Edge {
 
 export function FlowCanvas({
   flow,
+  availableNodeTypes,
   onNodeSelect,
   onNodeDeselect,
   onAddNode,
@@ -70,12 +82,14 @@ export function FlowCanvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const { screenToFlowPosition } = useReactFlow();
 
+  const nodeRegistry = availableNodeTypes || {};
+
   const flowNodes = useMemo(() => {
     if (!flow) return [];
     const nodes = Object.values(flow.nodes);
     console.log('[FlowCanvas] flowNodes - Converting nodes:', nodes.map(n => ({id: n.id, position: n.position})));
-    return nodes.map(flowNodeToReactFlowNode);
-  }, [flow]);
+    return nodes.map(node => flowNodeToReactFlowNode(node, nodeRegistry, flow.id));
+  }, [flow, nodeRegistry]);
 
   const flowEdges = useMemo(() => {
     if (!flow) return [];
@@ -194,7 +208,7 @@ export function FlowCanvas({
           onNodeDragStop={onNodeDragStop}
           onNodesDelete={onNodesDelete}
           onEdgesDelete={onEdgesDelete}
-          nodeTypes={nodeTypes}
+          nodeTypes={nodeTypeComponents}
           edgeTypes={edgeTypes}
           fitView
           fitViewOptions={{ padding: 0.5 }}

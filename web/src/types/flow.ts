@@ -63,3 +63,9 @@ export interface FlowState {
   activeFlows: string[];
   lastUpdated: string;
 }
+
+// Node registry type for available node types
+// Using any to avoid circular dependency with node.ts
+export interface NodeRegistry {
+  [nodeType: string]: any;
+}

@@ -185,6 +185,22 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
 			"status":  "received",
 			"message": "Message log acknowledged",
 		})
+	case "message:send":
+		var msgData struct {
+			FlowID  string                 `json:"flowId"`
+			NodeID  string                 `json:"nodeId"`
+			Payload map[string]interface{} `json:"payload"`
+		}
+		if err := json.Unmarshal(data, &msgData); err == nil {
+			log.Printf("[WEBSOCKET] Handling message:send - flowId: %s, nodeId: %s, payload: %v", msgData.FlowID, msgData.NodeID, msgData.Payload)
+			h.handleMessageSend(client, msgData.FlowID, msgData.NodeID, msgData.Payload)
+		} else {
+			log.Printf("[WEBSOCKET] message:send parse error: %v, data: %s", err, string(data))
+			h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
+				"error":   "failed to parse message send request",
+				"message": err.Error(),
+			})
+		}
 
 	// Unknown message type
 	default:
@@ -733,6 +749,30 @@ func (h *WebSocketHandler) handleStateSync(client *Client) {
 	}
 	
 	h.BroadcastToClient(client, MessageTypeStateSync, state)
+}
+
+func (h *WebSocketHandler) handleMessageSend(client *Client, flowID, nodeID string, payload map[string]interface{}) {
+	log.Printf("Handling message:send request - flowId: %s, nodeId: %s", flowID, nodeID)
+	
+	// Inject the message into the specified flow at the specified node
+	err := h.flowEngine.InjectMessage(flowID, nodeID, payload)
+	if err != nil {
+		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
+			"error":   "failed to inject message",
+			"flowId":  flowID,
+			"nodeId":  nodeID,
+			"message": err.Error(),
+		})
+		return
+	}
+	
+	// Broadcast success
+	h.BroadcastToClient(client, MessageTypeMessageSend, map[string]interface{}{
+		"status":  "sent",
+		"flowId":  flowID,
+		"nodeId":  nodeID,
+		"message": "Message injected successfully",
+	})
 }
 
 // BroadcastToClient sends a message to a specific client

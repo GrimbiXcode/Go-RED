@@ -67,7 +67,8 @@ export type WebSocketMessageType =
   | 'info'
   | 'ping'
   | 'pong'
-  | 'state:sync';
+  | 'state:sync'
+  | 'node:inject';
 
 export interface FlowMessage extends Message {
   flowId: string;

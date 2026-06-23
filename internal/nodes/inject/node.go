@@ -139,6 +139,7 @@ func (n *InjectNode) Stop() {
 	close(n.done)
 	if n.ticker != nil {
 		n.ticker.Stop()
+		n.ticker = nil
 	}
 }
 
