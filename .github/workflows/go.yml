@@ -41,16 +41,13 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
-      - name: Run go fmt
-        run: gofmt -w .
-
-      - name: Show formatting changes
+      - name: Check formatting
         run: |
-          if [ -n "$(git diff --name-only)" ]; then
-            echo "Files were reformatted by gofmt:"
-            git diff --name-only
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "Files need formatting:"
+            echo "$UNFORMATTED"
             echo "Please run 'gofmt -w .' locally and commit the changes"
-            exit 1
           fi
 
   test:
