@@ -222,3 +222,175 @@ func TestFlowIntegration_NodeInitialization(t *testing.T) {
 		log.Printf("[DEBUG] Successfully initialized inject, function, and debug nodes")
 	})
 }
+
+func TestInjectNode_ManualInjection(t *testing.T) {
+	t.Run("should inject message when triggered via InjectMessage", func(t *testing.T) {
+		registry := registry.GetGlobalRegistry()
+		config := EngineConfig{
+			WorkerPoolSize:    5,
+			MessageBufferSize: 100,
+			DefaultTimeout:    5 * time.Second,
+		}
+		engine := NewFlowEngine(config, registry)
+		engine.Start()
+		defer engine.Stop()
+
+		flow := NewFlow("test-manual-inject", "Manual Inject Test")
+
+		// Inject node with no interval (manual only)
+		flow.Nodes["inject"] = &Node{
+			ID:   "inject",
+			Type: "inject",
+			Config: map[string]interface{}{
+				"payload":    map[string]interface{}{"manualTest": true, "data": "manual"},
+				"interval":  float64(0), // No interval - manual only
+				"injectOnce": false,
+			},
+		}
+
+		// Debug node to capture output
+		flow.Nodes["debug"] = &Node{
+			ID:   "debug",
+			Type: "debug",
+			Config: map[string]interface{}{
+				"enabled":         true,
+				"outputToConsole": false,
+				"maxBufferSize":   10,
+				"prefix":          "[MANUAL-TEST]",
+			},
+		}
+
+		// Connect inject to debug
+		flow.Connections = []NodeConnection{
+			{
+				ID:          "conn-1",
+				SourceNode:  "inject",
+				TargetNode:  "debug",
+			},
+		}
+
+		err := engine.Deploy(flow)
+		require.NoError(t, err)
+		defer engine.Undeploy(flow.ID)
+
+		log.Printf("[DEBUG] Manual inject flow deployed")
+
+		// Manually inject a message
+		testPayload := map[string]interface{}{
+			"manualTrigger": true,
+			"timestamp":    time.Now().Unix(),
+		}
+		err = engine.InjectMessage(flow.ID, "inject", testPayload)
+		require.NoError(t, err)
+
+		// Wait for processing
+		time.Sleep(100 * time.Millisecond)
+
+		// Check that messages were processed
+		messages := engine.GetMessageLogForFlow(flow.ID)
+		log.Printf("[DEBUG] Manual inject: Total messages processed: %d", len(messages))
+
+		// Should have at least 1 message from manual injection
+		assert.GreaterOrEqual(t, len(messages), 1, "Expected at least 1 message from manual injection")
+
+		// Verify the payload was sent
+		found := false
+		for _, msg := range messages {
+			payload := msg.Payload
+			if manualVal, exists := payload["manualTrigger"]; exists {
+				assert.Equal(t, true, manualVal)
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Expected to find manual injection message in log")
+
+		log.Printf("[DEBUG] Manual injection test passed")
+	})
+}
+
+func TestDebugNode_Logging(t *testing.T) {
+	t.Run("should log messages and store in buffer", func(t *testing.T) {
+		registry := registry.GetGlobalRegistry()
+		config := EngineConfig{
+			WorkerPoolSize:    5,
+			MessageBufferSize: 100,
+			DefaultTimeout:    5 * time.Second,
+		}
+		engine := NewFlowEngine(config, registry)
+		engine.Start()
+		defer engine.Stop()
+
+		flow := NewFlow("test-debug-logging", "Debug Logging Test")
+
+		// Inject node
+		flow.Nodes["inject"] = &Node{
+			ID:   "inject",
+			Type: "inject",
+			Config: map[string]interface{}{
+				"payload": map[string]interface{}{"logTest": true, "value": "test data"},
+			},
+		}
+
+		// Debug node with buffer enabled
+		flow.Nodes["debug"] = &Node{
+			ID:   "debug",
+			Type: "debug",
+			Config: map[string]interface{}{
+				"enabled":         true,
+				"outputToConsole": false, // Don't spam console
+				"maxBufferSize":   10,
+				"prefix":          "[LOG-TEST]",
+				"showTimestamp":   true,
+				"showPath":        true,
+			},
+		}
+
+		// Connect inject to debug
+		flow.Connections = []NodeConnection{
+			{
+				ID:          "conn-1",
+				SourceNode:  "inject",
+				TargetNode:  "debug",
+			},
+		}
+
+		err := engine.Deploy(flow)
+		require.NoError(t, err)
+		defer engine.Undeploy(flow.ID)
+
+		log.Printf("[DEBUG] Debug logging flow deployed")
+
+		// Inject a test message
+		testPayload := map[string]interface{}{
+			"test":   "debug logging",
+			"number": float64(123),
+		}
+		err = engine.InjectMessage(flow.ID, "inject", testPayload)
+		require.NoError(t, err)
+
+		// Wait for processing
+		time.Sleep(100 * time.Millisecond)
+
+		// Check message log
+		messages := engine.GetMessageLogForFlow(flow.ID)
+		log.Printf("[DEBUG] Debug logging: Total messages processed: %d", len(messages))
+
+		// Should have messages from the flow
+		assert.GreaterOrEqual(t, len(messages), 1, "Expected at least 1 message")
+
+		// Verify message contains our test data
+		found := false
+		for _, msg := range messages {
+			payload := msg.Payload
+			if testVal, exists := payload["test"]; exists {
+				assert.Equal(t, "debug logging", testVal)
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Expected to find test message in log")
+
+		log.Printf("[DEBUG] Debug logging test passed")
+	})
+}
