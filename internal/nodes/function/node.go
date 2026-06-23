@@ -154,20 +154,7 @@ func (n *FunctionNode) Validate() error {
 	if n.config.Code == "" {
 		return errors.New("code cannot be empty")
 	}
-	
-	oldVM := n.vm
-	oldFunc := n.compiledFunc
-	oldError := n.hasError
-	oldErrorMsg := n.errorMessage
-	
-	err := n.compileCode()
-	
-	n.vm = oldVM
-	n.compiledFunc = oldFunc
-	n.hasError = oldError
-	n.errorMessage = oldErrorMsg
-	
-	return err
+	return n.compileCode()
 }
 
 func (n *FunctionNode) GetConfig() map[string]interface{} {

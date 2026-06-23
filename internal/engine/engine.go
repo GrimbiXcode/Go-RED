@@ -222,6 +222,8 @@ func (e *FlowEngine) processMessage(msg Message) {
 	// Add message to log for debugging
 	e.AddMessageToLog(msg)
 
+	log.Printf("[DEBUG] Processing message %s for flow %s, path: %v", msg.ID, msg.FlowID, msg.Path)
+
 	e.mu.RLock()
 	activeFlow, exists := e.flows[msg.FlowID]
 	e.mu.RUnlock()
@@ -377,8 +379,10 @@ func (e *FlowEngine) Deploy(flow *Flow) error {
 	activeFlow.ctx, activeFlow.cancel = context.WithCancel(e.ctx)
 	
 	// Initialize all nodes in the flow
+	log.Printf("[DEBUG] [ENGINE] Initializing %d nodes for flow %s", len(flow.Nodes), flow.ID)
 	log.Printf("[ENGINE] Initializing %d nodes for flow %s", len(flow.Nodes), flow.ID)
 	for nodeID, node := range flow.Nodes {
+		log.Printf("[DEBUG] [ENGINE] Initializing node %s of type %s with config: %v", nodeID, node.Type, node.Config)
 		log.Printf("[ENGINE] Initializing node %s of type %s", nodeID, node.Type)
 		executor, err := e.registry.InitializeNode(node.Type, node.Config)
 		if err != nil {
@@ -387,6 +391,7 @@ func (e *FlowEngine) Deploy(flow *Flow) error {
 			return errors.New("failed to initialize node " + nodeID + ": " + err.Error())
 		}
 		activeFlow.nodeExecutors[nodeID] = executor
+		log.Printf("[DEBUG] [ENGINE] Node %s initialized successfully", nodeID)
 		log.Printf("[ENGINE] Node %s initialized successfully", nodeID)
 	}
 	
