@@ -176,10 +176,19 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
 		h.BroadcastToClient(client, MessageTypePong, map[string]string{"message": "pong"})
 	case "state:sync":
 		h.handleStateSync(client)
+	case "message:log":
+		// Message log from backend - this can be safely ignored or used for debugging
+		log.Printf("[WEBSOCKET] Received message:log - data: %s", message.Data)
+		// For now, just acknowledge receipt with an info message
+		h.BroadcastToClient(client, MessageTypeInfo, map[string]interface{}{
+			"type":    "message:log",
+			"status":  "received",
+			"message": "Message log acknowledged",
+		})
 
 	// Unknown message type
 	default:
-		log.Printf("Unknown WebSocket message type: %s", messageType)
+		log.Printf("[WEBSOCKET] Unknown WebSocket message type: %s, data: %s", messageType, message.Data)
 		errorResponse := map[string]interface{}{
 			"error":   "unknown message type",
 			"type":    messageType,

@@ -347,13 +347,18 @@ func (e *FlowEngine) Deploy(flow *Flow) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	
+	log.Printf("[ENGINE] Deploying flow %s with %d nodes and %d connections", flow.ID, len(flow.Nodes), len(flow.Connections))
+	
 	// Validate the flow
 	if err := flow.Validate(); err != nil {
+		log.Printf("[ENGINE] Flow %s validation failed: %v", flow.ID, err)
 		return errors.New("invalid flow: " + err.Error())
 	}
+	log.Printf("[ENGINE] Flow %s validation passed", flow.ID)
 	
 	// Check if flow is already deployed
 	if _, exists := e.flows[flow.ID]; exists {
+		log.Printf("[ENGINE] Flow %s is already deployed", flow.ID)
 		return errors.New("flow " + flow.ID + " is already deployed")
 	}
 	
@@ -365,17 +370,24 @@ func (e *FlowEngine) Deploy(flow *Flow) error {
 		nodeExecutors: make(map[string]registry.NodeExecutor),
 	}
 	
+	// Update flow status to active
+	flow.Status = FlowStatusActive
+	
 	// Create context for this flow
 	activeFlow.ctx, activeFlow.cancel = context.WithCancel(e.ctx)
 	
 	// Initialize all nodes in the flow
+	log.Printf("[ENGINE] Initializing %d nodes for flow %s", len(flow.Nodes), flow.ID)
 	for nodeID, node := range flow.Nodes {
+		log.Printf("[ENGINE] Initializing node %s of type %s", nodeID, node.Type)
 		executor, err := e.registry.InitializeNode(node.Type, node.Config)
 		if err != nil {
 			activeFlow.cancel()
+			log.Printf("[ENGINE] Failed to initialize node %s: %v", nodeID, err)
 			return errors.New("failed to initialize node " + nodeID + ": " + err.Error())
 		}
 		activeFlow.nodeExecutors[nodeID] = executor
+		log.Printf("[ENGINE] Node %s initialized successfully", nodeID)
 	}
 	
 	// Start flow message processor
@@ -385,7 +397,7 @@ func (e *FlowEngine) Deploy(flow *Flow) error {
 	// Add to active flows
 	e.flows[flow.ID] = activeFlow
 	
-	log.Printf("Flow %s deployed successfully", flow.ID)
+	log.Printf("[ENGINE] Flow %s deployed successfully with %d initialized nodes", flow.ID, len(activeFlow.nodeExecutors))
 	return nil
 }
 
@@ -587,27 +599,29 @@ func (e *FlowEngine) LoadAllFlows() error {
 		return errors.New("no state manager configured")
 	}
 	
+	log.Printf("[ENGINE] Loading all flows from state manager")
+	
 	flows, err := e.stateManager.LoadAllFlows()
 	if err != nil {
+		log.Printf("[ENGINE] Failed to load flows: %v", err)
 		return errors.New("failed to load flows: " + err.Error())
 	}
 	
+	log.Printf("[ENGINE] Found %d flows to load", len(flows))
+	
 	for _, flow := range flows {
-		// Try to deploy the flow, but if it fails (e.g., validation), add it as inactive
+		log.Printf("[ENGINE] Loading flow %s with %d nodes and %d connections", flow.ID, len(flow.Nodes), len(flow.Connections))
+		// Try to deploy the flow, but if it fails (e.g., validation), log and skip
 		if err := e.Deploy(flow); err != nil {
-			log.Printf("Failed to deploy flow %s: %v", flow.ID, err)
-			// Add flow as inactive so it can still be accessed and edited
-			e.mu.Lock()
-			e.flows[flow.ID] = &ActiveFlow{
-				Flow:   flow,
-				Status: FlowStatusInactive,
-				msgChan: make(chan Message, e.config.MessageBufferSize),
-			}
-			e.mu.Unlock()
+			log.Printf("[ENGINE] Failed to deploy flow %s: %v", flow.ID, err)
+			// Don't add to e.flows - let it be loaded on demand via REST API
 			// Continue with other flows
+			continue
 		}
+		log.Printf("[ENGINE] Flow %s loaded and deployed successfully", flow.ID)
 	}
 	
+	log.Printf("[ENGINE] Loaded %d flows", len(flows))
 	return nil
 }
 

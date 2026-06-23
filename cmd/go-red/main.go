@@ -454,15 +454,46 @@ func handleDeleteFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
 
 func handleDeployFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
 	flowID := r.PathValue("id")
-	flow, err := e.GetFlow(flowID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	log.Printf("[REST API] Deploy request for flow: %s", flowID)
+	
+	// Check if flow is already deployed
+	if existingFlow, err := e.GetFlow(flowID); err == nil && existingFlow != nil {
+		log.Printf("[REST API] Flow %s is already deployed, returning success", flowID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "deployed",
+			"flowId":  flowID,
+			"message": "Flow was already deployed",
+		})
 		return
 	}
+	
+	// Flow not in memory, try to load from state manager
+	var flow *engine.Flow
+	if e.GetStateManager() != nil {
+		var err error
+		flow, err = e.GetStateManager().LoadFlow(flowID)
+		if err != nil {
+			log.Printf("[REST API] Failed to load flow %s from state manager: %v", flowID, err)
+			http.Error(w, "flow not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("[REST API] Loaded flow %s from state manager, deploying...", flowID)
+	} else {
+		log.Printf("[REST API] No state manager configured")
+		http.Error(w, "state manager not configured", http.StatusInternalServerError)
+		return
+	}
+	
+	// Deploy the flow
+	log.Printf("[REST API] Deploying flow %s with %d nodes and %d connections", flowID, len(flow.Nodes), len(flow.Connections))
 	if err := e.Deploy(flow); err != nil {
+		log.Printf("[REST API] Failed to deploy flow %s: %v", flowID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	
+	log.Printf("[REST API] Flow %s deployed successfully via REST API", flowID)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"status": "deployed", "flowId": flowID})
 }
