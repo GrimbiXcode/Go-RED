@@ -11,6 +11,7 @@ import (
     "os"
     "os/signal"
     "strconv"
+    "strings"
     "syscall"
     "time"
 
@@ -153,6 +154,26 @@ func parseFlags() Config {
     return config
 }
 
+// sanitizeString strips null bytes and caps the length of user-supplied
+// strings before they are stored or echoed back to a client.
+func sanitizeString(s string) string {
+    s = strings.ReplaceAll(s, "\x00", "")
+    if len(s) > 10000 {
+        s = s[:10000]
+    }
+    return s
+}
+
+// writeError logs the full error server-side and returns only a generic,
+// safe message to the client so internal details (file paths, wrapped
+// errors, etc.) are never exposed over the API.
+func writeError(w http.ResponseWriter, status int, publicMessage string, err error) {
+    if err != nil {
+        log.Printf("[ERROR] %s: %v", publicMessage, err)
+    }
+    http.Error(w, publicMessage, status)
+}
+
 // convertFlowToFrontendAPI converts a Go flow to frontend-compatible format for REST API
 func convertFlowToFrontendAPI(flow *engine.Flow) map[string]interface{} {
     // Convert nodes
@@ -243,13 +264,13 @@ func handleGetFlows(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine
         ID string `json:"id"`
         Name string `json:"name"`
         Description string `json:"description"`
-        Status engine.FlowStatus `json:"status"`
+        Status string `json:"status"`
         CreatedAt time.Time `json:"createdAt"`
         UpdatedAt time.Time `json:"updatedAt"`
     }
     response := make([]flowResponse, len(flows))
     for i, flow := range flows {
-        response[i] = flowResponse{ID: flow.ID, Name: flow.Name, Description: flow.Description, Status: flow.Status, CreatedAt: flow.CreatedAt, UpdatedAt: flow.UpdatedAt}
+        response[i] = flowResponse{ID: flow.ID, Name: flow.Name, Description: flow.Description, Status: convertFlowStatusAPI(flow.Status), CreatedAt: flow.CreatedAt, UpdatedAt: flow.UpdatedAt}
     }
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(response)
@@ -262,12 +283,14 @@ func handleCreateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
         Description string `json:"description"`
     }
     if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
+        writeError(w, http.StatusBadRequest, "invalid request body", err)
         return
     }
+    request.Name = sanitizeString(request.Name)
+    request.Description = sanitizeString(request.Description)
     flow, err := e.CreateFlow(request.ID, request.Name)
     if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
+        writeError(w, http.StatusInternalServerError, "failed to create flow", err)
         return
     }
     if request.Description != "" {
@@ -284,7 +307,7 @@ func handleGetFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine)
     flowID := r.PathValue("id")
     flow, err := e.GetFlow(flowID)
     if err != nil {
-        http.Error(w, err.Error(), http.StatusNotFound)
+        writeError(w, http.StatusNotFound, "flow not found", err)
         return
     }
     w.Header().Set("Content-Type", "application/json")
@@ -299,23 +322,23 @@ func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
     // First, read the raw request body to handle custom JSON structure
     var rawBody map[string]interface{}
     if err := json.NewDecoder(r.Body).Decode(&rawBody); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
+        writeError(w, http.StatusBadRequest, "invalid request body", err)
         return
     }
-    
+
     // Get existing flow
     flow, err := e.GetFlow(flowID)
     if err != nil {
-        http.Error(w, err.Error(), http.StatusNotFound)
+        writeError(w, http.StatusNotFound, "flow not found", err)
         return
     }
-    
+
     // Update flow fields
     if name, ok := rawBody["name"].(string); ok && name != "" {
-        flow.Name = name
+        flow.Name = sanitizeString(name)
     }
     if description, ok := rawBody["description"].(string); ok && description != "" {
-        flow.Description = description
+        flow.Description = sanitizeString(description)
     }
     
     // Update nodes - handle frontend position object
@@ -326,7 +349,7 @@ func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
                 if existingNode, exists := flow.Nodes[nodeID]; exists {
                     // Update existing node
                     if nodeType, ok := nodeMap["type"].(string); ok {
-                        existingNode.Type = nodeType
+                        existingNode.Type = sanitizeString(nodeType)
                     }
                     if config, ok := nodeMap["config"].(map[string]interface{}); ok {
                         existingNode.Config = config
@@ -348,7 +371,7 @@ func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
                         ID: nodeID,
                     }
                     if nodeType, ok := nodeMap["type"].(string); ok {
-                        newNode.Type = nodeType
+                        newNode.Type = sanitizeString(nodeType)
                     }
                     if config, ok := nodeMap["config"].(map[string]interface{}); ok {
                         newNode.Config = config
@@ -488,8 +511,7 @@ func handleDeployFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
     // Deploy the flow
     log.Printf("[REST API] Deploying flow %s with %d nodes and %d connections", flowID, len(flow.Nodes), len(flow.Connections))
     if err := e.Deploy(flow); err != nil {
-        log.Printf("[REST API] Failed to deploy flow %s: %v", flowID, err)
-        http.Error(w, err.Error(), http.StatusInternalServerError)
+        writeError(w, http.StatusInternalServerError, "failed to deploy flow "+flowID, err)
         return
     }
     
@@ -501,7 +523,7 @@ func handleDeployFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
 func handleUndeployFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
     flowID := r.PathValue("id")
     if err := e.Undeploy(flowID); err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
+        writeError(w, http.StatusInternalServerError, "failed to undeploy flow "+flowID, err)
         return
     }
     w.Header().Set("Content-Type", "application/json")
@@ -518,7 +540,7 @@ func handleGetNode(w http.ResponseWriter, r *http.Request, reg *registry.NodeReg
     nodeType := r.PathValue("type")
     metadata, err := reg.GetMetadata(nodeType)
     if err != nil {
-        http.Error(w, err.Error(), http.StatusNotFound)
+        writeError(w, http.StatusNotFound, "node type not found", err)
         return
     }
     w.Header().Set("Content-Type", "application/json")
@@ -562,10 +584,10 @@ func handleExportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
     // Get the flow
     flow, err := e.GetFlow(flowID)
     if err != nil {
-        http.Error(w, err.Error(), http.StatusNotFound)
+        writeError(w, http.StatusNotFound, "flow not found", err)
         return
     }
-    
+
     // Set headers for file download
     w.Header().Set("Content-Type", "application/json")
     w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=flow-%s.json", flowID))
@@ -604,10 +626,13 @@ func handleImportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
     }
     
     if err := json.NewDecoder(r.Body).Decode(&importData); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
+        writeError(w, http.StatusBadRequest, "invalid request body", err)
         return
     }
-    
+
+    importData.Name = sanitizeString(importData.Name)
+    importData.Description = sanitizeString(importData.Description)
+
     // Validate required fields
     if importData.Name == "" {
         http.Error(w, "Flow name is required", http.StatusBadRequest)
@@ -628,6 +653,8 @@ func handleImportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
         // Create a copy to avoid pointer issues
         newNode := *node
         newNode.ID = nodeID
+        newNode.Type = sanitizeString(newNode.Type)
+        newNode.Name = sanitizeString(newNode.Name)
         flow.Nodes[nodeID] = &newNode
     }
     
@@ -660,7 +687,7 @@ func handleImportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
     // Save the flow to state manager
     if e.GetStateManager() != nil {
         if err := e.GetStateManager().SaveFlow(flow); err != nil {
-            http.Error(w, fmt.Sprintf("Failed to save flow: %v", err), http.StatusInternalServerError)
+            writeError(w, http.StatusInternalServerError, "failed to save flow", err)
             return
         }
     }
