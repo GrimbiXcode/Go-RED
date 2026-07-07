@@ -58,6 +58,7 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
           config: flowData.config || {},
           createdAt: flowData.createdAt || new Date().toISOString(),
           updatedAt: flowData.updatedAt || new Date().toISOString(),
+          version: flowData.version || '1.0',
         });
       } catch {
         setError('Invalid JSON file');

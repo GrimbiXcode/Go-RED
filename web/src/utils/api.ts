@@ -5,7 +5,6 @@ import type {
   FlowUpdateRequest,
   FlowSummary,
   NodeMetadata,
-  PluginInfo,
   DeployRequest,
   DeployResponse,
   UndeployRequest,
@@ -124,11 +123,6 @@ export const getNode = async (nodeType: string): Promise<NodeMetadata> => {
   return response;
 };
 
-export const getPlugins = async (): Promise<PluginInfo[]> => {
-  const response = await apiRequest<PluginInfo[]>('GET', '/plugins');
-  return response || [];
-};
-
 export const getWebSocketUrl = (): string => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.host;
@@ -145,7 +139,7 @@ export const generateId = (): string => {
 
 // Export a flow by downloading it as a JSON file
 export const exportFlow = async (flowId: string): Promise<void> => {
-  const response = await apiRequest<Record<string, any>>('GET', `/flows/${flowId}/export`);
+  const response = await apiRequest<Flow>('GET', `/flows/${flowId}/export`);
   if (!response) {
     throw new Error('No data in response');
   }
@@ -167,15 +161,15 @@ export const exportFlow = async (flowId: string): Promise<void> => {
 export const importFlow = async (file: File): Promise<{ flowId: string; name: string; message: string }> => {
   // Read file content
   const content = await file.text();
-  const flowData = JSON.parse(content);
-  
+  const flowData: Flow = JSON.parse(content);
+
   const response = await apiRequest<{
     status: string;
     flowId: string;
     originalId: string;
     name: string;
     message: string;
-  }, typeof flowData>('POST', '/flows/import', flowData);
+  }, Flow>('POST', '/flows/import', flowData);
   
   if (!response) {
     throw new Error('No data in response');

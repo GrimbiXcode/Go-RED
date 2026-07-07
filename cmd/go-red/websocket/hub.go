@@ -26,8 +26,6 @@ const (
     MessageTypeFlowDeploy  MessageType = "flow:deploy"
     MessageTypeFlowUndeploy MessageType = "flow:undeploy"
     MessageTypeFlowStatus  MessageType = "flow:status"
-    MessageTypeFlowExport  MessageType = "flow:export"
-    MessageTypeFlowImport  MessageType = "flow:import"
 
     // Node-related message types
     MessageTypeNodeAdd     MessageType = "node:add"
@@ -39,22 +37,49 @@ const (
     // Connection-related message types
     MessageTypeConnectionAdd    MessageType = "connection:add"
     MessageTypeConnectionRemove MessageType = "connection:remove"
-    MessageTypeConnectionUpdate MessageType = "connection:update"
 
     // Message-related message types
     MessageTypeMessageSend  MessageType = "message:send"
     MessageTypeMessageLog   MessageType = "message:log"
-    MessageTypeMessageDebug MessageType = "message:debug"
 
     // System message types
     MessageTypeError   MessageType = "error"
-    MessageTypeWarning MessageType = "warning"
     MessageTypeInfo    MessageType = "info"
     MessageTypePing    MessageType = "ping"
     MessageTypePong    MessageType = "pong"
     MessageTypeStateSync MessageType = "state:sync"
     MessageTypeAll     MessageType = "*"
 )
+
+// AllMessageTypes lists every MessageType constant. It exists purely so
+// cmd/gentypes can enumerate this enum via reflection (Go has no way to
+// list const declarations at runtime) — keep it in sync when adding or
+// removing a MessageType constant above.
+var AllMessageTypes = []MessageType{
+    MessageTypeFlowList,
+    MessageTypeFlowGet,
+    MessageTypeFlowCreate,
+    MessageTypeFlowUpdate,
+    MessageTypeFlowDelete,
+    MessageTypeFlowDeploy,
+    MessageTypeFlowUndeploy,
+    MessageTypeFlowStatus,
+    MessageTypeNodeAdd,
+    MessageTypeNodeRemove,
+    MessageTypeNodeUpdate,
+    MessageTypeNodeConfig,
+    MessageTypeNodeStatus,
+    MessageTypeConnectionAdd,
+    MessageTypeConnectionRemove,
+    MessageTypeMessageSend,
+    MessageTypeMessageLog,
+    MessageTypeError,
+    MessageTypeInfo,
+    MessageTypePing,
+    MessageTypePong,
+    MessageTypeStateSync,
+    MessageTypeAll,
+}
 
 // WebSocketMessage represents a message sent or received over WebSocket
 type WebSocketMessage struct {

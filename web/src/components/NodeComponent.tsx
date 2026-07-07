@@ -45,7 +45,7 @@ export function NodeComponent({ data, selected }: NodeComponentProps) {
   const { label, node, metadata } = data;
   
   const icon = metadata?.icon || categoryIcons[metadata?.category || 'custom'] || '⚙️';
-  const color = metadata?.color || categoryColors[metadata?.category || 'custom'] || 'bg-gray-500';
+  const color = categoryColors[metadata?.category || 'custom'] || 'bg-gray-500';
 
   const getStatusColor = () => {
     if (!node.status) return 'bg-gray-200';

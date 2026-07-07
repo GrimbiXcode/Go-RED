@@ -52,7 +52,7 @@ Message (Data unit)
 ├── Path: []string (node traversal history)
 ├── Context: context.Context
 ├── Timestamp: time.Time
-└── Metadata: map[string]interface{}
+└── Metadata: map[string]string
 ```
 
 ---
@@ -455,10 +455,20 @@ FlowEngine events → Hub.Broadcast() → All connected clients
 - Message logging can be streamed (future enhancement)
 
 ### Frontend-Backend Contract
-- Follow existing patterns in `cmd/go-red/main.go`
-- REST API endpoints use `/api/*` prefix
-- WebSocket endpoint is `/ws`
-- Message formats must match TypeScript types in `web/src/types/`
+- REST API endpoints use `/api/*` prefix; WebSocket endpoint is `/ws`.
+- The canonical wire contract lives in `internal/dto` (+ `internal/registry` for
+  node metadata, + `cmd/go-red/websocket` for the envelope/enum) — **not** in
+  `internal/engine`. Engine types (`Flow`, `Node`, `Message`, `FlowConfig`, ...)
+  are the internal representation and use `time.Duration`/the internal
+  `FlowStatus` enum; `internal/dto.ToWire`/`FromWire`-style conversions are the
+  only place that translates between internal and wire shapes.
+- TypeScript types are generated from the Go DTOs into
+  `web/src/types/generated.ts` via `go generate ./internal/dto/...` (or
+  `make generate-types`) — do not hand-describe the wire shape here or in TS.
+  CI fails if `generated.ts` drifts from the Go structs.
+- See the "Interface-Verifikation" section below for the required steps
+  whenever you touch anything under `internal/dto/`, `internal/registry`, or
+  `cmd/go-red/websocket`.
 
 ---
 
@@ -499,3 +509,37 @@ Before committing changes to the engine:
 
 *Last updated: 2026-06-21*
 *Overrides: None (extends internal/AGENTS.md and root AGENTS.md)*
+
+---
+
+## Interface-Verifikation (PFLICHT bei Änderungen an Interfaces)
+
+Trigger: Diese Schritte IMMER ausführen, bevor eine Änderung als fertig gilt, wenn eine der
+folgenden Dateien/Verzeichnisse angefasst wurde:
+- `internal/dto/**`
+- `internal/registry/registry.go` (NodeMetadata/Port/Property/Schema)
+- `cmd/go-red/websocket/hub.go` (WebSocketMessage/MessageType)
+- irgendeine Datei unter `web/src/types/**`
+
+Schritte (in dieser Reihenfolge, nach jeder Interface-Änderung):
+1. `go build ./...` und `go vet ./...` — stellt sicher, dass die Go-Seite kompiliert.
+2. `go generate ./internal/dto/...` — regeneriert `web/src/types/generated.ts` aus den
+   aktuellen Go-DTOs.
+3. `git diff --exit-code -- web/src/types/generated.ts` — falls dieser Befehl NICHT sauber
+   durchläuft (also ein Diff zeigt), bedeutet das: die generierte Datei war vor der Änderung
+   veraltet oder wurde von Hand editiert. Den Diff committen, NIEMALS `generated.ts` von Hand
+   anpassen.
+4. `cd web && npx tsc --noEmit` — deckt Call-Sites auf, die nach einer Schema-Änderung
+   angepasst werden müssen (umbenannte/entfernte Felder etc.). Alle daraus resultierenden
+   Fehler im selben Change beheben, nicht auf später verschieben.
+5. `cd web && npm test` — stellt sicher, dass `types.test.ts` und alle anderen Tests weiterhin
+   gegen die aktuelle Form bestehen.
+6. Bei Änderungen, die REST- oder WebSocket-Payloads betreffen: kurzer manueller Smoke-Test
+   (`go run cmd/go-red/main.go` + `npm run dev`, Flow erstellen/deployen/Message injizieren)
+   um Laufzeitverhalten zu bestätigen, das ein Compiler nicht prüfen kann.
+
+Nicht erlaubt: eine neue Wire-Form (Struct-Feld, Enum-Wert, WS-Message-Typ) einführen, ohne
+dass sie durch `internal/dto` (bzw. `internal/registry`/`cmd/go-red/websocket` für deren
+jeweilige Scan-Ziele) läuft und in `generated.ts` auftaucht. Handschriftliche TS-Interfaces,
+die eine Backend-Form beschreiben, statt sie aus `generated.ts` zu re-exportieren, sind ein
+Rückfall in den alten, driftanfälligen Zustand und müssen vermieden werden.

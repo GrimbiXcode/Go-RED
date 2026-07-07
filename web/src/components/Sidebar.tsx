@@ -102,8 +102,7 @@ export function Sidebar({ flow, selectedNode, onConfigureNode }: SidebarProps) {
         <div>
           <label className="block text-sm font-medium text-gray-600 mb-1">Status</label>
           <div className={`text-sm p-2 rounded text-center font-medium ${
-            flow.status === 'deployed' ? 'bg-green-50 text-green-700' :
-            flow.status === 'running' ? 'bg-blue-50 text-blue-700' :
+            flow.status === 'running' ? 'bg-green-50 text-green-700' :
             flow.status === 'error' ? 'bg-red-50 text-red-700' :
             'bg-gray-50 text-gray-700'
           }`}>

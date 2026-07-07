@@ -31,19 +31,19 @@ export function Toolbar({
   const [showFlowsDropdown, setShowFlowsDropdown] = useState(false);
 
   const handleDeployClick = useCallback(() => {
-    if (selectedFlow && ['draft', 'stopped', 'error'].includes(selectedFlow.status)) {
+    if (selectedFlow && ['draft', 'error'].includes(selectedFlow.status)) {
       onDeploy();
     }
   }, [selectedFlow, onDeploy]);
 
   const handleUndeployClick = useCallback(() => {
-    if (selectedFlow && ['deployed', 'running'].includes(selectedFlow.status)) {
+    if (selectedFlow && selectedFlow.status === 'running') {
       onUndeploy();
     }
   }, [selectedFlow, onUndeploy]);
 
-  const canDeploy = selectedFlow && ['draft', 'stopped', 'error'].includes(selectedFlow.status);
-  const canUndeploy = selectedFlow && ['deployed', 'running'].includes(selectedFlow.status);
+  const canDeploy = selectedFlow && ['draft', 'error'].includes(selectedFlow.status);
+  const canUndeploy = selectedFlow && selectedFlow.status === 'running';
 
   return (
     <div className="flex items-center justify-between p-2 bg-white border-b border-gray-200 shadow-sm">
@@ -90,8 +90,7 @@ export function Toolbar({
                     >
                       <span className="truncate flex-1">{flow.name}</span>
                       <span className={`text-xs px-2 py-1 rounded ${
-                        flow.status === 'deployed' ? 'bg-green-100 text-green-600' :
-                        flow.status === 'running' ? 'bg-blue-100 text-blue-600' :
+                        flow.status === 'running' ? 'bg-green-100 text-green-600' :
                         flow.status === 'error' ? 'bg-red-100 text-red-600' :
                         'bg-gray-100 text-gray-600'
                       }`}>

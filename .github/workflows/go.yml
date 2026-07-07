@@ -50,6 +50,12 @@ jobs:
             echo "Please run 'gofmt -w .' locally and commit the changes"
           fi
 
+      - name: Check generated TypeScript types are up to date
+        run: |
+          go generate ./internal/dto/...
+          git diff --exit-code -- web/src/types/generated.ts || \
+            (echo "web/src/types/generated.ts is stale — run 'make generate-types' (or 'go generate ./internal/dto/...') and commit the result" && exit 1)
+
   test:
     name: Run Tests
     runs-on: ubuntu-latest

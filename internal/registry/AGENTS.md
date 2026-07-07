@@ -21,26 +21,45 @@ The `registry/` package provides a **central catalog** of all available node typ
 
 ```
 NodeRegistry (Central Catalog)
-├── nodeTypes: map[string]*NodeTypeEntry
-├── mu: sync.RWMutex (thread-safe access)
-└── builtIn: bool (indicates built-in registry)
+├── nodes: map[string]*Node          (nodeType -> Node)
+├── factories: map[string]NodeFactory (nodeType -> Factory)
+└── mu: sync.RWMutex (thread-safe access)
 
-NodeTypeEntry (Per-Node-Type)
-├── Metadata: *NodeMetadata
+Node (Per-Node-Type, internal registry entry)
+├── Type: string
+├── Metadata: NodeMetadata (value, not pointer)
 └── Factory: NodeFactory (creates instances)
 
-NodeMetadata (Type Information)
-├── Name, Description, Category
-├── Icon, Color
-├── InputPorts, OutputPorts
-└── ConfigSchema: map[string]ConfigProperty
+NodeMetadata (Type Information — this is also the wire/API shape; see
+internal/dto's note below, and internal/registry/registry.go for the source
+of truth)
+├── ID, Type, Name, Description, Category (all string)
+├── Inputs, Outputs: []Port
+├── ConfigSchema: Schema
+├── Icon: string
+└── Tags: []string
 
-ConfigProperty (Configuration Definition)
-├── Type, Default, Required
-├── Description, Placeholder
-├── Options, Min, Max, Pattern
-└── Editor, EditorConfig
+Port (Input/Output Port)
+├── ID, Name, Description: string
+└── Required: bool
+
+Schema (Config Schema Wrapper)
+├── Properties: map[string]Property
+└── Required: []string (names of required properties)
+
+Property (Configuration Property Definition)
+├── Type, Description, Pattern: string
+├── Default: interface{}
+├── Enum: []string
+├── Min, Max: *float64 (JSON keys are "min"/"max")
 ```
+
+There is no `NodeTypeEntry`, `ConfigProperty`, `InputPorts`/`OutputPorts`, `Color`,
+`Hidden`/`Deprecated`/`Replaces`/`Version` field, `Placeholder`, `Options`,
+`Editor`/`EditorConfig` anywhere in the real `NodeMetadata`/`Property` structs —
+an earlier version of this file described an aspirational shape that was never
+implemented. Always check `internal/registry/registry.go` directly before
+relying on a struct shape described here.
 
 ### Singleton Pattern
 
@@ -71,15 +90,30 @@ func GetGlobalRegistry() *NodeRegistry {
 
 ### Adding New Node Types
 
-Nodes self-register in their `init()` function:
+Nodes self-register in their `init()` function via `RegisterFactory` (see
+`internal/nodes/debug/node.go` for a real example):
 
 ```go
 func init() {
-    registry.RegisterNodeType(
-        "unique-node-id",
-        &registry.NodeMetadata{...},
-        factoryFunction,
-    )
+    reg := registry.GetGlobalRegistry()
+    err := reg.RegisterFactory("unique-node-id", func() registry.NodeExecutor {
+        return &MyNode{}
+    }, registry.NodeMetadata{
+        ID:       "unique-node-id",
+        Type:     "unique-node-id",
+        Name:     "My Node",
+        Category: "function",
+        Inputs:   []registry.Port{{ID: "in", Name: "in"}},
+        Outputs:  []registry.Port{{ID: "out", Name: "out"}},
+        ConfigSchema: registry.Schema{
+            Properties: map[string]registry.Property{
+                "example": {Type: "string", Description: "An example property"},
+            },
+        },
+    })
+    if err != nil {
+        panic(err)
+    }
 }
 ```
 
@@ -98,16 +132,14 @@ reg := registry.NewNodeRegistry()
 ### Node Registration
 
 ```go
-// Register a node type
-func RegisterNodeType(
-    id string,
-    metadata *NodeMetadata,
-    factory NodeFactory,
-) error {
-    // Validates ID is not empty
-    // Checks for duplicates
-    // Stores in registry
-}
+// RegisterFactory registers a node factory with metadata (the usual entry
+// point from a node package's init()). It builds a Node{Type, Metadata,
+// Factory} and delegates to RegisterNode.
+func (r *NodeRegistry) RegisterFactory(nodeType string, factory NodeFactory, metadata NodeMetadata) error
+
+// RegisterNode registers a fully-constructed Node directly. Validates that
+// Type is non-empty and rejects duplicate types.
+func (r *NodeRegistry) RegisterNode(node *Node) error
 ```
 
 **Best Practices:**
@@ -134,55 +166,47 @@ func NewNodeRegistry() *NodeRegistry
 ```
 Creates a new isolated registry (useful for testing).
 
-#### RegisterNodeType
+#### RegisterFactory / RegisterNode
 ```go
-func (r *NodeRegistry) RegisterNodeType(
-    id string,
-    metadata *NodeMetadata,
-    factory NodeFactory,
-) error
+func (r *NodeRegistry) RegisterFactory(nodeType string, factory NodeFactory, metadata NodeMetadata) error
+func (r *NodeRegistry) RegisterNode(node *Node) error
 ```
-Registers a new node type. Returns error if ID is empty or duplicate.
+Registers a new node type. Returns error if the type is empty or already registered.
 
-#### GetNodeType
+#### GetExecutor
 ```go
-func (r *NodeRegistry) GetNodeType(id string) (*NodeTypeEntry, error)
+func (r *NodeRegistry) GetExecutor(nodeType string) (NodeExecutor, error)
 ```
-Gets a registered node type by ID. Returns `ErrNodeTypeNotFound` if not found.
-
-#### GetFactory
-```go
-func (r *NodeRegistry) GetFactory(id string) (NodeFactory, error)
-```
-Gets the factory function for a node type. Used to create instances.
+Creates a new executor instance for a node type via its factory.
 
 #### GetMetadata
 ```go
-func (r *NodeRegistry) GetMetadata(id string) (*NodeMetadata, error)
+func (r *NodeRegistry) GetMetadata(nodeType string) (NodeMetadata, error)
 ```
 Gets metadata for a node type. Used by the UI to display node information.
 
 #### GetAllNodes
 ```go
-func (r *NodeRegistry) GetAllNodes() []*NodeTypeEntry
+func (r *NodeRegistry) GetAllNodes() []NodeMetadata
 ```
-Returns all registered node types. Used to populate the node palette in the UI.
+Returns metadata for all registered node types (value slice, not pointers).
+Used to populate the node palette in the UI (`GET /api/nodes`).
 
 #### GetNodesByCategory
 ```go
-func (r *NodeRegistry) GetNodesByCategory(category string) []*NodeTypeEntry
+func (r *NodeRegistry) GetNodesByCategory(category string) []NodeMetadata
 ```
 Returns node types filtered by category.
 
-#### HasNodeType
+#### IsRegistered
 ```go
-func (r *NodeRegistry) HasNodeType(id string) bool
+func (r *NodeRegistry) IsRegistered(nodeType string) bool
 ```
 Checks if a node type is registered.
 
-#### UnregisterNodeType
+#### Unregister
 ```go
-func (r *NodeRegistry) UnregisterNodeType(id string) error
+func (r *NodeRegistry) Unregister(nodeType string) error
 ```
 Removes a node type from the registry. Primarily for testing.
 
@@ -243,52 +267,52 @@ func newDebugNodeFactory() (NodeExecutor, error) {
 
 ### NodeMetadata Structure
 
+This is the real, current shape (`internal/registry/registry.go`). It is
+part of the canonical wire contract: `cmd/gentypes` generates the matching
+TypeScript `NodeMetadata` interface into `web/src/types/generated.ts` — do
+not hand-describe it elsewhere.
+
 ```go
 type NodeMetadata struct {
-    // Identification
+    ID           string   `json:"id"`
+    Type         string   `json:"type"`
+    Name         string   `json:"name"`
+    Description  string   `json:"description"`
+    Category     string   `json:"category"`
+    Inputs       []Port   `json:"inputs"`
+    Outputs      []Port   `json:"outputs"`
+    ConfigSchema Schema   `json:"configSchema"`
+    Icon         string   `json:"icon"`
+    Tags         []string `json:"tags"`
+}
+
+type Port struct {
+    ID          string `json:"id"`
     Name        string `json:"name"`
     Description string `json:"description"`
-    
-    // Categorization
-    Category string `json:"category"`
-    Tags     []string `json:"tags,omitempty"`
-    
-    // Visual
-    Icon  string `json:"icon"`
-    Color string `json:"color"`
-    
-    // Ports
-    InputPorts  []string `json:"inputPorts"`
-    OutputPorts []string `json:"outputPorts"`
-    
-    // Configuration
-    ConfigSchema map[string]ConfigProperty `json:"configSchema"`
-    
-    // Advanced
-    Hidden      bool   `json:"hidden,omitempty"`
-    Deprecated  bool   `json:"deprecated,omitempty"`
-    Replaces    string `json:"replaces,omitempty"`
-    Version     string `json:"version,omitempty"`
+    Required    bool   `json:"required"`
 }
-```
 
-### ConfigProperty Structure
+type Schema struct {
+    Properties map[string]Property `json:"properties"`
+    Required   []string            `json:"required"` // names of required properties
+}
 
-```go
-type ConfigProperty struct {
+type Property struct {
     Type        string      `json:"type"`
-    Default     interface{} `json:"default"`
-    Required    bool        `json:"required"`
     Description string      `json:"description"`
-    Placeholder  string      `json:"placeholder,omitempty"`
-    Options      []string    `json:"options,omitempty"`
-    Min          *float64    `json:"min,omitempty"`
-    Max          *float64    `json:"max,omitempty"`
-    Pattern      string      `json:"pattern,omitempty"`
-    Editor       string      `json:"editor,omitempty"`
-    EditorConfig interface{} `json:"editorConfig,omitempty"`
+    Default     interface{} `json:"default"`
+    Enum        []string    `json:"enum"`
+    Min         *float64    `json:"min"`
+    Max         *float64    `json:"max"`
+    Pattern     string      `json:"pattern"`
 }
 ```
+
+There is no `Color`, `Hidden`, `Deprecated`, `Replaces`, per-property `Version`,
+`Placeholder`, `Options`, `Editor`, or `EditorConfig` field — those never
+existed in the real struct. Note also that `Required` lives at the `Schema`
+level (a list of required property *names*), not as a per-`Property` boolean.
 
 ### Standard Categories
 
@@ -309,6 +333,16 @@ Use these standard categories for consistency:
 ---
 
 ## Plugin System Integration
+
+> **Status: not implemented.** No `.so`-plugin loader, `plugin.Open` call, or
+> `Register(*NodeRegistry) error` convention exists anywhere in the current
+> codebase (`config.PluginDir` in `cmd/go-red/main.go` is parsed as a flag but
+> never used to load anything). The examples below describe a planned design
+> (see `docs/IMPLEMENTATION_PLAN.md` Phase 2), not current, working code —
+> and they also use registry method names (`RegisterNodeType`, `HasNodeType`)
+> that don't exist even internally (the real methods are `RegisterFactory`/
+> `RegisterNode` and `IsRegistered`, see the API Reference above). Treat this
+> whole section as a design sketch, not a contract.
 
 ### Loading Plugins
 
@@ -412,37 +446,33 @@ func loadPluginsFromDirectory(dir string) error {
 ```go
 func TestNodeRegistry_Register(t *testing.T) {
     reg := registry.NewNodeRegistry()
-    
+
+    factory := func() registry.NodeExecutor { return &MockNode{} }
+
     // Test successful registration
-    err := reg.RegisterNodeType(
-        "test-node",
-        &registry.NodeMetadata{
-            Name: "Test Node",
-        },
-        func(config map[string]interface{}) (registry.NodeExecutor, error) {
-            return &MockNode{}, nil
-        },
-    )
+    err := reg.RegisterFactory("test-node", factory, registry.NodeMetadata{
+        Type: "test-node",
+        Name: "Test Node",
+    })
     assert.NoError(t, err)
-    
+
     // Test duplicate registration
-    err = reg.RegisterNodeType("test-node", &registry.NodeMetadata{}, nil)
+    err = reg.RegisterFactory("test-node", factory, registry.NodeMetadata{Type: "test-node"})
     assert.Error(t, err)
-    assert.Equal(t, registry.ErrNodeTypeExists, err)
-    
+
     // Test retrieval
-    entry, err := reg.GetNodeType("test-node")
+    metadata, err := reg.GetMetadata("test-node")
     assert.NoError(t, err)
-    assert.Equal(t, "Test Node", entry.Metadata.Name)
+    assert.Equal(t, "Test Node", metadata.Name)
 }
 
 func TestNodeRegistry_GetAllNodes(t *testing.T) {
     reg := registry.NewNodeRegistry()
-    
+
     // Register multiple nodes
-    reg.RegisterNodeType("node1", &registry.NodeMetadata{Name: "Node 1"}, nil)
-    reg.RegisterNodeType("node2", &registry.NodeMetadata{Name: "Node 2"}, nil)
-    
+    reg.RegisterFactory("node1", func() registry.NodeExecutor { return &MockNode{} }, registry.NodeMetadata{Type: "node1", Name: "Node 1"})
+    reg.RegisterFactory("node2", func() registry.NodeExecutor { return &MockNode{} }, registry.NodeMetadata{Type: "node2", Name: "Node 2"})
+
     nodes := reg.GetAllNodes()
     assert.Len(t, nodes, 2)
 }
@@ -454,24 +484,22 @@ func TestNodeRegistry_GetAllNodes(t *testing.T) {
 func TestNodeRegistry_WithEngine(t *testing.T) {
     // Create isolated registry
     reg := registry.NewNodeRegistry()
-    
+
     // Register test node
-    reg.RegisterNodeType("test-node", &registry.NodeMetadata{}, 
-        func(config map[string]interface{}) (registry.NodeExecutor, error) {
-            return &MockNode{Output: "test"}, nil
-        },
-    )
-    
+    reg.RegisterFactory("test-node", func() registry.NodeExecutor {
+        return &MockNode{Output: "test"}
+    }, registry.NodeMetadata{Type: "test-node"})
+
     // Create engine with this registry
     engine := NewFlowEngine(DefaultEngineConfig(), reg)
-    
+
     // Verify node is available
-    assert.True(t, reg.HasNodeType("test-node"))
-    
+    assert.True(t, reg.IsRegistered("test-node"))
+
     // Create flow with test node
     flow := NewFlow("test-flow", "Test")
     flow.Nodes["n1"] = &Node{Type: "test-node", Config: map[string]interface{}{}}
-    
+
     // Should deploy successfully
     err := engine.Deploy(flow)
     assert.NoError(t, err)
@@ -494,10 +522,12 @@ func (n *MockNode) Execute(ctx context.Context, input map[string]interface{}) (m
     return map[string]interface{}{"output": n.Output}, nil
 }
 
-// Helper to create mock node factory
+// Helper to create a mock node factory. NodeFactory takes no arguments
+// (config is applied afterwards via NodeExecutor.SetConfig, see
+// NodeRegistry.InitializeNode) — it is not `func(config) (NodeExecutor, error)`.
 func mockNodeFactory(output interface{}, err error) registry.NodeFactory {
-    return func(config map[string]interface{}) (registry.NodeExecutor, error) {
-        return &MockNode{Output: output, Error: err}, nil
+    return func() registry.NodeExecutor {
+        return &MockNode{Output: output, Error: err}
     }
 }
 ```
@@ -506,35 +536,27 @@ func mockNodeFactory(output interface{}, err error) registry.NodeFactory {
 
 ## Error Handling
 
-### Standard Errors
+There are no exported sentinel error values (no `ErrNodeTypeNotFound` /
+`ErrNodeTypeExists` / etc.) — the real registry constructs plain errors
+inline with `errors.New(...)` and descriptive messages, e.g.:
 
 ```go
-var (
-    ErrNodeTypeNotFound = errors.New("node type not found")
-    ErrNodeTypeExists   = errors.New("node type already exists")
-    ErrInvalidNodeType  = errors.New("invalid node type")
-    ErrEmptyNodeID      = errors.New("node ID cannot be empty")
-)
-```
-
-**Usage:**
-```go
-func (r *NodeRegistry) GetNodeType(id string) (*NodeTypeEntry, error) {
-    if id == "" {
-        return nil, ErrEmptyNodeID
-    }
-    
+func (r *NodeRegistry) GetMetadata(nodeType string) (NodeMetadata, error) {
     r.mu.RLock()
     defer r.mu.RUnlock()
-    
-    entry, ok := r.nodeTypes[id]
-    if !ok {
-        return nil, ErrNodeTypeNotFound
+
+    node, exists := r.nodes[nodeType]
+    if !exists {
+        return NodeMetadata{}, errors.New("node type not found: " + nodeType)
     }
-    
-    return entry, nil
+
+    return node.Metadata, nil
 }
 ```
+
+If callers need to distinguish "not found" programmatically rather than by
+string, that would be a new addition — check `internal/registry/registry.go`
+before assuming a sentinel error exists.
 
 ---
 
@@ -576,13 +598,13 @@ func (r *NodeRegistry) GetNodeType(id string) (*NodeTypeEntry, error) {
 ```go
 // Verify registration
 reg := registry.GetGlobalRegistry()
-if !reg.HasNodeType("my-node") {
+if !reg.IsRegistered("my-node") {
     log.Println("Node not registered!")
 }
 
-// List all nodes
-for _, entry := range reg.GetAllNodes() {
-    log.Printf("Registered: %s", entry.Metadata.Name)
+// List all nodes (GetAllNodes returns []NodeMetadata directly, not entries)
+for _, metadata := range reg.GetAllNodes() {
+    log.Printf("Registered: %s", metadata.Name)
 }
 ```
 
@@ -600,8 +622,7 @@ for _, entry := range reg.GetAllNodes() {
 config := map[string]interface{}{
     "field": "value",
 }
-factory, _ := reg.GetFactory("my-node")
-node, err := factory(config)
+node, err := reg.InitializeNode("my-node", config)
 if err != nil {
     log.Printf("Config error: %v", err)
 }
@@ -628,37 +649,12 @@ func handleGetNodes(w http.ResponseWriter, r *http.Request, reg *registry.NodeRe
 
 ### TypeScript Types
 
-Frontend types should match registry metadata:
-
-```typescript
-// web/src/types/node.ts
-interface NodeMetadata {
-    name: string;
-    description: string;
-    category: string;
-    icon: string;
-    color: string;
-    inputPorts: string[];
-    outputPorts: string[];
-    configSchema: Record<string, ConfigProperty>;
-    hidden?: boolean;
-    deprecated?: boolean;
-}
-
-interface ConfigProperty {
-    type: string;
-    default: any;
-    required: boolean;
-    description: string;
-    placeholder?: string;
-    options?: string[];
-    min?: number;
-    max?: number;
-    pattern?: string;
-    editor?: string;
-    editorConfig?: Record<string, any>;
-}
-```
+The frontend `NodeMetadata`/`Port`/`Schema`/`Property` (re-exported as
+`PropertySchema`) types in `web/src/types/node.ts` are generated from the Go
+structs above via `go generate ./internal/dto/...` into
+`web/src/types/generated.ts` — do not hand-describe them again here or in
+`node.ts`. See the "Interface-Verifikation" section at the end of this file
+for the required regeneration/verification steps.
 
 ---
 
@@ -696,3 +692,37 @@ Before committing changes to the registry:
 
 *Last updated: 2026-06-21*
 *Overrides: None (extends internal/AGENTS.md and root AGENTS.md)*
+
+---
+
+## Interface-Verifikation (PFLICHT bei Änderungen an Interfaces)
+
+Trigger: Diese Schritte IMMER ausführen, bevor eine Änderung als fertig gilt, wenn eine der
+folgenden Dateien/Verzeichnisse angefasst wurde:
+- `internal/dto/**`
+- `internal/registry/registry.go` (NodeMetadata/Port/Property/Schema)
+- `cmd/go-red/websocket/hub.go` (WebSocketMessage/MessageType)
+- irgendeine Datei unter `web/src/types/**`
+
+Schritte (in dieser Reihenfolge, nach jeder Interface-Änderung):
+1. `go build ./...` und `go vet ./...` — stellt sicher, dass die Go-Seite kompiliert.
+2. `go generate ./internal/dto/...` — regeneriert `web/src/types/generated.ts` aus den
+   aktuellen Go-DTOs.
+3. `git diff --exit-code -- web/src/types/generated.ts` — falls dieser Befehl NICHT sauber
+   durchläuft (also ein Diff zeigt), bedeutet das: die generierte Datei war vor der Änderung
+   veraltet oder wurde von Hand editiert. Den Diff committen, NIEMALS `generated.ts` von Hand
+   anpassen.
+4. `cd web && npx tsc --noEmit` — deckt Call-Sites auf, die nach einer Schema-Änderung
+   angepasst werden müssen (umbenannte/entfernte Felder etc.). Alle daraus resultierenden
+   Fehler im selben Change beheben, nicht auf später verschieben.
+5. `cd web && npm test` — stellt sicher, dass `types.test.ts` und alle anderen Tests weiterhin
+   gegen die aktuelle Form bestehen.
+6. Bei Änderungen, die REST- oder WebSocket-Payloads betreffen: kurzer manueller Smoke-Test
+   (`go run cmd/go-red/main.go` + `npm run dev`, Flow erstellen/deployen/Message injizieren)
+   um Laufzeitverhalten zu bestätigen, das ein Compiler nicht prüfen kann.
+
+Nicht erlaubt: eine neue Wire-Form (Struct-Feld, Enum-Wert, WS-Message-Typ) einführen, ohne
+dass sie durch `internal/dto` (bzw. `internal/registry`/`cmd/go-red/websocket` für deren
+jeweilige Scan-Ziele) läuft und in `generated.ts` auftaucht. Handschriftliche TS-Interfaces,
+die eine Backend-Form beschreiben, statt sie aus `generated.ts` zu re-exportieren, sind ein
+Rückfall in den alten, driftanfälligen Zustand und müssen vermieden werden.

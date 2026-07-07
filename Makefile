@@ -1,5 +1,5 @@
 # Go—RED Makefile
-.PHONY: all build run test clean deps
+.PHONY: all build run test clean deps generate-types check-types
 
 # Go parameters
 GOCMD=go
@@ -60,6 +60,17 @@ deps:
 fmt:
 	@echo "Formatting code..."
 	$(GOCMD) fmt ./...
+
+# Regenerate web/src/types/generated.ts from internal/dto, internal/registry,
+# and cmd/go-red/websocket. Run this after changing any of those packages.
+generate-types: go.mod
+	@echo "Generating TypeScript types from Go DTOs..."
+	$(GOCMD) generate ./internal/dto/...
+
+# Fail if generated.ts is stale relative to the Go DTOs (used in CI).
+check-types: generate-types
+	@git diff --exit-code -- web/src/types/generated.ts || \
+		(echo "web/src/types/generated.ts is stale -- run 'make generate-types' and commit the result" && exit 1)
 
 # Build WebUI
 build-web:

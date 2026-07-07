@@ -11,11 +11,12 @@ The `components/` directory contains all **React components** for the Go-RED Web
 ```
 components/
 ├── index.ts                 # Re-exports all components
-├── App.tsx                  # Root application component
 ├── FlowEditor.tsx           # Main flow editor container
-├── FlowProvider.tsx         # Zustand store provider
+├── FlowProvider.tsx         # React Context provider wrapping useFlows()
 ├── FlowCanvas.tsx           # ReactFlow canvas component
-├── NodeComponent.tsx        # Individual node rendering
+├── NodeComponent.tsx        # Generic node rendering
+├── InjectNode.tsx           # Inject node rendering
+├── DebugNode.tsx            # Debug node rendering
 ├── NodePalette.tsx          # Available nodes panel
 ├── Sidebar.tsx              # Left sidebar with flows and nodes
 ├── Toolbar.tsx              # Top toolbar with actions
@@ -26,6 +27,18 @@ components/
 ├── NodeConfigModal.tsx      # Node configuration modal
 └── ToastNotification.tsx    # Toast notification system
 ```
+(`App.tsx` lives at `web/src/App.tsx`, one level up — not in `components/`.)
+
+> **Correction — `FlowProvider.tsx` is a plain React Context wrapper around
+> `useFlows()`, not a Zustand store.** There is no `create<FlowStore>()`,
+> `useFlowStore`, or `devtools` middleware anywhere in this codebase (`zustand`
+> is a listed dependency but unused in `web/src/`). Every `Zustand`/
+> `useFlowStore` reference in this file's "Component Hierarchy" and
+> "FlowProvider.tsx" sections below describes a design that was never built —
+> read `components/FlowProvider.tsx` and `hooks/useFlows.ts` directly instead.
+> Likewise, `useWebSocket('/ws')` shown in a few examples below is wrong: the
+> real `useWebSocket()` takes no arguments (see `hooks/AGENTS.md`'s
+> correction note for the full, real shape).
 
 ---
 
@@ -1207,3 +1220,37 @@ Before finalizing a component:
 
 *Last updated: 2026-06-21*
 *Overrides: None (extends web/src/AGENTS.md, web/AGENTS.md, and root AGENTS.md)*
+
+---
+
+## Interface-Verifikation (PFLICHT bei Änderungen an Interfaces)
+
+Trigger: Diese Schritte IMMER ausführen, bevor eine Änderung als fertig gilt, wenn eine der
+folgenden Dateien/Verzeichnisse angefasst wurde:
+- `internal/dto/**`
+- `internal/registry/registry.go` (NodeMetadata/Port/Property/Schema)
+- `cmd/go-red/websocket/hub.go` (WebSocketMessage/MessageType)
+- irgendeine Datei unter `web/src/types/**`
+
+Schritte (in dieser Reihenfolge, nach jeder Interface-Änderung):
+1. `go build ./...` und `go vet ./...` — stellt sicher, dass die Go-Seite kompiliert.
+2. `go generate ./internal/dto/...` — regeneriert `web/src/types/generated.ts` aus den
+   aktuellen Go-DTOs.
+3. `git diff --exit-code -- web/src/types/generated.ts` — falls dieser Befehl NICHT sauber
+   durchläuft (also ein Diff zeigt), bedeutet das: die generierte Datei war vor der Änderung
+   veraltet oder wurde von Hand editiert. Den Diff committen, NIEMALS `generated.ts` von Hand
+   anpassen.
+4. `cd web && npx tsc --noEmit` — deckt Call-Sites auf, die nach einer Schema-Änderung
+   angepasst werden müssen (umbenannte/entfernte Felder etc.). Alle daraus resultierenden
+   Fehler im selben Change beheben, nicht auf später verschieben.
+5. `cd web && npm test` — stellt sicher, dass `types.test.ts` und alle anderen Tests weiterhin
+   gegen die aktuelle Form bestehen.
+6. Bei Änderungen, die REST- oder WebSocket-Payloads betreffen: kurzer manueller Smoke-Test
+   (`go run cmd/go-red/main.go` + `npm run dev`, Flow erstellen/deployen/Message injizieren)
+   um Laufzeitverhalten zu bestätigen, das ein Compiler nicht prüfen kann.
+
+Nicht erlaubt: eine neue Wire-Form (Struct-Feld, Enum-Wert, WS-Message-Typ) einführen, ohne
+dass sie durch `internal/dto` (bzw. `internal/registry`/`cmd/go-red/websocket` für deren
+jeweilige Scan-Ziele) läuft und in `generated.ts` auftaucht. Handschriftliche TS-Interfaces,
+die eine Backend-Form beschreiben, statt sie aus `generated.ts` zu re-exportieren, sind ein
+Rückfall in den alten, driftanfälligen Zustand und müssen vermieden werden.

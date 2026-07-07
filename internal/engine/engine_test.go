@@ -100,30 +100,6 @@ func TestFlowEngineGetAllFlows(t *testing.T) {
     })
 }
 
-func TestFlowEngineGetFlowsSummary(t *testing.T) {
-    t.Run("should return summary of all flows", func(t *testing.T) {
-        engine := createTestEngine()
-        engine.CreateFlow("flow-1", "Flow 1")
-        engine.CreateFlow("flow-2", "Flow 2")
-        engine.CreateFlow("flow-3", "Flow 3")
-
-        summaries := engine.GetAllFlowsSummary()
-        assert.Len(t, summaries, 3)
-
-        for _, summary := range summaries {
-            assert.Contains(t, summary.ID, "flow-")
-            assert.Contains(t, summary.Name, "Flow")
-        }
-    })
-
-    t.Run("should return empty for no flows", func(t *testing.T) {
-        engine := createTestEngine()
-
-        summaries := engine.GetAllFlowsSummary()
-        assert.Len(t, summaries, 0)
-    })
-}
-
 func TestFlowEngineDeploy(t *testing.T) {
     t.Run("should deploy valid flow", func(t *testing.T) {
         engine := createTestEngine()

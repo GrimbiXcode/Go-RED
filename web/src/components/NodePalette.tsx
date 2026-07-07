@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useMemo } from 'react';
-import type { NodeMetadata, NodeCategory } from '../types/node';
+import type { NodeMetadata } from '../types/node';
 import DOMPurify from 'dompurify';
 
 interface NodePaletteProps {
@@ -7,7 +7,7 @@ interface NodePaletteProps {
   loading: boolean;
 }
 
-const categoryIcons: Record<NodeCategory, string> = {
+const categoryIcons: Record<string, string> = {
   input: '📥',
   output: '📤',
   function: '🔄',
@@ -20,7 +20,7 @@ const categoryIcons: Record<NodeCategory, string> = {
   custom: '⚙️',
 };
 
-const categoryColors: Record<NodeCategory, string> = {
+const categoryColors: Record<string, string> = {
   input: 'bg-blue-100 text-blue-600',
   output: 'bg-green-100 text-green-600',
   function: 'bg-purple-100 text-purple-600',
@@ -33,16 +33,16 @@ const categoryColors: Record<NodeCategory, string> = {
   custom: 'bg-gray-100 text-gray-600',
 };
 
-function getCategories(nodeTypes: NodeMetadata[]): NodeCategory[] {
-  const categories = new Set<NodeCategory>();
+function getCategories(nodeTypes: NodeMetadata[]): string[] {
+  const categories = new Set<string>();
   nodeTypes.forEach((node) => {
     categories.add(node.category);
   });
   return Array.from(categories).sort();
 }
 
-function groupByCategory(nodeTypes: NodeMetadata[]): Record<NodeCategory, NodeMetadata[]> {
-  const grouped: Record<NodeCategory, NodeMetadata[]> = {} as Record<NodeCategory, NodeMetadata[]>;
+function groupByCategory(nodeTypes: NodeMetadata[]): Record<string, NodeMetadata[]> {
+  const grouped: Record<string, NodeMetadata[]> = {} as Record<string, NodeMetadata[]>;
   const categories = getCategories(nodeTypes);
   categories.forEach((category) => {
     grouped[category] = [];
@@ -91,7 +91,7 @@ function NodePaletteItem({ node, onDragStart }: NodePaletteItemProps) {
 }
 
 interface CategorySectionProps {
-  category: NodeCategory;
+  category: string;
   nodes: NodeMetadata[];
   onDragStart: (event: React.DragEvent<HTMLDivElement>, nodeType: string) => void;
   isExpanded: boolean;
@@ -144,7 +144,7 @@ function CategorySection({
 }
 
 export function NodePalette({ nodeTypes, loading }: NodePaletteProps) {
-  const [expandedCategories, setExpandedCategories] = useState<Set<NodeCategory>>(new Set());
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredNodeTypes = useMemo(() => {
@@ -174,7 +174,7 @@ export function NodePalette({ nodeTypes, loading }: NodePaletteProps) {
     []
   );
 
-  const toggleCategory = useCallback((category: NodeCategory) => {
+  const toggleCategory = useCallback((category: string) => {
     setExpandedCategories((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(category)) {

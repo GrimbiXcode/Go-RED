@@ -16,6 +16,35 @@ hooks/
 └── useWebSocket.ts     # WebSocket communication hook
 ```
 
+> **Correction — most of this file's `useWebSocket`/`useFlows` examples below
+> describe an API that was never implemented.** Read the real hooks
+> (`useWebSocket.ts`, `useFlows.ts`, `useMessageLog.ts`) before writing code
+> from an example in this file. Concretely:
+> - The real `useWebSocket()` takes **no arguments** (it resolves the WS URL
+>   itself via `getWebSocketUrl()` from `utils/api.ts`) — it is not
+>   `useWebSocket(url: string)`.
+> - It returns `{ state, sendMessage, sendRawMessage, subscribe, unsubscribe,
+>   reconnect, close }` — there is no `registerHandler`/`unregisterHandler`,
+>   `isConnected`, or `lastError` at the top level (connection state lives
+>   under `state: { connected, connecting, error, lastMessage, lastError }`).
+>   Use `subscribe(type, callback)` / `unsubscribe(type, callback)`, which
+>   return/take an unsubscribe function, where the examples below use
+>   `registerHandler`/`unregisterHandler`.
+> - `sendMessage(type, data, options?)` takes a `WebSocketMessageType` and a
+>   data payload as two separate arguments — not a single
+>   `{type, payload}` object as several examples below show.
+> - `useFlows()` does not use Zustand (there is no `useFlowStore` anywhere in
+>   this codebase) — it's a plain `useState`-based hook wrapping REST calls
+>   from `utils/api.ts` plus WebSocket-driven optimistic updates, exposed via
+>   `FlowProvider.tsx`'s React Context.
+> - The message envelope actually sent/received is always
+>   `{ type, data, timestamp, requestId? }` (see `internal/dto`/
+>   `cmd/go-red/websocket` and `types/generated.ts`), not the ad-hoc
+>   `{ type, payload }` shape used in some examples below.
+>
+> See the "Interface-Verifikation" section at the end of this file for the
+> steps to follow whenever the WebSocket envelope or message types change.
+
 ---
 
 ## Hook Design Principles
@@ -1111,3 +1140,37 @@ Before finalizing a custom hook:
 
 *Last updated: 2026-06-21*
 *Overrides: None (extends web/src/AGENTS.md, web/AGENTS.md, and root AGENTS.md)*
+
+---
+
+## Interface-Verifikation (PFLICHT bei Änderungen an Interfaces)
+
+Trigger: Diese Schritte IMMER ausführen, bevor eine Änderung als fertig gilt, wenn eine der
+folgenden Dateien/Verzeichnisse angefasst wurde:
+- `internal/dto/**`
+- `internal/registry/registry.go` (NodeMetadata/Port/Property/Schema)
+- `cmd/go-red/websocket/hub.go` (WebSocketMessage/MessageType)
+- irgendeine Datei unter `web/src/types/**`
+
+Schritte (in dieser Reihenfolge, nach jeder Interface-Änderung):
+1. `go build ./...` und `go vet ./...` — stellt sicher, dass die Go-Seite kompiliert.
+2. `go generate ./internal/dto/...` — regeneriert `web/src/types/generated.ts` aus den
+   aktuellen Go-DTOs.
+3. `git diff --exit-code -- web/src/types/generated.ts` — falls dieser Befehl NICHT sauber
+   durchläuft (also ein Diff zeigt), bedeutet das: die generierte Datei war vor der Änderung
+   veraltet oder wurde von Hand editiert. Den Diff committen, NIEMALS `generated.ts` von Hand
+   anpassen.
+4. `cd web && npx tsc --noEmit` — deckt Call-Sites auf, die nach einer Schema-Änderung
+   angepasst werden müssen (umbenannte/entfernte Felder etc.). Alle daraus resultierenden
+   Fehler im selben Change beheben, nicht auf später verschieben.
+5. `cd web && npm test` — stellt sicher, dass `types.test.ts` und alle anderen Tests weiterhin
+   gegen die aktuelle Form bestehen.
+6. Bei Änderungen, die REST- oder WebSocket-Payloads betreffen: kurzer manueller Smoke-Test
+   (`go run cmd/go-red/main.go` + `npm run dev`, Flow erstellen/deployen/Message injizieren)
+   um Laufzeitverhalten zu bestätigen, das ein Compiler nicht prüfen kann.
+
+Nicht erlaubt: eine neue Wire-Form (Struct-Feld, Enum-Wert, WS-Message-Typ) einführen, ohne
+dass sie durch `internal/dto` (bzw. `internal/registry`/`cmd/go-red/websocket` für deren
+jeweilige Scan-Ziele) läuft und in `generated.ts` auftaucht. Handschriftliche TS-Interfaces,
+die eine Backend-Form beschreiben, statt sie aus `generated.ts` zu re-exportieren, sind ein
+Rückfall in den alten, driftanfälligen Zustand und müssen vermieden werden.
