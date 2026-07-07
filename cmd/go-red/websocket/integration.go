@@ -828,14 +828,15 @@ func convertFlowToFrontend(flow *engine.Flow) map[string]interface{} {
         connectionsList[i] = connMap
     }
     
-    // Convert flow config
+    // Convert flow config (kept in sync with convertFlowToFrontendAPI in main.go,
+    // which the REST API uses for the same conversion)
     flowConfigMap := map[string]interface{}{
-        "timeout":        flow.Config.Timeout.String(),
+        "timeout":        int(flow.Config.Timeout.Seconds()),
         "maxConcurrency": flow.Config.MaxConcurrency,
         "retryPolicy": map[string]interface{}{
             "maxRetries":  flow.Config.RetryPolicy.MaxRetries,
-            "backoff":     flow.Config.RetryPolicy.Backoff.String(),
-            "maxBackoff":  flow.Config.RetryPolicy.MaxBackoff.String(),
+            "backoff":     int(flow.Config.RetryPolicy.Backoff.Seconds()),
+            "maxBackoff":  int(flow.Config.RetryPolicy.MaxBackoff.Seconds()),
             "retryOn":     flow.Config.RetryPolicy.RetryOn,
         },
         "environment": flow.Config.Environment,
@@ -858,11 +859,14 @@ func convertFlowToFrontend(flow *engine.Flow) map[string]interface{} {
     }
 }
 
-// convertFlowStatus converts Go flow status to frontend status
+// convertFlowStatus converts Go flow status to frontend status.
+// Kept in sync with convertFlowStatusAPI in main.go, which the REST API
+// uses for the same conversion, so a flow's status string is identical
+// regardless of whether it was fetched over REST or WebSocket.
 func convertFlowStatus(status engine.FlowStatus) string {
     switch status {
     case engine.FlowStatusInactive:
-        return "stopped"
+        return "draft"
     case engine.FlowStatusActive:
         return "running"
     case engine.FlowStatusError:
