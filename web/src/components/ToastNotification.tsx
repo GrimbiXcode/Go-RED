@@ -14,6 +14,59 @@ interface ToastNotificationProps {
   onDismiss: (id: string) => void;
 }
 
+const toastStyles: Record<ToastType, { border: string; icon: string }> = {
+  success: { border: 'border-gr-blue-500', icon: 'text-gr-blue-500' },
+  info: { border: 'border-slate-400', icon: 'text-slate-500' },
+  warning: { border: 'border-gr-fuchsia-300', icon: 'text-gr-fuchsia-400' },
+  error: { border: 'border-gr-fuchsia-600', icon: 'text-gr-fuchsia-600' },
+};
+
+function ToastIcon({ type }: { type: ToastType }) {
+  const props = {
+    viewBox: '0 0 24 24',
+    fill: 'none' as const,
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    className: 'w-4 h-4 shrink-0',
+  };
+  switch (type) {
+    case 'success':
+      return (
+        <svg {...props} aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <polyline points="8 12 11 15 16 9" />
+        </svg>
+      );
+    case 'error':
+      return (
+        <svg {...props} aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <line x1="9" y1="9" x2="15" y2="15" />
+          <line x1="15" y1="9" x2="9" y2="15" />
+        </svg>
+      );
+    case 'warning':
+      return (
+        <svg {...props} aria-hidden="true">
+          <path d="M12 3 2 20h20L12 3z" />
+          <line x1="12" y1="10" x2="12" y2="15" />
+          <circle cx="12" cy="17.5" r="0.75" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case 'info':
+    default:
+      return (
+        <svg {...props} aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <line x1="12" y1="11" x2="12" y2="16" />
+          <circle cx="12" cy="7.5" r="0.75" fill="currentColor" stroke="none" />
+        </svg>
+      );
+  }
+}
+
 function ToastNotification({ message, onDismiss }: ToastNotificationProps) {
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -23,37 +76,23 @@ function ToastNotification({ message, onDismiss }: ToastNotificationProps) {
     return () => clearTimeout(timer);
   }, [message.id, message.duration, onDismiss]);
 
-  const bgColor = {
-    success: 'bg-green-500',
-    error: 'bg-red-500',
-    info: 'bg-blue-500',
-    warning: 'bg-yellow-500',
-  }[message.type];
-
-  const icon = {
-    success: '✓',
-    error: '✗',
-    info: 'ℹ',
-    warning: '⚠',
-  }[message.type];
+  const style = toastStyles[message.type];
 
   return (
     <div
-      className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-md text-white ${bgColor} shadow-lg animate-slide-in-right`}
-      style={{
-        animation: 'slideIn 0.3s ease-out',
-      }}
+      className={`w-80 bg-white rounded shadow-lg border-l-4 ${style.border} px-3 py-2 flex items-start gap-2 animate-slide-in-right`}
     >
-      <div className="flex items-center gap-2">
-        <span className="text-lg">{icon}</span>
-        <span className="text-sm">{message.message}</span>
-        <button
-          className="ml-2 text-white hover:text-gray-200"
-          onClick={() => onDismiss(message.id)}
-        >
-          ✕
-        </button>
-      </div>
+      <span className={`mt-0.5 ${style.icon}`}>
+        <ToastIcon type={message.type} />
+      </span>
+      <span className="text-xs text-gray-700 flex-1">{message.message}</span>
+      <button
+        className="text-gray-400 hover:text-gray-600 shrink-0"
+        onClick={() => onDismiss(message.id)}
+        aria-label="Schließen"
+      >
+        ✕
+      </button>
     </div>
   );
 }
@@ -85,7 +124,10 @@ export function ToastProvider({ children }: ToastProviderProps) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
+      {/* Bottom-right (above the status bar), not top-right: the header's
+          hamburger menu also opens top-right, and a toast sitting on top
+          of it would block clicks on the menu items underneath. */}
+      <div className="fixed bottom-8 right-4 z-50 flex flex-col-reverse gap-2 items-end">
         {toasts.map((toast) => (
           <ToastNotification
             key={toast.id}

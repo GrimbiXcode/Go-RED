@@ -105,25 +105,26 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-        <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <h3 className="font-semibold text-gray-800">Import Flow</h3>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+          <h3 className="font-semibold text-sm text-gray-800">Import Flow</h3>
           <button
             className="text-gray-400 hover:text-gray-600"
             onClick={onClose}
+            aria-label="Schließen"
           >
             ✕
           </button>
         </div>
 
         <div className="p-4">
-          <p className="text-gray-600 mb-4">
+          <p className="text-sm text-gray-600 mb-4">
             Select a JSON file to import a flow. The file should have been previously exported from Go-RED.
           </p>
 
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-xs font-medium text-gray-700 mb-2">
               Flow File
             </label>
             <div className="flex gap-2">
@@ -132,11 +133,11 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
                 ref={fileInputRef}
                 onChange={handleFileChange}
                 accept=".json"
-                className="flex-1 text-sm"
+                className="flex-1 text-xs"
                 disabled={isImporting}
               />
               <button
-                className="px-3 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
+                className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-xs"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isImporting}
               >
@@ -146,15 +147,15 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
           </div>
 
           {error && (
-            <div className="bg-red-50 text-red-600 p-3 rounded mb-4 text-sm">
+            <div className="bg-gr-fuchsia-50 text-gr-fuchsia-700 p-3 rounded mb-4 text-xs">
               Error: {error}
             </div>
           )}
 
           {importedFlow && (
-            <div className="bg-green-50 p-3 rounded mb-4">
-              <h4 className="font-medium text-green-800 mb-2">Flow Preview</h4>
-              <div className="text-sm text-gray-700 space-y-1">
+            <div className="bg-gr-blue-50 p-3 rounded mb-4">
+              <h4 className="font-medium text-gr-blue-800 mb-2 text-xs">Flow Preview</h4>
+              <div className="text-xs text-gray-700 space-y-1">
                 <div><strong>Name:</strong> {importedFlow.name}</div>
                 <div><strong>Description:</strong> {importedFlow.description || 'None'}</div>
                 <div><strong>Nodes:</strong> {importedFlow.nodes ? Object.keys(importedFlow.nodes).length : 0}</div>
@@ -164,23 +165,23 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 p-4 border-t border-gray-200">
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-gray-200">
           <button
-            className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
+            className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
             onClick={onClose}
             disabled={isImporting}
           >
             Cancel
           </button>
           <button
-            className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
+            className="px-3 py-1.5 text-xs text-gr-fuchsia-600 hover:bg-gr-fuchsia-50 rounded disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
             onClick={handleReset}
             disabled={isImporting || !selectedFile}
           >
             Clear
           </button>
           <button
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 bg-gr-blue-500 text-white rounded hover:bg-gr-blue-600 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleImport}
             disabled={isImporting || !selectedFile || !!error}
           >

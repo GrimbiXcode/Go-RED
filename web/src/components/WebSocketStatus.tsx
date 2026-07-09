@@ -1,8 +1,46 @@
 import { useWebSocket } from '../hooks/useWebSocket';
 
-export function WebSocketStatus() {
+export interface WebSocketStatusProps {
+  /** 'pill' (default) is the original colored-badge look; 'dot' is a
+   * compact light-on-dark variant for use on the (Gopher Blue) header;
+   * 'dot-light' is the same but for light backgrounds (the bottom status
+   * bar, see StatusBar.tsx). */
+  variant?: 'pill' | 'dot' | 'dot-light';
+}
+
+const dotColorsOnDark = {
+  connected: 'bg-white',
+  connecting: 'bg-white/70 animate-pulse',
+  error: 'bg-gr-fuchsia-300',
+  unknown: 'bg-white/40',
+};
+
+const dotColorsOnLight = {
+  connected: 'bg-gr-blue-500',
+  connecting: 'bg-gr-skyblue-500 animate-pulse',
+  error: 'bg-gr-fuchsia-500',
+  unknown: 'bg-gray-400',
+};
+
+export function WebSocketStatus({ variant = 'pill' }: WebSocketStatusProps) {
   const { state } = useWebSocket();
   const { connected, connecting, error } = state;
+
+  const label = connected ? 'Connected' : connecting ? 'Connecting...' : error ? 'Disconnected' : 'Unknown';
+  const dotKey = connected ? 'connected' : connecting ? 'connecting' : error ? 'error' : 'unknown';
+
+  if (variant === 'dot' || variant === 'dot-light') {
+    const onDark = variant === 'dot';
+    return (
+      <span
+        className={`flex items-center gap-1.5 text-xs ${onDark ? 'text-white/90' : 'text-gray-500'}`}
+        title={label}
+      >
+        <span className={`w-2 h-2 rounded-full ${(onDark ? dotColorsOnDark : dotColorsOnLight)[dotKey]}`} />
+        <span className="hidden sm:inline">{label}</span>
+      </span>
+    );
+  }
 
   if (connected) {
     return (

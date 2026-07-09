@@ -1,44 +1,19 @@
 import React, { useCallback, useState, useMemo } from 'react';
 import type { NodeMetadata } from '../types/node';
-import DOMPurify from 'dompurify';
+import { CategoryIcon, NodeIcon } from './CategoryIcon';
+import { getCategoryColor, sortCategories } from '../utils/nodeCategories';
 
 interface NodePaletteProps {
   nodeTypes: NodeMetadata[];
   loading: boolean;
 }
 
-const categoryIcons: Record<string, string> = {
-  input: '📥',
-  output: '📤',
-  function: '🔄',
-  storage: '💾',
-  network: '🌐',
-  protocol: '🔌',
-  parser: '📋',
-  social: '💬',
-  dashboard: '📊',
-  custom: '⚙️',
-};
-
-const categoryColors: Record<string, string> = {
-  input: 'bg-blue-100 text-blue-600',
-  output: 'bg-green-100 text-green-600',
-  function: 'bg-purple-100 text-purple-600',
-  storage: 'bg-orange-100 text-orange-600',
-  network: 'bg-cyan-100 text-cyan-600',
-  protocol: 'bg-indigo-100 text-indigo-600',
-  parser: 'bg-pink-100 text-pink-600',
-  social: 'bg-rose-100 text-rose-600',
-  dashboard: 'bg-teal-100 text-teal-600',
-  custom: 'bg-gray-100 text-gray-600',
-};
-
 function getCategories(nodeTypes: NodeMetadata[]): string[] {
   const categories = new Set<string>();
   nodeTypes.forEach((node) => {
     categories.add(node.category);
   });
-  return Array.from(categories).sort();
+  return sortCategories(Array.from(categories));
 }
 
 function groupByCategory(nodeTypes: NodeMetadata[]): Record<string, NodeMetadata[]> {
@@ -70,22 +45,18 @@ function NodePaletteItem({ node, onDragStart }: NodePaletteItemProps) {
     [node.type, onDragStart]
   );
 
+  const color = getCategoryColor(node.category);
+
   return (
     <div
-      className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 cursor-grab active:cursor-grabbing"
+      className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-50 cursor-grab active:cursor-grabbing"
       draggable
       onDragStart={handleDragStart}
       title={node.description || node.name}
     >
-      {node.icon && node.icon.startsWith('<svg') ? (
-        <span 
-          className="text-lg"
-          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(node.icon) }}
-        />
-      ) : (
-        <span className="text-lg">{node.icon || '⚙️'}</span>
-      )}
-      <span className="text-sm flex-1">{node.name}</span>
+      <span className={`w-2 h-2 rounded-sm shrink-0 ${color.swatch}`} aria-hidden="true" />
+      <NodeIcon icon={node.icon} category={node.category} className={`w-3.5 h-3.5 shrink-0 ${color.softText}`} />
+      <span className="text-xs flex-1 truncate">{node.name}</span>
     </div>
   );
 }
@@ -105,31 +76,24 @@ function CategorySection({
   isExpanded,
   onToggle 
 }: CategorySectionProps) {
-  const colorClass = categoryColors[category] || 'bg-gray-100 text-gray-600';
-  const icon = categoryIcons[category] || '⚙️';
+  const color = getCategoryColor(category);
 
   return (
-    <div className="mb-2">
+    <div className="mb-1">
       <button
-        className={`flex items-center justify-between w-full p-2 rounded ${colorClass} font-medium`}
+        className={`flex items-center justify-between w-full px-2 py-1.5 rounded ${color.softBg} ${color.softText} font-medium`}
         onClick={onToggle}
       >
-        <div className="flex items-center gap-2">
-          {icon.startsWith('<svg') ? (
-            <span 
-              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(icon) }}
-            />
-          ) : (
-            <span>{icon}</span>
-          )}
-          <span className="capitalize text-sm">{category}</span>
-          <span className="text-xs text-gray-500">{nodes.length}</span>
+        <div className="flex items-center gap-1.5">
+          <CategoryIcon category={category} className="w-3.5 h-3.5" />
+          <span className="capitalize text-xs">{category}</span>
+          <span className="text-[10px] text-gray-500">{nodes.length}</span>
         </div>
-        <span className="text-sm">{isExpanded ? '▼' : '▶'}</span>
+        <span className="text-[10px]">{isExpanded ? '▼' : '▶'}</span>
       </button>
-      
+
       {isExpanded && (
-        <div className="mt-1 ml-4">
+        <div className="mt-0.5 ml-3">
           {nodes.map((node) => (
             <NodePaletteItem
               key={node.id}
@@ -195,25 +159,23 @@ export function NodePalette({ nodeTypes, loading }: NodePaletteProps) {
   }
 
   return (
-    <div className="p-2 h-full">
-      <div className="text-sm font-semibold text-gray-700 mb-2">Node Palette</div>
-      
+    <div className="p-2 h-full text-xs">
       <div className="mb-2">
         <input
           type="text"
-          className="w-full p-2 text-sm border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-gr-blue-500 focus:border-transparent"
           placeholder="Search nodes..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
       </div>
-      
+
       {filteredCategories.length === 0 ? (
-        <div className="text-sm text-gray-500 p-2">
+        <div className="text-xs text-gray-500 p-2">
           {searchQuery ? 'No nodes match your search' : 'No node types available'}
         </div>
       ) : (
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           {filteredCategories.map((category) => (
             <CategorySection
               key={category}
@@ -226,9 +188,9 @@ export function NodePalette({ nodeTypes, loading }: NodePaletteProps) {
           ))}
         </div>
       )}
-      
+
       <div className="mt-4 pt-2 border-t border-gray-200">
-        <div className="text-xs text-gray-400">
+        <div className="text-[10px] text-gray-400">
           Drag nodes to the canvas
         </div>
       </div>

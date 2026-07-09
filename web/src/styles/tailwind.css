@@ -2,12 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Go-RED design tokens (see docs/FRONTEND_NODE_RED_REDESIGN.md).
+ * CSS custom properties mirror the tailwind.config.js `gr-*` scales, for
+ * places that need a raw color value (inline styles, non-Tailwind CSS)
+ * instead of a utility class. Keep both in sync when a value changes.
+ */
+:root {
+  /* Gopher Blue scale (verified base: 500 = #00add8) */
+  --gr-blue-50: hsl(192, 100%, 96%);
+  --gr-blue-100: hsl(192, 95%, 91%);
+  --gr-blue-200: hsl(192, 95%, 83%);
+  --gr-blue-300: hsl(192, 95%, 70%);
+  --gr-blue-400: hsl(192, 95%, 55%);
+  --gr-blue-500: #00add8;
+  --gr-blue-600: hsl(192, 100%, 36%);
+  --gr-blue-700: hsl(192, 100%, 29%);
+  --gr-blue-800: hsl(192, 100%, 23%);
+  --gr-blue-900: hsl(192, 100%, 17%);
+
+  /* Light Blue scale (verified base: 400 = #5dc9e2) */
+  --gr-skyblue-50: hsl(191, 70%, 97%);
+  --gr-skyblue-100: hsl(191, 70%, 93%);
+  --gr-skyblue-200: hsl(191, 70%, 85%);
+  --gr-skyblue-300: hsl(191, 70%, 74%);
+  --gr-skyblue-400: #5dc9e2;
+  --gr-skyblue-500: hsl(191, 75%, 54%);
+  --gr-skyblue-600: hsl(191, 80%, 45%);
+  --gr-skyblue-700: hsl(191, 85%, 37%);
+  --gr-skyblue-800: hsl(191, 90%, 29%);
+  --gr-skyblue-900: hsl(191, 95%, 21%);
+
+  /* Fuchsia scale (verified base: 500 = #ce3262) */
+  --gr-fuchsia-50: hsl(342, 65%, 97%);
+  --gr-fuchsia-100: hsl(342, 65%, 93%);
+  --gr-fuchsia-200: hsl(342, 63%, 85%);
+  --gr-fuchsia-300: hsl(342, 62%, 71%);
+  --gr-fuchsia-400: hsl(342, 61%, 60%);
+  --gr-fuchsia-500: #ce3262;
+  --gr-fuchsia-600: hsl(342, 63%, 43%);
+  --gr-fuchsia-700: hsl(342, 65%, 35%);
+  --gr-fuchsia-800: hsl(342, 68%, 27%);
+  --gr-fuchsia-900: hsl(342, 70%, 20%);
+
+  /* Semantic aliases used by app-shell/canvas/status in later phases */
+  --gr-header-bg: var(--gr-blue-500);
+  --gr-accent: var(--gr-blue-500);
+  --gr-danger: var(--gr-fuchsia-500);
+
+  /* Node-RED-derived geometry (see borderRadius/spacing note in
+     tailwind.config.js — approximated from documented NR defaults) */
+  --gr-node-radius: 4px;
+  --gr-node-height: 30px;
+  --gr-node-min-width: 100px;
+  --gr-port-size: 10px;
+  --gr-grid-size: 20px;
+}
+
 @layer base {
   html {
     @apply antialiased;
   }
   body {
-    @apply bg-gray-50 text-gray-800;
+    @apply bg-gray-50 text-gray-800 font-sans text-[13px];
   }
 }
 
