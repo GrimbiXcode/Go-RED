@@ -37,6 +37,8 @@ describe('FlowCanvas Position Fallback Logic', () => {
         type: 'function',
         position: { x: 100, y: 200 },
         config: {},
+        status: { state: 'idle' },
+        disabled: false,
       };
 
       const position = nodeWithPosition.position || { x: 0, y: 0 };
@@ -96,12 +98,12 @@ describe('FlowCanvas Position Fallback Logic', () => {
   describe('FlowCanvas Node Array Conversion', () => {
     it('should convert nodes object to array for ReactFlow', () => {
       const nodes: Record<string, FlowNode> = {
-        'node-1': { id: 'node-1', type: 'function', position: { x: 100, y: 200 }, config: {} },
-        'node-2': { id: 'node-2', type: 'debug', position: { x: 300, y: 400 }, config: {} },
+        'node-1': { id: 'node-1', type: 'function', position: { x: 100, y: 200 }, config: {}, status: { state: 'idle' }, disabled: false },
+        'node-2': { id: 'node-2', type: 'debug', position: { x: 300, y: 400 }, config: {}, status: { state: 'idle' }, disabled: false },
       };
 
       const nodeArray = Object.values(nodes);
-      
+
       expect(nodeArray).toHaveLength(2);
       expect(nodeArray[0].id).toBe('node-1');
       expect(nodeArray[1].id).toBe('node-2');
@@ -116,9 +118,9 @@ describe('FlowCanvas Position Fallback Logic', () => {
 
     it('should preserve node order when converting to array', () => {
       const nodes: Record<string, FlowNode> = {
-        'node-1': { id: 'node-1', type: 'function', position: { x: 100, y: 200 }, config: {} },
-        'node-2': { id: 'node-2', type: 'debug', position: { x: 300, y: 400 }, config: {} },
-        'node-3': { id: 'node-3', type: 'inject', position: { x: 500, y: 600 }, config: {} },
+        'node-1': { id: 'node-1', type: 'function', position: { x: 100, y: 200 }, config: {}, status: { state: 'idle' }, disabled: false },
+        'node-2': { id: 'node-2', type: 'debug', position: { x: 300, y: 400 }, config: {}, status: { state: 'idle' }, disabled: false },
+        'node-3': { id: 'node-3', type: 'inject', position: { x: 500, y: 600 }, config: {}, status: { state: 'idle' }, disabled: false },
       };
 
       const nodeArray = Object.values(nodes);
@@ -138,6 +140,7 @@ describe('FlowCanvas Position Fallback Logic', () => {
         name: 'Function Node',
         position: { x: 100, y: 200 },
         config: { key: 'value' },
+        status: { state: 'idle' },
         disabled: false,
       };
 
@@ -169,6 +172,8 @@ describe('FlowCanvas Position Fallback Logic', () => {
         type: 'function',
         position: { x: 100, y: 200 },
         config: {},
+        status: { state: 'idle' },
+        disabled: false,
       };
 
       const reactFlowNode = {
@@ -190,6 +195,7 @@ describe('FlowCanvas Position Fallback Logic', () => {
         type: 'function',
         position: { x: 100, y: 200 },
         config: {},
+        status: { state: 'idle' },
         disabled: true,
       };
 

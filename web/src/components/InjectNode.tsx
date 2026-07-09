@@ -33,7 +33,7 @@ export function InjectNode({ data, selected }: InjectNodeProps) {
   const [lastInjectionTime, setLastInjectionTime] = useState<string | null>(null);
 
   const icon = metadata?.icon || '📥';
-  const color = metadata?.color || 'bg-blue-500';
+  const color = 'bg-blue-500';
 
   const inputPorts = metadata?.inputs || [];
   const outputPorts = metadata?.outputs || [];

@@ -5,19 +5,10 @@ import type { MessageLogEntry, WebSocketMessageType } from './message';
 
 export type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus, NodeMetadata, MessageLogEntry, WebSocketMessageType };
 
-export interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: ApiError;
-  timestamp: string;
-}
-
-export interface ApiError {
-  code: string;
-  message: string;
-  details?: Record<string, any>;
-  stack?: string;
-}
+// FlowSummary, FlowCreateRequest, and FlowUpdateRequest are generated from
+// the Go backend (see internal/dto) via `go generate ./internal/dto/...` —
+// do not hand-describe their shape here.
+export type { FlowSummary, FlowCreateRequest, FlowUpdateRequest } from './generated';
 
 export interface PaginatedResponse<T> {
   data: T[];
@@ -33,61 +24,8 @@ export interface Pagination {
   hasPrevious: boolean;
 }
 
-export interface FlowListResponse {
-  flows: FlowSummary[];
-}
-
-export interface FlowSummary {
-  id: string;
-  name: string;
-  status: string;
-  nodeCount: number;
-  lastDeployed?: string;
-  lastError?: string;
-}
-
-export interface FlowDetailResponse {
-  flow: Flow;
-}
-
-export interface FlowCreateRequest {
-  name: string;
-  description?: string;
-  nodes?: Record<string, FlowNode>;
-  connections?: NodeConnection[];
-  config?: FlowConfig;
-}
-
-export interface FlowUpdateRequest {
-  name?: string;
-  description?: string;
-  nodes?: Record<string, FlowNode>;
-  connections?: NodeConnection[];
-  config?: FlowConfig;
-}
-
-export interface NodeListResponse {
-  nodeTypes: NodeMetadata[];
-}
-
 export interface NodeDetailResponse {
   metadata: NodeMetadata;
-}
-
-export interface PluginInfo {
-  id: string;
-  name: string;
-  version: string;
-  description?: string;
-  author?: string;
-  nodeTypes: string[];
-  path: string;
-  loaded: boolean;
-  error?: string;
-}
-
-export interface PluginListResponse {
-  plugins: PluginInfo[];
 }
 
 export interface DeployResponse {
@@ -123,10 +61,6 @@ export interface StatsResponse {
   averageProcessingTime: number;
 }
 
-export interface PluginLoadRequest {
-  pluginId: string;
-}
-
 export interface DeployRequest {
   flowId: string;
   force?: boolean;
@@ -134,13 +68,6 @@ export interface DeployRequest {
 
 export interface UndeployRequest {
   flowId: string;
-}
-
-export interface UndeployResponse {
-  flowId: string;
-  status: string;
-  message?: string;
-  errors?: string[];
 }
 
 export interface MessageLogRequest {

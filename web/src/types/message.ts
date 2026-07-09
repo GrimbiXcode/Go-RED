@@ -1,23 +1,19 @@
 // Message types for Go-RED flow communication
+//
+// Message and WebSocketMessage/WebSocketMessageType are generated from the
+// Go backend (see internal/dto.Message and cmd/go-red/websocket) via
+// `go generate ./internal/dto/...` — do not hand-describe their shape here.
+// Message.metadata is Record<string, string> (Go cannot produce a richer,
+// per-key-typed metadata object) — this file previously declared a
+// MessageMetadata type with typed qos/retain fields that the backend never
+// actually populated; it has been removed.
+export type {
+  Message,
+  WebSocketMessage,
+  MessageType as WebSocketMessageType,
+} from './generated';
 
-export interface Message {
-  id: string;
-  payload: any;
-  metadata?: MessageMetadata;
-  timestamp: string;
-  sourceNode?: string;
-  sourcePort?: string;
-}
-
-export interface MessageMetadata {
-  topic?: string;
-  qos?: number;
-  retain?: boolean;
-  flowId?: string;
-  nodeId?: string;
-  connectionId?: string;
-  [key: string]: any;
-}
+import type { Message } from './generated';
 
 export interface MessageBatch {
   messages: Message[];
@@ -28,50 +24,10 @@ export interface MessageBatch {
 export interface NodeMessage extends Message {
   nodeId: string;
   port: string;
-  flowId: string;
   sequence?: number;
 }
 
-export interface WebSocketMessage {
-  type: WebSocketMessageType;
-  data: any;
-  timestamp: string;
-  requestId?: string;
-}
-
-export type WebSocketMessageType = 
-  | '*'
-  | 'flow:list'
-  | 'flow:get'
-  | 'flow:create'
-  | 'flow:update'
-  | 'flow:delete'
-  | 'flow:deploy'
-  | 'flow:undeploy'
-  | 'flow:status'
-  | 'flow:export'
-  | 'flow:import'
-  | 'node:add'
-  | 'node:remove'
-  | 'node:update'
-  | 'node:config'
-  | 'node:status'
-  | 'connection:add'
-  | 'connection:remove'
-  | 'connection:update'
-  | 'message:send'
-  | 'message:log'
-  | 'message:debug'
-  | 'error'
-  | 'warning'
-  | 'info'
-  | 'ping'
-  | 'pong'
-  | 'state:sync'
-  | 'node:inject';
-
 export interface FlowMessage extends Message {
-  flowId: string;
   nodeId: string;
   port: string;
 }

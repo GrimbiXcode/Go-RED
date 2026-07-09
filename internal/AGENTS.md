@@ -10,6 +10,7 @@ The `internal/` directory contains all internal Go packages that power Go-RED:
 
 ```
 internal/
+├── dto/         # Canonical frontend/backend wire types (source for codegen)
 ├── engine/      # Flow execution engine - CORE COMPONENT
 ├── nodes/       # Built-in node implementations
 ├── registry/    # Node type registration and discovery
@@ -26,17 +27,25 @@ internal/
 ```
 registry/ ← nodes/ (nodes register themselves)
           ↓
-engine/ ─────┬───── state/
+engine/ ─────┬───── state/ (state DOES import engine — see below)
              ↓
-          cmd/go-red/
+          dto/ (imports engine + registry, for wire-format conversion)
+             ↓
+          cmd/go-red/ (+ cmd/go-red/websocket, + cmd/gentypes)
 ```
 
 **Rules:**
-- ✅ `engine/` can import `registry/` and `state/`
-- ✅ `nodes/*` can import `registry/`
-- ❌ `registry/` should NOT import `engine/` (circular dependency)
-- ❌ `state/` should NOT import `engine/` or `registry/`
+- ✅ `engine/` can import `registry/`.
+- ✅ `nodes/*` can import `registry/`.
+- ✅ `state/` imports `engine/` (its `StateManager` interface, defined in
+  `engine`, operates on `*engine.Flow` — this is a real, necessary
+  dependency, not a mistake to avoid).
+- ✅ `dto/` imports `engine/` and `registry/` (it converts between their
+  internal types and the canonical wire format); nothing in `engine/` or
+  `registry/` imports `dto/` back.
+- ❌ `registry/` should NOT import `engine/` (circular dependency).
 - ❌ `internal/` packages should NOT be imported by packages outside `internal/`
+  and `cmd/`.
 
 ---
 
@@ -52,9 +61,12 @@ func (e *FlowEngine) Deploy(flow *Flow) error {
     // ...
 }
 
-// Good - errors.Is for type checking
-if errors.Is(err, ErrFlowNotFound) {
-    return http.StatusNotFound
+// The codebase does not currently use exported sentinel errors
+// (no ErrFlowNotFound etc.) — errors are plain errors.New(...) with a
+// descriptive message, checked by the caller via string context, e.g.:
+flow, err := e.GetFlow(flowID)
+if err != nil {
+    writeError(w, http.StatusNotFound, "flow not found", err)
 }
 ```
 
@@ -144,15 +156,19 @@ func (n *Node) Execute(ctx context.Context, input map[string]interface{}) (map[s
 }
 
 func init() {
-    registry.RegisterNodeType("node-type", &registry.NodeMetadata{
+    reg := registry.GetGlobalRegistry()
+    reg.RegisterFactory("node-type", func() registry.NodeExecutor {
+        return &Node{}
+    }, registry.NodeMetadata{
+        Type:        "node-type",
         Name:        "Node Type Name",
         Description: "What this node does",
         // ...
-    }, func(config map[string]interface{}) (registry.NodeExecutor, error) {
-        return &Node{/* init from config */}, nil
     })
 }
 ```
+(see `internal/nodes/AGENTS.md` and `internal/nodes/debug/node.go` for the
+full, real pattern — `RegisterNodeType` does not exist)
 
 **Node Categories:**
 - `input/` - Message sources (inject, websocket, HTTP)
@@ -331,3 +347,37 @@ When reviewing code in `internal/`:
 
 *Last updated: 2026-06-21*
 *Overrides: None (extends root AGENTS.md)*
+
+---
+
+## Interface-Verifikation (PFLICHT bei Änderungen an Interfaces)
+
+Trigger: Diese Schritte IMMER ausführen, bevor eine Änderung als fertig gilt, wenn eine der
+folgenden Dateien/Verzeichnisse angefasst wurde:
+- `internal/dto/**`
+- `internal/registry/registry.go` (NodeMetadata/Port/Property/Schema)
+- `cmd/go-red/websocket/hub.go` (WebSocketMessage/MessageType)
+- irgendeine Datei unter `web/src/types/**`
+
+Schritte (in dieser Reihenfolge, nach jeder Interface-Änderung):
+1. `go build ./...` und `go vet ./...` — stellt sicher, dass die Go-Seite kompiliert.
+2. `go generate ./internal/dto/...` — regeneriert `web/src/types/generated.ts` aus den
+   aktuellen Go-DTOs.
+3. `git diff --exit-code -- web/src/types/generated.ts` — falls dieser Befehl NICHT sauber
+   durchläuft (also ein Diff zeigt), bedeutet das: die generierte Datei war vor der Änderung
+   veraltet oder wurde von Hand editiert. Den Diff committen, NIEMALS `generated.ts` von Hand
+   anpassen.
+4. `cd web && npx tsc --noEmit` — deckt Call-Sites auf, die nach einer Schema-Änderung
+   angepasst werden müssen (umbenannte/entfernte Felder etc.). Alle daraus resultierenden
+   Fehler im selben Change beheben, nicht auf später verschieben.
+5. `cd web && npm test` — stellt sicher, dass `types.test.ts` und alle anderen Tests weiterhin
+   gegen die aktuelle Form bestehen.
+6. Bei Änderungen, die REST- oder WebSocket-Payloads betreffen: kurzer manueller Smoke-Test
+   (`go run cmd/go-red/main.go` + `npm run dev`, Flow erstellen/deployen/Message injizieren)
+   um Laufzeitverhalten zu bestätigen, das ein Compiler nicht prüfen kann.
+
+Nicht erlaubt: eine neue Wire-Form (Struct-Feld, Enum-Wert, WS-Message-Typ) einführen, ohne
+dass sie durch `internal/dto` (bzw. `internal/registry`/`cmd/go-red/websocket` für deren
+jeweilige Scan-Ziele) läuft und in `generated.ts` auftaucht. Handschriftliche TS-Interfaces,
+die eine Backend-Form beschreiben, statt sie aus `generated.ts` zu re-exportieren, sind ein
+Rückfall in den alten, driftanfälligen Zustand und müssen vermieden werden.

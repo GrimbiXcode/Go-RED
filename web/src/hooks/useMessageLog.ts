@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWebSocket } from './useWebSocket';
-import type { MessageLogEntry } from '../types/message';
+import type { Message, MessageLogEntry } from '../types/message';
 
 export interface MessageLogState {
   messages: MessageLogEntry[];
@@ -21,32 +21,12 @@ export interface MessageLogActions {
 
 export type UseMessageLogReturn = MessageLogState & MessageLogActions;
 
-// Message from backend (simplified for WebSocket)
-interface BackendMessage {
-  id: string;
-  payload: Record<string, any>;
-  metadata: Record<string, string>;
-  flowId: string;
-  path: string[];
-  timestamp: string;
-}
-
-// Convert backend message to frontend MessageLogEntry
-function convertBackendMessage(msg: BackendMessage): MessageLogEntry {
+// Convert a wire Message (see internal/dto.Message) to a frontend MessageLogEntry.
+function convertBackendMessage(msg: Message): MessageLogEntry {
   return {
     id: msg.id,
     flowId: msg.flowId,
-    message: {
-      id: msg.id,
-      payload: msg.payload,
-      metadata: {
-        ...msg.metadata,
-        flowId: msg.flowId,
-        path: msg.path.join(' -> '),
-      },
-      timestamp: msg.timestamp,
-      sourceNode: msg.path.length > 0 ? msg.path[msg.path.length - 1] : undefined,
-    },
+    message: msg,
     timestamp: msg.timestamp,
     level: 'info',
     nodeId: msg.path.length > 0 ? msg.path[msg.path.length - 1] : '',
@@ -112,7 +92,7 @@ export function useMessageLog(selectedFlowId?: string): UseMessageLogReturn {
   useEffect(() => {
     const subscription = ws.subscribe('message:log', (data: any) => {
       if (data && data.messages) {
-        const backendMessages: BackendMessage[] = data.messages;
+        const backendMessages: Message[] = data.messages;
         const convertedMessages = backendMessages.map(convertBackendMessage);
         
         // Sort by timestamp (newest first)
@@ -146,10 +126,9 @@ export function useMessageLog(selectedFlowId?: string): UseMessageLogReturn {
     // Filter by text
     if (state.filterText) {
       const query = state.filterText.toLowerCase();
-      result = result.filter((msg) => 
+      result = result.filter((msg) =>
         msg.message.id.toLowerCase().includes(query) ||
         JSON.stringify(msg.message.payload).toLowerCase().includes(query) ||
-        msg.message.sourceNode?.toLowerCase().includes(query) ||
         msg.nodeId.toLowerCase().includes(query)
       );
     }

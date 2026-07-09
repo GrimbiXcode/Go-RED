@@ -1,51 +1,19 @@
 // Flow and Node Connection types for Go-RED
+//
+// The wire-format types below are generated from the Go backend (see
+// internal/dto) via `go generate ./internal/dto/...` — do not hand-describe
+// their shape here. Only UI-only types that never cross the wire are
+// hand-written in this file.
+export type {
+  Connection as NodeConnection,
+  Flow,
+  Node as FlowNode,
+  FlowStatus,
+  FlowConfig,
+  NodeStatus,
+} from './generated';
 
-export interface NodeConnection {
-  id: string;
-  sourceNode: string;
-  sourcePort?: string;
-  targetNode: string;
-  targetPort?: string;
-}
-
-export interface Flow {
-  id: string;
-  name: string;
-  description?: string;
-  nodes: Record<string, FlowNode>;
-  connections: NodeConnection[];
-  status: FlowStatus;
-  config?: FlowConfig;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface FlowNode {
-  id: string;
-  type: string;
-  name?: string;
-  position: { x: number; y: number };
-  config: Record<string, any>;
-  status?: NodeStatus;
-  disabled?: boolean;
-}
-
-export type FlowStatus = 'draft' | 'deployed' | 'running' | 'stopped' | 'error' | 'paused';
-
-export interface FlowConfig {
-  autoDeploy?: boolean;
-  timeout?: number;
-  maxMessages?: number;
-  environment?: Record<string, string>;
-}
-
-export interface NodeStatus {
-  state: 'idle' | 'processing' | 'error' | 'completed';
-  message?: string;
-  timestamp?: string;
-  processingCount?: number;
-  errorCount?: number;
-}
+import type { Flow, FlowStatus } from './generated';
 
 export interface FlowMetadata {
   id: string;

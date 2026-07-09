@@ -18,6 +18,7 @@ import (
     "github.com/google/uuid"
 
     "github.com/GrimbiXcode/Go-RED/cmd/go-red/websocket"
+    "github.com/GrimbiXcode/Go-RED/internal/dto"
     "github.com/GrimbiXcode/Go-RED/internal/engine"
     "github.com/GrimbiXcode/Go-RED/internal/registry"
     "github.com/GrimbiXcode/Go-RED/internal/state"
@@ -174,114 +175,18 @@ func writeError(w http.ResponseWriter, status int, publicMessage string, err err
     http.Error(w, publicMessage, status)
 }
 
-// convertFlowToFrontendAPI converts a Go flow to frontend-compatible format for REST API
-func convertFlowToFrontendAPI(flow *engine.Flow) map[string]interface{} {
-    // Convert nodes
-    nodesMap := make(map[string]interface{})
-    for id, node := range flow.Nodes {
-        nodeMap := map[string]interface{}{
-            "id":       node.ID,
-            "type":     node.Type,
-            "name":     node.Name,
-            "position": map[string]float64{"x": node.X, "y": node.Y},
-            "config":   node.Config,
-            "status": map[string]interface{}{
-                "state":       "idle",
-                "message":     "",
-                "timestamp":   "",
-                "processingCount": 0,
-                "errorCount": 0,
-            },
-            "disabled": node.Disabled,
-        }
-        nodesMap[id] = nodeMap
-    }
-    
-    // Convert connections
-    connectionsList := make([]interface{}, len(flow.Connections))
-    for i, conn := range flow.Connections {
-        connMap := map[string]interface{}{
-            "id":          conn.ID,
-            "sourceNode":  conn.SourceNode,
-            "sourcePort":  conn.SourcePort,
-            "targetNode":  conn.TargetNode,
-            "targetPort":  conn.TargetPort,
-        }
-        connectionsList[i] = connMap
-    }
-    
-    // Convert flow config
-    flowConfigMap := map[string]interface{}{
-        "timeout":       int(flow.Config.Timeout.Seconds()),
-        "maxConcurrency": flow.Config.MaxConcurrency,
-        "retryPolicy": map[string]interface{}{
-            "maxRetries":  flow.Config.RetryPolicy.MaxRetries,
-            "backoff":     int(flow.Config.RetryPolicy.Backoff.Seconds()),
-            "maxBackoff":  int(flow.Config.RetryPolicy.MaxBackoff.Seconds()),
-            "retryOn":     flow.Config.RetryPolicy.RetryOn,
-        },
-        "environment": flow.Config.Environment,
-    }
-    
-    // Convert flow status
-    frontendStatus := convertFlowStatusAPI(flow.Status)
-    
-    return map[string]interface{}{
-        "id":          flow.ID,
-        "name":        flow.Name,
-        "description": flow.Description,
-        "nodes":       nodesMap,
-        "connections": connectionsList,
-        "status":      frontendStatus,
-        "config":      flowConfigMap,
-        "createdAt":   flow.CreatedAt.Format(time.RFC3339),
-        "updatedAt":   flow.UpdatedAt.Format(time.RFC3339),
-        "version":     flow.Version,
-    }
-}
-
-// convertFlowStatusAPI converts Go flow status to frontend status
-func convertFlowStatusAPI(status engine.FlowStatus) string {
-    switch status {
-    case engine.FlowStatusInactive:
-        return "draft"
-    case engine.FlowStatusActive:
-        return "running"
-    case engine.FlowStatusError:
-        return "error"
-    case engine.FlowStatusDeploying:
-        return "deploying"
-    case engine.FlowStatusUndeploying:
-        return "undeploying"
-    default:
-        return string(status)
-    }
-}
-
 func handleGetFlows(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
     flows := e.GetAllFlows()
-    type flowResponse struct {
-        ID string `json:"id"`
-        Name string `json:"name"`
-        Description string `json:"description"`
-        Status string `json:"status"`
-        CreatedAt time.Time `json:"createdAt"`
-        UpdatedAt time.Time `json:"updatedAt"`
-    }
-    response := make([]flowResponse, len(flows))
+    response := make([]dto.FlowSummary, len(flows))
     for i, flow := range flows {
-        response[i] = flowResponse{ID: flow.ID, Name: flow.Name, Description: flow.Description, Status: convertFlowStatusAPI(flow.Status), CreatedAt: flow.CreatedAt, UpdatedAt: flow.UpdatedAt}
+        response[i] = dto.ToWireSummary(flow)
     }
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(response)
 }
 
 func handleCreateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
-    var request struct {
-        ID string `json:"id"`
-        Name string `json:"name"`
-        Description string `json:"description"`
-    }
+    var request dto.FlowCreateRequest
     if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
         writeError(w, http.StatusBadRequest, "invalid request body", err)
         return
@@ -298,9 +203,7 @@ func handleCreateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
     }
     w.Header().Set("Content-Type", "application/json")
     w.WriteHeader(http.StatusCreated)
-    // Convert flow to frontend format for REST API
-    flowResponse := convertFlowToFrontendAPI(flow)
-    json.NewEncoder(w).Encode(flowResponse)
+    json.NewEncoder(w).Encode(dto.ToWire(flow))
 }
 
 func handleGetFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
@@ -311,19 +214,29 @@ func handleGetFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine)
         return
     }
     w.Header().Set("Content-Type", "application/json")
-    // Convert flow to frontend format for REST API
-    flowResponse := convertFlowToFrontendAPI(flow)
-    json.NewEncoder(w).Encode(flowResponse)
+    json.NewEncoder(w).Encode(dto.ToWire(flow))
 }
 
 func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
     flowID := r.PathValue("id")
-    
-    // First, read the raw request body to handle custom JSON structure
-    var rawBody map[string]interface{}
-    if err := json.NewDecoder(r.Body).Decode(&rawBody); err != nil {
+
+    var request dto.FlowUpdateRequest
+    if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
         writeError(w, http.StatusBadRequest, "invalid request body", err)
         return
+    }
+    if request.Name != nil {
+        sanitized := sanitizeString(*request.Name)
+        request.Name = &sanitized
+    }
+    if request.Description != nil {
+        sanitized := sanitizeString(*request.Description)
+        request.Description = &sanitized
+    }
+    for id, node := range request.Nodes {
+        node.Type = sanitizeString(node.Type)
+        node.Name = sanitizeString(node.Name)
+        request.Nodes[id] = node
     }
 
     // Get existing flow
@@ -333,130 +246,15 @@ func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
         return
     }
 
-    // Update flow fields
-    if name, ok := rawBody["name"].(string); ok && name != "" {
-        flow.Name = sanitizeString(name)
-    }
-    if description, ok := rawBody["description"].(string); ok && description != "" {
-        flow.Description = sanitizeString(description)
-    }
-    
-    // Update nodes - handle frontend position object
-    if nodes, ok := rawBody["nodes"].(map[string]interface{}); ok && nodes != nil {
-        for nodeID, nodeData := range nodes {
-            if nodeMap, ok := nodeData.(map[string]interface{}); ok {
-                // Check if node exists
-                if existingNode, exists := flow.Nodes[nodeID]; exists {
-                    // Update existing node
-                    if nodeType, ok := nodeMap["type"].(string); ok {
-                        existingNode.Type = sanitizeString(nodeType)
-                    }
-                    if config, ok := nodeMap["config"].(map[string]interface{}); ok {
-                        existingNode.Config = config
-                    }
-                    if position, ok := nodeMap["position"].(map[string]interface{}); ok {
-                        if x, ok := position["x"].(float64); ok {
-                            existingNode.X = x
-                        }
-                        if y, ok := position["y"].(float64); ok {
-                            existingNode.Y = y
-                        }
-                    }
-                    if disabled, ok := nodeMap["disabled"].(bool); ok {
-                        existingNode.Disabled = disabled
-                    }
-                } else {
-                    // Create new node
-                    newNode := &engine.Node{
-                        ID: nodeID,
-                    }
-                    if nodeType, ok := nodeMap["type"].(string); ok {
-                        newNode.Type = sanitizeString(nodeType)
-                    }
-                    if config, ok := nodeMap["config"].(map[string]interface{}); ok {
-                        newNode.Config = config
-                    }
-                    if position, ok := nodeMap["position"].(map[string]interface{}); ok {
-                        if x, ok := position["x"].(float64); ok {
-                            newNode.X = x
-                        }
-                        if y, ok := position["y"].(float64); ok {
-                            newNode.Y = y
-                        }
-                    }
-                    if disabled, ok := nodeMap["disabled"].(bool); ok {
-                        newNode.Disabled = disabled
-                    }
-                    flow.Nodes[nodeID] = newNode
-                }
-            }
-        }
-    }
-    
-    // Update connections
-    if connections, ok := rawBody["connections"].([]interface{}); ok && connections != nil {
-        var newConnections []engine.NodeConnection
-        for _, connData := range connections {
-            if connMap, ok := connData.(map[string]interface{}); ok {
-                newConn := engine.NodeConnection{}
-                if id, ok := connMap["id"].(string); ok {
-                    newConn.ID = id
-                }
-                if sourceNode, ok := connMap["sourceNode"].(string); ok {
-                    newConn.SourceNode = sourceNode
-                }
-                if sourcePort, ok := connMap["sourcePort"].(string); ok {
-                    newConn.SourcePort = sourcePort
-                }
-                if targetNode, ok := connMap["targetNode"].(string); ok {
-                    newConn.TargetNode = targetNode
-                }
-                if targetPort, ok := connMap["targetPort"].(string); ok {
-                    newConn.TargetPort = targetPort
-                }
-                newConnections = append(newConnections, newConn)
-            }
-        }
-        flow.Connections = newConnections
-    }
-    
-    // Update config
-    if config, ok := rawBody["config"].(map[string]interface{}); ok && config != nil {
-        if timeout, ok := config["timeout"].(float64); ok {
-            flow.Config.Timeout = time.Duration(timeout) * time.Second
-        }
-        if maxMessages, ok := config["maxMessages"].(float64); ok {
-            // Frontend sends maxMessages, backend uses MaxConcurrency
-            flow.Config.MaxConcurrency = int(maxMessages)
-        }
-        if maxConcurrency, ok := config["maxConcurrency"].(float64); ok {
-            flow.Config.MaxConcurrency = int(maxConcurrency)
-        }
-        if env, ok := config["environment"].(map[string]interface{}); ok {
-            for k, v := range env {
-                if strVal, ok := v.(string); ok {
-                    flow.Config.Environment[k] = strVal
-                }
-            }
-        }
-        // Handle autoDeploy if present (frontend-specific)
-        if autoDeploy, ok := config["autoDeploy"].(bool); ok {
-            // Could set some flag or auto-deploy, but for now just ignore
-            _ = autoDeploy
-        }
-    }
-    
-    flow.UpdatedAt = time.Now().UTC()
-    
+    request.ApplyTo(flow)
+
     // Save the flow
     if e.GetStateManager() != nil {
         e.GetStateManager().SaveFlow(flow)
     }
-    
+
     w.Header().Set("Content-Type", "application/json")
-    // Convert flow to frontend format for REST API
-    flowResponse := convertFlowToFrontendAPI(flow)
-    json.NewEncoder(w).Encode(flowResponse)
+    json.NewEncoder(w).Encode(dto.ToWire(flow))
 }
 
 func handleDeleteFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
@@ -573,14 +371,14 @@ func handleGetMessages(w http.ResponseWriter, r *http.Request, e *engine.FlowEng
             messages = messages[startIndex:]
         }
     }
-    
+
     w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(messages)
+    json.NewEncoder(w).Encode(dto.MessagesToWire(messages))
 }
 
 func handleExportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
     flowID := r.PathValue("id")
-    
+
     // Get the flow
     flow, err := e.GetFlow(flowID)
     if err != nil {
@@ -591,21 +389,8 @@ func handleExportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
     // Set headers for file download
     w.Header().Set("Content-Type", "application/json")
     w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=flow-%s.json", flowID))
-    
-    // Create export structure
-    exportData := map[string]interface{}{
-        "id":          flow.ID,
-        "name":        flow.Name,
-        "description": flow.Description,
-        "nodes":       flow.Nodes,
-        "connections": flow.Connections,
-        "config":      flow.Config,
-        "createdAt":   flow.CreatedAt.Format(time.RFC3339),
-        "updatedAt":   flow.UpdatedAt.Format(time.RFC3339),
-        "status":      flow.Status,
-    }
-    
-    json.NewEncoder(w).Encode(exportData)
+
+    json.NewEncoder(w).Encode(dto.ToWire(flow))
 }
 
 func handleImportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
@@ -614,17 +399,10 @@ func handleImportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
         return
     }
-    
-    // Parse the request body
-    var importData struct {
-        ID          string                 `json:"id"`
-        Name        string                 `json:"name"`
-        Description string                 `json:"description"`
-        Nodes       map[string]*engine.Node `json:"nodes"`
-        Connections []engine.NodeConnection `json:"connections"`
-        Config      map[string]interface{}  `json:"config"`
-    }
-    
+
+    // Parse the request body as a canonical wire Flow (the same shape
+    // produced by GET /api/flows/{id}/export).
+    var importData dto.Flow
     if err := json.NewDecoder(r.Body).Decode(&importData); err != nil {
         writeError(w, http.StatusBadRequest, "invalid request body", err)
         return
@@ -638,52 +416,21 @@ func handleImportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
         http.Error(w, "Flow name is required", http.StatusBadRequest)
         return
     }
-    
+
     // Create a new flow with a new ID (to avoid conflicts)
     // But keep the original ID for reference in the response
     originalID := importData.ID
-    importData.ID = ""
-    
+
     // Create the flow with a new UUID
     flow := engine.NewFlow(uuid.New().String(), importData.Name)
-    flow.Description = importData.Description
-    
-    // Import nodes
-    for nodeID, node := range importData.Nodes {
-        // Create a copy to avoid pointer issues
-        newNode := *node
-        newNode.ID = nodeID
-        newNode.Type = sanitizeString(newNode.Type)
-        newNode.Name = sanitizeString(newNode.Name)
-        flow.Nodes[nodeID] = &newNode
+    dto.PopulateFromWire(flow, importData)
+
+    for nodeID, node := range flow.Nodes {
+        node.Type = sanitizeString(node.Type)
+        node.Name = sanitizeString(node.Name)
+        flow.Nodes[nodeID] = node
     }
-    
-    // Import connections
-    for _, conn := range importData.Connections {
-        flow.Connections = append(flow.Connections, conn)
-    }
-    
-    // Import config - convert from map[string]interface{} to FlowConfig
-    // For now, keep the default FlowConfig from NewFlow as the import format
-    // uses a generic map which may not match the FlowConfig structure exactly
-    // This can be enhanced later with proper type conversion
-    if importData.Config != nil {
-        // Try to convert config values if they match the expected types
-        if timeout, ok := importData.Config["timeout"].(float64); ok {
-            flow.Config.Timeout = time.Duration(timeout) * time.Second
-        }
-        if maxConcurrency, ok := importData.Config["maxConcurrency"].(float64); ok {
-            flow.Config.MaxConcurrency = int(maxConcurrency)
-        }
-        if env, ok := importData.Config["environment"].(map[string]interface{}); ok {
-            for k, v := range env {
-                if strVal, ok := v.(string); ok {
-                    flow.Config.Environment[k] = strVal
-                }
-            }
-        }
-    }
-    
+
     // Save the flow to state manager
     if e.GetStateManager() != nil {
         if err := e.GetStateManager().SaveFlow(flow); err != nil {
@@ -691,7 +438,7 @@ func handleImportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
             return
         }
     }
-    
+
     // Return success response
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]interface{}{

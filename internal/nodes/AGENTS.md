@@ -37,9 +37,14 @@ All nodes implement the **`NodeExecutor`** interface from `internal/registry`:
 
 ```go
 type NodeExecutor interface {
-    Execute(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error)
+    Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error)
+    Validate() error
+    GetConfig() map[string]interface{}
+    SetConfig(config map[string]interface{}) error
 }
 ```
+(the real interface, `internal/registry/registry.go`, has four methods, not
+one — `Validate`/`GetConfig`/`SetConfig` are required too)
 
 ### Node Registration Pattern
 
@@ -47,29 +52,40 @@ Every node must register itself in its `init()` function:
 
 ```go
 func init() {
-    registry.RegisterNodeType("node-type-id", &registry.NodeMetadata{
+    reg := registry.GetGlobalRegistry()
+    err := reg.RegisterFactory("node-type-id", func() registry.NodeExecutor {
+        // Factory function - creates a new (unconfigured) node instance.
+        // Config is applied afterwards via NodeExecutor.SetConfig.
+        return &MyNode{}
+    }, registry.NodeMetadata{
+        ID:          "node-type-id",
+        Type:        "node-type-id",
         Name:        "Human Readable Name",
         Description: "What this node does",
         Category:    "category",
         Icon:        "icon-name",
-        InputPorts:  []string{"input1", "input2"},
-        OutputPorts: []string{"output1", "output2"},
-        ConfigSchema: map[string]registry.ConfigProperty{
-            "propertyName": {
-                Type:        "string",
-                Default:     "defaultValue",
-                Required:    true,
-                Description: "Property description",
+        Inputs:      []registry.Port{{ID: "input1", Name: "input1"}, {ID: "input2", Name: "input2"}},
+        Outputs:     []registry.Port{{ID: "output1", Name: "output1"}, {ID: "output2", Name: "output2"}},
+        ConfigSchema: registry.Schema{
+            Properties: map[string]registry.Property{
+                "propertyName": {
+                    Type:        "string",
+                    Default:     "defaultValue",
+                    Description: "Property description",
+                },
             },
+            Required: []string{"propertyName"},
         },
-    }, func(config map[string]interface{}) (registry.NodeExecutor, error) {
-        // Factory function - creates node instance from config
-        return &MyNode{
-            // Initialize from config
-        }, nil
     })
+    if err != nil {
+        panic(err)
+    }
 }
 ```
+(see `internal/nodes/debug/node.go` for a real, working example — note that
+`NodeFactory` takes no arguments and `ConfigSchema` is `registry.Schema`, not
+a bare `map[string]registry.ConfigProperty`; `registry.ConfigProperty`
+doesn't exist, the real type is `registry.Property`)
 
 ---
 
@@ -131,34 +147,36 @@ func (n *Node) Execute(ctx context.Context, input map[string]interface{}) (map[s
 
 // init registers the node type
 func init() {
-    registry.RegisterNodeType("my-node", &registry.NodeMetadata{
+    reg := registry.GetGlobalRegistry()
+    err := reg.RegisterFactory("my-node", func() registry.NodeExecutor {
+        return &Node{}
+    }, registry.NodeMetadata{
+        ID:          "my-node",
+        Type:        "my-node",
         Name:        "My Node",
         Description: "A custom node that does something",
         Category:    "utility",
         Icon:        "cog",
-        Color:       "#FF5733",
-        InputPorts:  []string{"input"},
-        OutputPorts: []string{"output"},
-        ConfigSchema: map[string]registry.ConfigProperty{
-            "configField": {
-                Type:        "string",
-                Default:     "default",
-                Required:    false,
-                Description: "Example configuration",
+        Inputs:      []registry.Port{{ID: "input", Name: "input"}},
+        Outputs:     []registry.Port{{ID: "output", Name: "output"}},
+        ConfigSchema: registry.Schema{
+            Properties: map[string]registry.Property{
+                "configField": {
+                    Type:        "string",
+                    Default:     "default",
+                    Description: "Example configuration",
+                },
             },
         },
-    }, func(config map[string]interface{}) (registry.NodeExecutor, error) {
-        node := &Node{}
-        
-        // Extract configuration
-        if cf, ok := config["configField"].(string); ok {
-            node.ConfigField = cf
-        }
-        
-        return node, nil
     })
+    if err != nil {
+        panic(err)
+    }
 }
 ```
+(`Node.SetConfig` — required by `NodeExecutor` — is where `config["configField"]`
+gets extracted at runtime, not the factory function; there is no `Color` field
+on `NodeMetadata`)
 
 ---
 
@@ -335,18 +353,12 @@ func (n *StatefulNode) Execute(ctx context.Context, input map[string]interface{}
 
 ### Color Coding
 
-Use consistent colors for node categories in the UI:
-
-```go
-// In NodeMetadata
-Color: "#FF5733", // Orange - utility
-Color: "#33FF57", // Green - input
-Color: "#3357FF", // Blue - output
-Color: "#F033FF", // Purple - function
-Color: "#FF33F0", // Pink - logic
-Color: "#33FFF0", // Cyan - network
-Color: "#33F0FF", // Light Blue - storage
-```
+`registry.NodeMetadata` has no `Color` field — category colors are a
+frontend-only concern (see `categoryColors` in `web/src/components/
+NodePalette.tsx` and `NodeComponent.tsx`), keyed by the same category string
+used here. Keep the two in sync by hand when adding a new category; don't add
+a `Color` field to the Go struct without also adding it to the generated
+wire type via `internal/dto`/`cmd/gentypes`.
 
 ### Icon Naming
 
@@ -497,23 +509,25 @@ func TestNode_Integration(t *testing.T) {
 
 ## Node Configuration Schema
 
-The `ConfigSchema` in `NodeMetadata` defines how nodes are configured in the UI:
+The `ConfigSchema` in `NodeMetadata` defines how nodes are configured in the UI.
+It is `registry.Schema`, not a bare map — required property *names* are listed
+separately from the properties themselves, and there is no
+`Placeholder`/`Options`/`Editor`/`EditorConfig` (those were never implemented):
 
 ```go
-ConfigSchema: map[string]registry.ConfigProperty{
-    "propertyName": {
-        Type:         "string|number|boolean|array|object",
-        Default:      interface{}, // Default value
-        Required:     bool,         // Must be set
-        Description:  string,       // Tooltip text
-        Placeholder:  string,       // Input placeholder
-        Options:      []string,     // For select/dropdown
-        Min:          *float64,     // Minimum value (for numbers)
-        Max:          *float64,     // Maximum value (for numbers)
-        Pattern:      string,       // Regex pattern (for strings)
-        Editor:       string,       // "textarea", "code", "password", etc.
-        EditorConfig: map[string]interface{}, // Editor-specific config
+ConfigSchema: registry.Schema{
+    Properties: map[string]registry.Property{
+        "propertyName": {
+            Type:        "string|number|boolean|array|object",
+            Default:     interface{}, // Default value
+            Description: string,      // Tooltip text
+            Enum:        []string,    // For select/dropdown
+            Min:         *float64,    // Minimum value (for numbers)
+            Max:         *float64,    // Maximum value (for numbers)
+            Pattern:     string,      // Regex pattern (for strings)
+        },
     },
+    Required: []string{"propertyName"}, // names of required properties
 }
 ```
 
@@ -548,43 +562,40 @@ ConfigSchema: map[string]registry.ConfigProperty{
 
 ```go
 &registry.NodeMetadata{
+    ID:          "http-request",
+    Type:        "http-request",
     Name:        "HTTP Request",
     Description: "Make HTTP requests to external services",
     Category:    "network",
     Icon:        "globe",
-    Color:       "#3357FF",
-    
-    // Clear port definitions
-    InputPorts:  []string{"input"},
-    OutputPorts: []string{"output", "error"},
-    
+
+    // Clear port definitions (Port, not a bare string)
+    Inputs:  []registry.Port{{ID: "input", Name: "input"}},
+    Outputs: []registry.Port{{ID: "output", Name: "output"}, {ID: "error", Name: "error"}},
+
     // Comprehensive config schema
-    ConfigSchema: map[string]registry.ConfigProperty{
-        "method": {
-            Type:        "string",
-            Default:     "GET",
-            Required:    true,
-            Description: "HTTP method",
-            Options:     []string{"GET", "POST", "PUT", "DELETE", "PATCH"},
-            Editor:      "select",
+    ConfigSchema: registry.Schema{
+        Properties: map[string]registry.Property{
+            "method": {
+                Type:        "string",
+                Default:     "GET",
+                Description: "HTTP method",
+                Enum:        []string{"GET", "POST", "PUT", "DELETE", "PATCH"},
+            },
+            "url": {
+                Type:        "string",
+                Default:     "",
+                Description: "Request URL",
+            },
+            "timeout": {
+                Type:        "number",
+                Default:     30,
+                Description: "Request timeout in seconds",
+                Min:         floatPtr(1),
+                Max:         floatPtr(300),
+            },
         },
-        "url": {
-            Type:        "string",
-            Default:     "",
-            Required:    true,
-            Description: "Request URL",
-            Placeholder:  "https://api.example.com/endpoint",
-            Editor:      "text",
-        },
-        "timeout": {
-            Type:        "number",
-            Default:     30,
-            Required:    false,
-            Description: "Request timeout in seconds",
-            Min:         floatPtr(1),
-            Max:         floatPtr(300),
-            Editor:      "number",
-        },
+        Required: []string{"method", "url"},
     },
 }
 ```
@@ -600,8 +611,10 @@ ConfigSchema: map[string]registry.ConfigProperty{
 
 // ❌ Avoid - unclear config schema
 &registry.NodeMetadata{
-    ConfigSchema: map[string]registry.ConfigProperty{
-        "x": {Type: "string"}, // No description, default, or type info
+    ConfigSchema: registry.Schema{
+        Properties: map[string]registry.Property{
+            "x": {Type: "string"}, // No description or default
+        },
     },
 }
 
@@ -772,3 +785,37 @@ Before adding a new node:
 
 *Last updated: 2026-06-21*
 *Overrides: None (extends internal/AGENTS.md and root AGENTS.md)*
+
+---
+
+## Interface-Verifikation (PFLICHT bei Änderungen an Interfaces)
+
+Trigger: Diese Schritte IMMER ausführen, bevor eine Änderung als fertig gilt, wenn eine der
+folgenden Dateien/Verzeichnisse angefasst wurde:
+- `internal/dto/**`
+- `internal/registry/registry.go` (NodeMetadata/Port/Property/Schema)
+- `cmd/go-red/websocket/hub.go` (WebSocketMessage/MessageType)
+- irgendeine Datei unter `web/src/types/**`
+
+Schritte (in dieser Reihenfolge, nach jeder Interface-Änderung):
+1. `go build ./...` und `go vet ./...` — stellt sicher, dass die Go-Seite kompiliert.
+2. `go generate ./internal/dto/...` — regeneriert `web/src/types/generated.ts` aus den
+   aktuellen Go-DTOs.
+3. `git diff --exit-code -- web/src/types/generated.ts` — falls dieser Befehl NICHT sauber
+   durchläuft (also ein Diff zeigt), bedeutet das: die generierte Datei war vor der Änderung
+   veraltet oder wurde von Hand editiert. Den Diff committen, NIEMALS `generated.ts` von Hand
+   anpassen.
+4. `cd web && npx tsc --noEmit` — deckt Call-Sites auf, die nach einer Schema-Änderung
+   angepasst werden müssen (umbenannte/entfernte Felder etc.). Alle daraus resultierenden
+   Fehler im selben Change beheben, nicht auf später verschieben.
+5. `cd web && npm test` — stellt sicher, dass `types.test.ts` und alle anderen Tests weiterhin
+   gegen die aktuelle Form bestehen.
+6. Bei Änderungen, die REST- oder WebSocket-Payloads betreffen: kurzer manueller Smoke-Test
+   (`go run cmd/go-red/main.go` + `npm run dev`, Flow erstellen/deployen/Message injizieren)
+   um Laufzeitverhalten zu bestätigen, das ein Compiler nicht prüfen kann.
+
+Nicht erlaubt: eine neue Wire-Form (Struct-Feld, Enum-Wert, WS-Message-Typ) einführen, ohne
+dass sie durch `internal/dto` (bzw. `internal/registry`/`cmd/go-red/websocket` für deren
+jeweilige Scan-Ziele) läuft und in `generated.ts` auftaucht. Handschriftliche TS-Interfaces,
+die eine Backend-Form beschreiben, statt sie aus `generated.ts` zu re-exportieren, sind ein
+Rückfall in den alten, driftanfälligen Zustand und müssen vermieden werden.

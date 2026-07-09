@@ -43,8 +43,8 @@ type Property struct {
     Description string      `json:"description"`
     Default     interface{} `json:"default"`
     Enum        []string    `json:"enum"`        // Possible values for dropdowns
-    Min         *float64    `json:"minimum"`
-    Max         *float64    `json:"maximum"`
+    Min         *float64    `json:"min"`
+    Max         *float64    `json:"max"`
     Pattern     string      `json:"pattern"`     // Regex pattern for strings
 }
 

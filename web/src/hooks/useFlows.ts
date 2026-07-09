@@ -92,13 +92,7 @@ export function useFlows(): UseFlowsReturn {
     }
   }, []);
   const createNewFlow = useCallback(async (name: string, description?: string) => {
-    const newFlow = await createFlow({
-      name,
-      description,
-      nodes: {},
-      connections: [],
-      config: {},
-    });
+    const newFlow = await createFlow({ name, description });
     await loadFlows();
     return newFlow;
   }, [loadFlows]);
@@ -213,6 +207,8 @@ export function useFlows(): UseFlowsReturn {
       type: nodeType,
       position,
       config: {},
+      status: { state: 'idle' },
+      disabled: false,
     };
     console.log('[FRONTEND] addNode - Adding node to local state:', {
       nodeId: newNode.id,

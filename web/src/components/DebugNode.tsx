@@ -39,7 +39,7 @@ export function DebugNode({ data, selected }: DebugNodeProps) {
   const { label, node, metadata } = data;
 
   const icon = metadata?.icon || '🐛';
-  const color = metadata?.color || 'bg-orange-500';
+  const color = 'bg-orange-500';
 
   const inputPorts = metadata?.inputs || [];
   const outputPorts = metadata?.outputs || [];

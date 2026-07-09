@@ -1,24 +1,17 @@
 // Node metadata and port definitions for Go-RED
+//
+// NodeMetadata and Port are generated from the Go backend (see
+// internal/registry) via `go generate ./internal/dto/...` — do not
+// hand-describe their shape here. PropertySchema is a rename of the
+// generated Property type (registry.Property is a flat schema — Go has no
+// recursive properties/items/oneOf/allOf, unlike this file's previous
+// hand-written PropertySchema, which described a shape the backend never
+// produced).
+export type { NodeMetadata, Port, Property as PropertySchema, Schema } from './generated';
 
-export interface NodeMetadata {
-  id: string;
-  type: string;
-  name: string;
-  description?: string;
-  category: NodeCategory;
-  icon?: string;
-  color?: string;
-  inputs: Port[];
-  outputs: Port[];
-  configSchema?: PropertySchema;
-  defaultConfig?: Record<string, any>;
-  tags?: string[];
-  author?: string;
-  version?: string;
-  pluginId?: string;
-}
+import type { NodeMetadata } from './generated';
 
-export type NodeCategory = 
+export type NodeCategory =
   | 'input'
   | 'output'
   | 'function'
@@ -29,43 +22,6 @@ export type NodeCategory =
   | 'social'
   | 'dashboard'
   | 'custom';
-
-export interface Port {
-  id: string;
-  name: string;
-  description?: string;
-  type: PortType;
-  required?: boolean;
-  schema?: PropertySchema;
-}
-
-export type PortType = 'any' | 'string' | 'number' | 'boolean' | 'object' | 'array' | 'buffer' | 'message';
-
-export interface PropertySchema {
-  type: SchemaType;
-  description?: string;
-  default?: any;
-  required?: boolean;
-  enum?: any[];
-  min?: number;
-  max?: number;
-  pattern?: string;
-  properties?: Record<string, PropertySchema>;
-  items?: PropertySchema;
-  oneOf?: PropertySchema[];
-  allOf?: PropertySchema[];
-  format?: string;
-  examples?: any[];
-}
-
-export type SchemaType = 
-  | 'string'
-  | 'number'
-  | 'integer'
-  | 'boolean'
-  | 'object'
-  | 'array'
-  | 'null';
 
 export interface NodeProperty {
   id: string;

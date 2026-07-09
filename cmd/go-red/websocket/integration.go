@@ -6,6 +6,7 @@ import (
     "net/http"
     "time"
 
+    "github.com/GrimbiXcode/Go-RED/internal/dto"
     "github.com/GrimbiXcode/Go-RED/internal/engine"
     "github.com/GrimbiXcode/Go-RED/internal/registry"
 )
@@ -54,8 +55,8 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
         }
     case "flow:update":
         var flowData struct {
-            FlowID string                 `json:"flowId"`
-            Flow   map[string]interface{} `json:"flow"`
+            FlowID string                `json:"flowId"`
+            Flow   dto.FlowUpdateRequest `json:"flow"`
         }
         if err := json.Unmarshal(data, &flowData); err == nil {
             h.handleFlowUpdate(client, flowData.FlowID, flowData.Flow)
@@ -82,16 +83,8 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
     // Node-related messages
     case "node:add":
         var nodeData struct {
-            Node struct {
-                ID       string                 `json:"id"`
-                Type     string                 `json:"type"`
-                Position struct {
-                    X float64 `json:"x"`
-                    Y float64 `json:"y"`
-                } `json:"position"`
-                Config map[string]interface{} `json:"config,omitempty"`
-            } `json:"node"`
-            FlowID string `json:"flowId"`
+            Node   dto.Node `json:"node"`
+            FlowID string   `json:"flowId"`
         }
         if err := json.Unmarshal(data, &nodeData); err == nil {
             log.Printf("[BACKEND] node:add received - flowId: %s, nodeId: %s, type: %s", nodeData.FlowID, nodeData.Node.ID, nodeData.Node.Type)
@@ -109,16 +102,8 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
         }
     case "node:update":
         var nodeData struct {
-            Node struct {
-                ID       string                 `json:"id"`
-                Type     string                 `json:"type"`
-                Position struct {
-                    X float64 `json:"x"`
-                    Y float64 `json:"y"`
-                } `json:"position"`
-                Config map[string]interface{} `json:"config,omitempty"`
-            } `json:"node"`
-            FlowID string `json:"flowId"`
+            Node   dto.Node `json:"node"`
+            FlowID string   `json:"flowId"`
         }
         if err := json.Unmarshal(data, &nodeData); err == nil {
             log.Printf("[BACKEND] node:update received - flowId: %s, nodeId: %s", nodeData.FlowID, nodeData.Node.ID)
@@ -147,14 +132,8 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
     // Connection-related messages
     case "connection:add":
         var connData struct {
-            Connection struct {
-                ID          string `json:"id,omitempty"`
-                SourceNode  string `json:"sourceNode"`
-                SourcePort  string `json:"sourcePort,omitempty"`
-                TargetNode  string `json:"targetNode"`
-                TargetPort  string `json:"targetPort,omitempty"`
-            } `json:"connection"`
-            FlowID string `json:"flowId"`
+            Connection dto.Connection `json:"connection"`
+            FlowID     string         `json:"flowId"`
         }
         if err := json.Unmarshal(data, &connData); err == nil {
             log.Printf("[BACKEND] connection:add received - flowId: %s, sourceNode: %s, targetNode: %s", connData.FlowID, connData.Connection.SourceNode, connData.Connection.TargetNode)
@@ -177,14 +156,15 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
     case "state:sync":
         h.handleStateSync(client)
     case "message:log":
-        // Message log from backend - this can be safely ignored or used for debugging
-        log.Printf("[WEBSOCKET] Received message:log - data: %s", message.Data)
-        // For now, just acknowledge receipt with an info message
-        h.BroadcastToClient(client, MessageTypeInfo, map[string]interface{}{
-            "type":    "message:log",
-            "status":  "received",
-            "message": "Message log acknowledged",
-        })
+        var logRequest struct {
+            FlowID string `json:"flowId"`
+            Limit  int    `json:"limit"`
+        }
+        if err := json.Unmarshal(data, &logRequest); err == nil {
+            h.handleMessageLog(client, logRequest.FlowID, logRequest.Limit)
+        } else {
+            log.Printf("[WEBSOCKET] message:log parse error: %v, data: %s", err, string(data))
+        }
     case "message:send":
         var msgData struct {
             FlowID  string                 `json:"flowId"`
@@ -216,36 +196,22 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
 
 // Flow handlers with full engine integration
 
+// allFlowSummaries returns the wire-format summary of every flow, for the
+// flow:list broadcast (both the direct response to a flow:list request and
+// the broadcasts sent after any flow-mutating operation).
+func (h *WebSocketHandler) allFlowSummaries() []dto.FlowSummary {
+    flows := h.flowEngine.GetAllFlows()
+    summaries := make([]dto.FlowSummary, len(flows))
+    for i, flow := range flows {
+        summaries[i] = dto.ToWireSummary(flow)
+    }
+    return summaries
+}
+
 func (h *WebSocketHandler) handleFlowList(client *Client) {
     log.Println("Handling flow:list request")
-    flows := h.flowEngine.GetAllFlows()
-    
-    // Convert flows to summary format for the client
-    type flowSummary struct {
-        ID          string `json:"id"`
-        Name        string `json:"name"`
-        Description string `json:"description,omitempty"`
-        Status      string `json:"status"`
-        NodeCount   int    `json:"nodeCount"`
-        CreatedAt   string `json:"createdAt"`
-        UpdatedAt   string `json:"updatedAt"`
-    }
-    
-    summaries := make([]flowSummary, len(flows))
-    for i, flow := range flows {
-        summaries[i] = flowSummary{
-            ID:          flow.ID,
-            Name:        flow.Name,
-            Description: flow.Description,
-            Status:      string(flow.Status),
-            NodeCount:   len(flow.Nodes),
-            CreatedAt:   flow.CreatedAt.Format(time.RFC3339),
-            UpdatedAt:   flow.UpdatedAt.Format(time.RFC3339),
-        }
-    }
-    
     h.BroadcastToClient(client, MessageTypeFlowList, map[string]interface{}{
-        "flows": summaries,
+        "flows": h.allFlowSummaries(),
     })
 }
 
@@ -260,9 +226,7 @@ func (h *WebSocketHandler) handleFlowGet(client *Client, flowID string) {
         })
         return
     }
-    log.Printf("[BACKEND] handleFlowGet - Converting flow to frontend format")
-    flowResponse := convertFlowToFrontend(flow)
-    h.BroadcastToClient(client, MessageTypeFlowGet, flowResponse)
+    h.BroadcastToClient(client, MessageTypeFlowGet, dto.ToWire(flow))
 }
 
 func (h *WebSocketHandler) handleFlowCreate(client *Client, name, description string) {
@@ -285,17 +249,14 @@ func (h *WebSocketHandler) handleFlowCreate(client *Client, name, description st
     if h.flowEngine.GetStateManager() != nil {
         h.flowEngine.GetStateManager().SaveFlow(flow)
     }
-    
-    // Convert flow to frontend format
-    flowResponse := convertFlowToFrontend(flow)
-    
+
     // Broadcast to client
-    h.BroadcastToClient(client, MessageTypeFlowCreate, flowResponse)
+    h.BroadcastToClient(client, MessageTypeFlowCreate, dto.ToWire(flow))
 }
 
-func (h *WebSocketHandler) handleFlowUpdate(client *Client, flowID string, flowData map[string]interface{}) {
-    log.Printf("[BACKEND] handleFlowUpdate - Updating flow: flowId=%s, data=%v", flowID, flowData)
-    
+func (h *WebSocketHandler) handleFlowUpdate(client *Client, flowID string, req dto.FlowUpdateRequest) {
+    log.Printf("[BACKEND] handleFlowUpdate - Updating flow: flowId=%s", flowID)
+
     // Get the existing flow
     flow, err := h.flowEngine.GetFlow(flowID)
     if err != nil {
@@ -306,75 +267,20 @@ func (h *WebSocketHandler) handleFlowUpdate(client *Client, flowID string, flowD
         })
         return
     }
-    
-    // Apply updates from flowData to the flow
-    if name, ok := flowData["name"].(string); ok && name != "" {
-        flow.Name = name
-    }
-    if desc, ok := flowData["description"].(string); ok {
-        flow.Description = desc
-    }
-    // Config update - TODO: Implement proper FlowConfig merging
-    if flowConfig, ok := flowData["config"].(map[string]interface{}); ok {
-        // For now, just log that config was received
-        log.Printf("[BACKEND] handleFlowUpdate - Config update received (not implemented yet)")
-        _ = flowConfig
-    }
-    
-    // Update nodes if provided
-    if nodes, ok := flowData["nodes"].(map[string]interface{}); ok {
-        log.Printf("[BACKEND] handleFlowUpdate - Updating nodes: %v", nodes)
-        // Clear existing nodes and add new ones
-        flow.Nodes = make(map[string]*engine.Node)
-        for id, nodeData := range nodes {
-            if nodeMap, ok := nodeData.(map[string]interface{}); ok {
-                node := &engine.Node{
-                    ID:       id,
-                    Type:     nodeMap["type"].(string),
-                    Name:     getString(nodeMap, "name"),
-                    X:        getFloat64(nodeMap, "position", "x"),
-                    Y:        getFloat64(nodeMap, "position", "y"),
-                    Config:   getConfig(nodeMap, "config"),
-                    Disabled: false,
-                }
-                flow.Nodes[id] = node
-            }
-        }
-        log.Printf("[BACKEND] handleFlowUpdate - Updated %d nodes", len(flow.Nodes))
-    }
-    
-    // Update connections if provided
-    if connections, ok := flowData["connections"].([]interface{}); ok {
-        log.Printf("[BACKEND] handleFlowUpdate - Updating connections: %v", connections)
-        flow.Connections = make([]engine.NodeConnection, len(connections))
-        for i, connData := range connections {
-            if connMap, ok := connData.(map[string]interface{}); ok {
-                conn := engine.NodeConnection{
-                    ID:          connMap["id"].(string),
-                    SourceNode:  connMap["sourceNode"].(string),
-                    SourcePort:  getString(connMap, "sourcePort"),
-                    TargetNode:  connMap["targetNode"].(string),
-                    TargetPort:  getString(connMap, "targetPort"),
-                }
-                flow.Connections[i] = conn
-            }
-        }
-        log.Printf("[BACKEND] handleFlowUpdate - Updated %d connections", len(flow.Connections))
-    }
-    
-    // Update the flow's updated timestamp
-    flow.UpdatedAt = time.Now().UTC()
-    
+
+    req.ApplyTo(flow)
+    log.Printf("[BACKEND] handleFlowUpdate - Flow now has %d nodes, %d connections", len(flow.Nodes), len(flow.Connections))
+
     // Save the flow to state manager
     if h.flowEngine.GetStateManager() != nil {
         h.flowEngine.GetStateManager().SaveFlow(flow)
     }
-    
+
     // Broadcast updates
-    log.Printf("[BACKEND] handleFlowUpdate - Converting flow to frontend format")
-    flowResponse := convertFlowToFrontend(flow)
-    h.BroadcastToClient(client, MessageTypeFlowUpdate, flowResponse)
-    h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlowsSummary())
+    h.BroadcastToClient(client, MessageTypeFlowUpdate, dto.ToWire(flow))
+    h.hub.Broadcast(MessageTypeFlowList, map[string]interface{}{
+        "flows": h.allFlowSummaries(),
+    })
 }
 
 func (h *WebSocketHandler) handleFlowDelete(client *Client, flowID string) {
@@ -392,7 +298,7 @@ func (h *WebSocketHandler) handleFlowDelete(client *Client, flowID string) {
     h.hub.Broadcast(MessageTypeFlowDelete, map[string]interface{}{
         "flowId": flowID,
     })
-    h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlowsSummary())
+    h.hub.Broadcast(MessageTypeFlowList, map[string]interface{}{"flows": h.allFlowSummaries()})
 }
 
 func (h *WebSocketHandler) handleFlowDeploy(client *Client, flowID string, force bool) {
@@ -441,7 +347,7 @@ func (h *WebSocketHandler) handleFlowDeploy(client *Client, flowID string, force
         "flowId": flowID,
         "status": "deployed",
     })
-    h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlowsSummary())
+    h.hub.Broadcast(MessageTypeFlowList, map[string]interface{}{"flows": h.allFlowSummaries()})
 }
 
 func (h *WebSocketHandler) handleFlowUndeploy(client *Client, flowID string) {
@@ -465,24 +371,16 @@ func (h *WebSocketHandler) handleFlowUndeploy(client *Client, flowID string) {
         "flowId": flowID,
         "status": "inactive",
     })
-    h.hub.Broadcast(MessageTypeFlowList, h.flowEngine.GetAllFlowsSummary())
+    h.hub.Broadcast(MessageTypeFlowList, map[string]interface{}{"flows": h.allFlowSummaries()})
 }
 
 func (h *WebSocketHandler) handleNodeAdd(client *Client, nodeData struct {
-    Node struct {
-        ID       string                 `json:"id"`
-        Type     string                 `json:"type"`
-        Position struct {
-            X float64 `json:"x"`
-            Y float64 `json:"y"`
-        } `json:"position"`
-        Config map[string]interface{} `json:"config,omitempty"`
-    } `json:"node"`
-    FlowID string `json:"flowId"`
+    Node   dto.Node `json:"node"`
+    FlowID string   `json:"flowId"`
 }) {
-    log.Printf("[BACKEND] handleNodeAdd - flowId: %s, nodeId: %s, type: %s, position: (%.1f, %.1f)", 
+    log.Printf("[BACKEND] handleNodeAdd - flowId: %s, nodeId: %s, type: %s, position: (%.1f, %.1f)",
         nodeData.FlowID, nodeData.Node.ID, nodeData.Node.Type, nodeData.Node.Position.X, nodeData.Node.Position.Y)
-    
+
     // Get the flow
     flow, err := h.flowEngine.GetFlow(nodeData.FlowID)
     if err != nil {
@@ -493,18 +391,11 @@ func (h *WebSocketHandler) handleNodeAdd(client *Client, nodeData struct {
         })
         return
     }
-    
+
     // Create new node - use the node ID from frontend
-    node := &engine.Node{
-        ID:       nodeData.Node.ID,
-        Type:     nodeData.Node.Type,
-        Config:   nodeData.Node.Config,
-        X:        nodeData.Node.Position.X,
-        Y:        nodeData.Node.Position.Y,
-        Disabled:  false,
-    }
+    node := dto.NodeFromWire(nodeData.Node.ID, nodeData.Node)
     log.Printf("[BACKEND] handleNodeAdd - Created node with ID: %s, type: %s", node.ID, node.Type)
-    
+
     // Add node to flow
     if err := flow.AddNode(node); err != nil {
         h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
@@ -513,24 +404,16 @@ func (h *WebSocketHandler) handleNodeAdd(client *Client, nodeData struct {
         })
         return
     }
-    
+
     // Save the flow
     if h.flowEngine.GetStateManager() != nil {
         h.flowEngine.GetStateManager().SaveFlow(flow)
     }
-    
+
     // Broadcast node addition
     h.hub.Broadcast(MessageTypeNodeAdd, map[string]interface{}{
         "flowId": nodeData.FlowID,
-        "node": map[string]interface{}{
-            "id":       node.ID,
-            "type":     node.Type,
-            "name":     node.Name,
-            "config":   node.Config,
-            "position": map[string]float64{"x": node.X, "y": node.Y},
-            "status":   map[string]interface{}{"state": "idle"},
-            "disabled":  node.Disabled,
-        },
+        "node":   dto.NodeToWire(node),
     })
 }
 
@@ -570,19 +453,11 @@ func (h *WebSocketHandler) handleNodeRemove(client *Client, nodeID, flowID strin
 }
 
 func (h *WebSocketHandler) handleNodeUpdate(client *Client, nodeData struct {
-    Node struct {
-        ID       string                 `json:"id"`
-        Type     string                 `json:"type"`
-        Position struct {
-            X float64 `json:"x"`
-            Y float64 `json:"y"`
-        } `json:"position"`
-        Config map[string]interface{} `json:"config,omitempty"`
-    } `json:"node"`
-    FlowID string `json:"flowId"`
+    Node   dto.Node `json:"node"`
+    FlowID string   `json:"flowId"`
 }) {
     log.Printf("[BACKEND] handleNodeUpdate - flowId: %s, nodeId: %s", nodeData.FlowID, nodeData.Node.ID)
-    
+
     // Get the flow
     flow, err := h.flowEngine.GetFlow(nodeData.FlowID)
     if err != nil {
@@ -593,7 +468,7 @@ func (h *WebSocketHandler) handleNodeUpdate(client *Client, nodeData struct {
         })
         return
     }
-    
+
     // Get the node
     node, exists := flow.Nodes[nodeData.Node.ID]
     if !exists {
@@ -604,34 +479,28 @@ func (h *WebSocketHandler) handleNodeUpdate(client *Client, nodeData struct {
         })
         return
     }
-    
+
     // Apply updates from the node data
     node.Type = nodeData.Node.Type
+    node.Name = nodeData.Node.Name
     node.Config = nodeData.Node.Config
     node.X = nodeData.Node.Position.X
     node.Y = nodeData.Node.Position.Y
-    
+    node.Disabled = nodeData.Node.Disabled
+
     // Update flow timestamp
     flow.UpdatedAt = time.Now().UTC()
-    
+
     // Save the flow
     if h.flowEngine.GetStateManager() != nil {
         h.flowEngine.GetStateManager().SaveFlow(flow)
     }
-    
+
     // Broadcast node update
     h.hub.Broadcast(MessageTypeNodeUpdate, map[string]interface{}{
         "flowId": nodeData.FlowID,
         "nodeId": nodeData.Node.ID,
-        "node": map[string]interface{}{
-            "id":       node.ID,
-            "type":     node.Type,
-            "name":     node.Name,
-            "config":   node.Config,
-            "position": map[string]float64{"x": node.X, "y": node.Y},
-            "status":   map[string]interface{}{"state": "idle"},
-            "disabled":  node.Disabled,
-        },
+        "node":   dto.NodeToWire(node),
     })
 }
 
@@ -646,18 +515,12 @@ func (h *WebSocketHandler) handleNodeConfig(client *Client, nodeID string, confi
 }
 
 func (h *WebSocketHandler) handleConnectionAdd(client *Client, connData struct {
-    Connection struct {
-        ID          string `json:"id,omitempty"`
-        SourceNode  string `json:"sourceNode"`
-        SourcePort  string `json:"sourcePort,omitempty"`
-        TargetNode  string `json:"targetNode"`
-        TargetPort  string `json:"targetPort,omitempty"`
-    } `json:"connection"`
-    FlowID string `json:"flowId"`
+    Connection dto.Connection `json:"connection"`
+    FlowID     string         `json:"flowId"`
 }) {
-    log.Printf("[BACKEND] handleConnectionAdd - flowId: %s, sourceNode: %s, targetNode: %s", 
+    log.Printf("[BACKEND] handleConnectionAdd - flowId: %s, sourceNode: %s, targetNode: %s",
         connData.FlowID, connData.Connection.SourceNode, connData.Connection.TargetNode)
-    
+
     // Get the flow
     flow, err := h.flowEngine.GetFlow(connData.FlowID)
     if err != nil {
@@ -668,17 +531,11 @@ func (h *WebSocketHandler) handleConnectionAdd(client *Client, connData struct {
         })
         return
     }
-    
+
     // Create connection
-    conn := engine.NodeConnection{
-        ID:          connData.Connection.ID,
-        SourceNode:  connData.Connection.SourceNode,
-        SourcePort:  connData.Connection.SourcePort,
-        TargetNode:  connData.Connection.TargetNode,
-        TargetPort:  connData.Connection.TargetPort,
-    }
+    conn := dto.ConnectionFromWire(connData.Connection)
     log.Printf("[BACKEND] handleConnectionAdd - Creating connection: %s -> %s", connData.Connection.SourceNode, connData.Connection.TargetNode)
-    
+
     // Add connection to flow
     if err := flow.AddConnection(conn); err != nil {
         h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
@@ -687,16 +544,16 @@ func (h *WebSocketHandler) handleConnectionAdd(client *Client, connData struct {
         })
         return
     }
-    
+
     // Save the flow
     if h.flowEngine.GetStateManager() != nil {
         h.flowEngine.GetStateManager().SaveFlow(flow)
     }
-    
+
     // Broadcast connection addition
     h.hub.Broadcast(MessageTypeConnectionAdd, map[string]interface{}{
-        "flowId":      connData.FlowID,
-        "connection":  conn,
+        "flowId":     connData.FlowID,
+        "connection": dto.ConnectionToWire(conn),
     })
 }
 
@@ -737,17 +594,23 @@ func (h *WebSocketHandler) handleConnectionRemove(client *Client, connectionID, 
 
 func (h *WebSocketHandler) handleStateSync(client *Client) {
     log.Println("Handling state:sync request")
-    
-    // Send full state to the client
-    flows := h.flowEngine.GetAllFlows()
+
+    // Send full state to the client, using the same canonical wire Flow
+    // shape as every other endpoint (previously this sent raw engine.Flow
+    // objects, a distinct shape from flow:get/flow:list).
+    engineFlows := h.flowEngine.GetAllFlows()
+    flows := make([]dto.Flow, len(engineFlows))
+    for i, f := range engineFlows {
+        flows[i] = dto.ToWire(f)
+    }
     nodes := h.nodeRegistry.GetAllNodes()
-    
+
     state := map[string]interface{}{
         "flows":     flows,
         "nodeTypes": nodes,
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     }
-    
+
     h.BroadcastToClient(client, MessageTypeStateSync, state)
 }
 
@@ -775,6 +638,30 @@ func (h *WebSocketHandler) handleMessageSend(client *Client, flowID, nodeID stri
     })
 }
 
+// handleMessageLog answers a message:log request with the actual logged
+// messages (optionally filtered by flowId, optionally capped by limit).
+// Previously this only acknowledged receipt without returning any data,
+// even though the frontend (useMessageLog.ts) already expected a real
+// {messages: [...]} response on this same message type.
+func (h *WebSocketHandler) handleMessageLog(client *Client, flowID string, limit int) {
+    log.Printf("Handling message:log request - flowId: %s, limit: %d", flowID, limit)
+
+    var messages []engine.Message
+    if flowID != "" {
+        messages = h.flowEngine.GetMessageLogForFlow(flowID)
+    } else {
+        messages = h.flowEngine.GetMessageLog()
+    }
+
+    if limit > 0 && len(messages) > limit {
+        messages = messages[len(messages)-limit:]
+    }
+
+    h.BroadcastToClient(client, MessageTypeMessageLog, map[string]interface{}{
+        "messages": dto.MessagesToWire(messages),
+    })
+}
+
 // BroadcastToClient sends a message to a specific client
 func (h *WebSocketHandler) BroadcastToClient(client *Client, messageType MessageType, data interface{}) {
     h.hub.BroadcastToClient(client, messageType, data)
@@ -793,131 +680,6 @@ func generateID() string {
 // GetHub returns the underlying hub
 func (h *WebSocketHandler) GetHub() *Hub {
     return h.hub
-}
-
-// convertFlowToFrontend converts a Go flow to frontend-compatible format
-func convertFlowToFrontend(flow *engine.Flow) map[string]interface{} {
-    log.Printf("[BACKEND] convertFlowToFrontend - Converting flow %s with %d nodes", flow.ID, len(flow.Nodes))
-    
-    // Convert nodes
-    nodesMap := make(map[string]interface{})
-    for id, node := range flow.Nodes {
-        nodeMap := map[string]interface{}{
-            "id":       node.ID,
-            "type":     node.Type,
-            "name":     node.Name,
-            "position": map[string]float64{"x": node.X, "y": node.Y},
-            "config":   node.Config,
-            "status":   convertNodeStatus(node),
-            "disabled":  node.Disabled,
-        }
-        nodesMap[id] = nodeMap
-        log.Printf("[BACKEND] convertFlowToFrontend - Converted node %s: position=(%.1f, %.1f)", id, node.X, node.Y)
-    }
-    
-    // Convert connections
-    connectionsList := make([]interface{}, len(flow.Connections))
-    for i, conn := range flow.Connections {
-        connMap := map[string]interface{}{
-            "id":           conn.ID,
-            "sourceNode":   conn.SourceNode,
-            "sourcePort":   conn.SourcePort,
-            "targetNode":   conn.TargetNode,
-            "targetPort":   conn.TargetPort,
-        }
-        connectionsList[i] = connMap
-    }
-    
-    // Convert flow config (kept in sync with convertFlowToFrontendAPI in main.go,
-    // which the REST API uses for the same conversion)
-    flowConfigMap := map[string]interface{}{
-        "timeout":        int(flow.Config.Timeout.Seconds()),
-        "maxConcurrency": flow.Config.MaxConcurrency,
-        "retryPolicy": map[string]interface{}{
-            "maxRetries":  flow.Config.RetryPolicy.MaxRetries,
-            "backoff":     int(flow.Config.RetryPolicy.Backoff.Seconds()),
-            "maxBackoff":  int(flow.Config.RetryPolicy.MaxBackoff.Seconds()),
-            "retryOn":     flow.Config.RetryPolicy.RetryOn,
-        },
-        "environment": flow.Config.Environment,
-    }
-    
-    // Convert flow status
-    frontendStatus := convertFlowStatus(flow.Status)
-    
-    return map[string]interface{}{
-        "id":          flow.ID,
-        "name":        flow.Name,
-        "description": flow.Description,
-        "nodes":       nodesMap,
-        "connections": connectionsList,
-        "status":      frontendStatus,
-        "config":      flowConfigMap,
-        "createdAt":   flow.CreatedAt.Format(time.RFC3339),
-        "updatedAt":   flow.UpdatedAt.Format(time.RFC3339),
-        "version":     flow.Version,
-    }
-}
-
-// convertFlowStatus converts Go flow status to frontend status.
-// Kept in sync with convertFlowStatusAPI in main.go, which the REST API
-// uses for the same conversion, so a flow's status string is identical
-// regardless of whether it was fetched over REST or WebSocket.
-func convertFlowStatus(status engine.FlowStatus) string {
-    switch status {
-    case engine.FlowStatusInactive:
-        return "draft"
-    case engine.FlowStatusActive:
-        return "running"
-    case engine.FlowStatusError:
-        return "error"
-    case engine.FlowStatusDeploying:
-        return "deploying"
-    case engine.FlowStatusUndeploying:
-        return "undeploying"
-    default:
-        return string(status)
-    }
-}
-
-// convertNodeStatus converts Go node to frontend node status
-func convertNodeStatus(node *engine.Node) map[string]interface{} {
-    // For now, return a basic status based on disabled state
-    // This can be enhanced later with actual node status tracking
-    if node.Disabled {
-        return map[string]interface{}{
-            "state": "idle",
-            "message": "Node is disabled",
-        }
-    }
-    return map[string]interface{}{
-        "state": "idle",
-    }
-}
-
-// ServeWebSocket serves WebSocket connections
-// Helper functions for type-safe map access
-func getString(m map[string]interface{}, key string) string {
-    if val, ok := m[key].(string); ok {
-        return val
-    }
-    return ""
-}
-
-func getFloat64(m map[string]interface{}, positionKey, coordKey string) float64 {
-    if pos, ok := m[positionKey].(map[string]interface{}); ok {
-        if val, ok := pos[coordKey].(float64); ok {
-            return val
-        }
-    }
-    return 0
-}
-
-func getConfig(m map[string]interface{}, configKey string) map[string]interface{} {
-    if val, ok := m[configKey].(map[string]interface{}); ok {
-        return val
-    }
-    return make(map[string]interface{})
 }
 
 func (h *WebSocketHandler) ServeWebSocket(w http.ResponseWriter, r *http.Request) {

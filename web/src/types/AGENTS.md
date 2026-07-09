@@ -89,30 +89,21 @@ type ApiResponse<T> = {
 
 ### Type Composition
 
-**Extend interfaces for shared properties:**
-```typescript
-interface BaseNode {
-    id: string;
-    type: string;
-    x: number;
-    y: number;
-}
+The real `FlowNode` type (generated from Go's `internal/dto.Node`, re-exported
+in `flow.ts`) nests coordinates under `position: {x, y}` — it does **not**
+have flat `x`/`y` fields, and `status`/`disabled` are always present (never
+optional), matching what the backend always sends:
 
-interface Node extends BaseNode {
-    name?: string;
-    config: Record<string, any>;
-    disabled: boolean;
-    status?: NodeStatus;
-}
+```typescript
+export type { Node as FlowNode } from './generated';
+// FlowNode shape: { id, type, name?, position: {x, y}, config, status, disabled }
 ```
 
-**Use intersection types for combining:**
-```typescript
-type NodeWithPosition = Node & {
-    x: number;
-    y: number;
-};
-```
+Do not reintroduce a flat-`x`/`y` `Node`/`BaseNode` shape here — that was a
+previous, aspirational version of this file that never matched the real
+backend struct (`internal/engine.Node` uses flat `X`/`Y` internally, but the
+wire format nests them under `position`, and `internal/dto` is what this
+type is generated from).
 
 **Use union types for alternatives:**
 ```typescript
@@ -125,7 +116,15 @@ type NodeInput = string | number | boolean | Record<string, any> | any[];
 
 ### Flow Types (`flow.ts`)
 
-**Core Flow Type:**
+**The illustrative snippet below is close to, but not identical to, reality —
+`Flow`/`FlowConfig`/`RetryPolicy`/`FlowSummary`/`FlowStatus` are generated
+from `internal/dto` into `generated.ts` and re-exported from `flow.ts`; treat
+`web/src/types/generated.ts` as the actual ground truth, not this file.**
+One concrete difference: `description` below is shown as optional
+(`description?`), but the real wire type has it as a required `string`
+(the Go backend always sends it, empty string if none) — this file's
+example predates that correction.
+
 ```typescript
 // types/flow.ts
 import { Node, NodeConnection } from './node';
@@ -141,8 +140,8 @@ export interface Flow {
     /** Human-readable name for the flow */
     name: string;
     
-    /** Optional description of the flow */
-    description?: string;
+    /** Description of the flow (always present, empty string if none) */
+    description: string;
     
     /** Map of node ID to Node */
     nodes: Record<string, Node>;
@@ -239,344 +238,101 @@ export interface FlowSummary {
 
 ### Node Types (`node.ts`)
 
-**Core Node Type:**
-```typescript
-// types/node.ts
-/**
- * Represents a node in a flow.
- * Nodes are the building blocks of flows that process data.
- */
-export interface Node {
-    /** Unique identifier for the node */
-    id: string;
-    
-    /** Type of the node (e.g., 'inject', 'debug', 'function') */
-    type: string;
-    
-    /** Optional human-readable name for the node */
-    name?: string;
-    
-    /** X coordinate position on the canvas */
-    x: number;
-    
-    /** Y coordinate position on the canvas */
-    y: number;
-    
-    /** Node configuration */
-    config: Record<string, any>;
-    
-    /** Whether the node is disabled */
-    disabled: boolean;
-    
-    /** Runtime status of the node */
-    status?: NodeStatus;
-}
+**This section previously described a fictional shape** (flat `x`/`y`
+instead of a nested `position` object, a `NodeType`/`ConfigProperty` pair
+with `inputPorts`/`outputPorts`/`color`/`placeholder`/`options`/`editor`
+fields that never existed in the Go backend). The real types:
 
-/**
- * Status of a node during execution.
- * Tracks the current state and processing statistics.
- */
-export interface NodeStatus {
-    /** Current state of the node */
-    state: 'idle' | 'processing' | 'error';
-    
-    /** Status message */
-    message: string;
-    
-    /** Timestamp of last status change */
-    timestamp: string;
-    
-    /** Number of messages processed */
-    processingCount: number;
-    
-    /** Number of errors encountered */
-    errorCount: number;
-}
+- `FlowNode` (`Node` re-exported from `generated.ts`, generated from
+  `internal/dto.Node`): `{ id, type, name?, position: {x, y}, config,
+  status, disabled }` — `status` and `disabled` are always present (the
+  backend always sends them), not optional.
+- `NodeMetadata` (re-exported from `generated.ts`, generated from
+  `internal/registry.NodeMetadata`): `{ id, type, name, description,
+  category, inputs: Port[], outputs: Port[], configSchema: Schema, icon,
+  tags }`. No `color`, `hidden`, `deprecated`, or per-type `version` field.
+- `Port` (re-exported from `generated.ts`): `{ id, name, description,
+  required }` — no `type`/`schema` field (an earlier version of this file
+  described those, but the backend `registry.Port` struct never had them).
+- `PropertySchema` (a rename of the generated `Property` type, generated
+  from `internal/registry.Property`): `{ type, description, default, enum,
+  min?, max?, pattern }` — flat, not recursive. It has no `properties`,
+  `items`, `oneOf`, `allOf`, `format`, or `examples` — Go has no
+  equivalent for a recursive JSON-Schema-like structure. `required` lives
+  on the wrapping `Schema` type as a list of property *names*, not as a
+  per-property boolean.
 
-/**
- * Represents a connection between two nodes.
- * Defines how data flows from one node to another.
- */
-export interface NodeConnection {
-    /** Unique identifier for the connection */
-    id: string;
-    
-    /** Source node ID */
-    sourceNode: string;
-    
-    /** Source port (optional) */
-    sourcePort?: string;
-    
-    /** Target node ID */
-    targetNode: string;
-    
-    /** Target port (optional) */
-    targetPort?: string;
-}
-
-/**
- * Metadata for a node type.
- * Describes the properties and behavior of a node type.
- */
-export interface NodeType {
-    /** Unique identifier for the node type */
-    id: string;
-    
-    /** Human-readable name for the node type */
-    name: string;
-    
-    /** Description of what the node does */
-    description: string;
-    
-    /** Category the node belongs to */
-    category: string;
-    
-    /** Icon name for display */
-    icon: string;
-    
-    /** Background color for the node */
-    color: string;
-    
-    /** Names of input ports */
-    inputPorts: string[];
-    
-    /** Names of output ports */
-    outputPorts: string[];
-    
-    /** Configuration schema for the node */
-    configSchema: Record<string, ConfigProperty>;
-    
-    /** Whether the node type is hidden from the UI */
-    hidden?: boolean;
-    
-    /** Whether the node type is deprecated */
-    deprecated?: boolean;
-    
-    /** Node type version */
-    version?: string;
-}
-
-/**
- * Configuration property definition.
- * Describes a single configuration option for a node.
- */
-export interface ConfigProperty {
-    /** Type of the configuration value */
-    type: 'string' | 'number' | 'boolean' | 'array' | 'object';
-    
-    /** Default value for the configuration */
-    default: any;
-    
-    /** Whether the configuration is required */
-    required: boolean;
-    
-    /** Description of the configuration */
-    description: string;
-    
-    /** Placeholder text for input */
-    placeholder?: string;
-    
-    /** Available options for select dropdowns */
-    options?: string[];
-    
-    /** Minimum value for numbers */
-    min?: number;
-    
-    /** Maximum value for numbers */
-    max?: number;
-    
-    /** Regex pattern for string validation */
-    pattern?: string;
-    
-    /** Type of editor to use for input */
-    editor?: 'text' | 'textarea' | 'number' | 'checkbox' | 'select' | 'code' | 'password' | 'json';
-    
-    /** Additional configuration for the editor */
-    editorConfig?: Record<string, any>;
-}
-
-/**
- * Minimal node data for creation.
- * Only required fields for creating a new node.
- */
-export interface NodeCreateData {
-    type: string;
-    x?: number;
-    y?: number;
-    config?: Record<string, any>;
-}
-```
+`NodeCategory`, `PortType`, `SchemaType`, `NodeProperty`, `NodeTypeDefinition`,
+and `NodePaletteItem` remain hand-written in `node.ts` — they are pure
+frontend/UI concepts with no Go equivalent (in particular, `NodeMetadata`'s
+real `category` field is an unconstrained `string`, not the `NodeCategory`
+union — components that index by category must handle arbitrary strings,
+see `NodePalette.tsx`/`NodeComponent.tsx` for the pattern).
 
 ### Message Types (`message.ts`)
 
-**Core Message Type:**
+**Core Message Type** (`Message`, re-exported from `generated.ts`, generated
+from `internal/dto.Message`):
 ```typescript
-// types/message.ts
-/**
- * Represents a message in the flow.
- * Messages are the data units that flow between nodes.
- */
 export interface Message {
-    /** Unique identifier for the message */
     id: string;
-    
-    /** ID of the flow the message belongs to */
     flowId: string;
-    
-    /** The data payload of the message */
     payload: Record<string, any>;
-    
-    /** Array of node IDs the message has traversed */
+    metadata: Record<string, string>; // always present, string values only —
+                                       // Go cannot produce a richer typed
+                                       // metadata object (no qos: number,
+                                       // retain: boolean, etc.)
     path: string[];
-    
-    /** Timestamp when the message was created */
     timestamp: string;
-    
-    /** Optional metadata for the message */
-    metadata?: Record<string, any>;
-}
-
-/**
- * Message with context.
- * Includes additional context information for processing.
- */
-export interface MessageWithContext extends Message {
-    /** Context for the message (e.g., deadline, cancellation) */
-    context?: Record<string, any>;
-}
-
-/**
- * Message log entry.
- * Additional information for displaying messages in the log.
- */
-export interface MessageLogEntry extends Message {
-    /** Node that generated the message */
-    sourceNode?: string;
-    
-    /** Whether the message was successfully processed */
-    success: boolean;
-    
-    /** Error message if processing failed */
-    error?: string;
-}
-
-/**
- * Filter options for fetching messages.
- */
-export interface MessageFilter {
-    /** Filter by flow ID */
-    flowId?: string;
-    
-    /** Filter by node ID */
-    nodeId?: string;
-    
-    /** Filter by timestamp range */
-    startTime?: string;
-    endTime?: string;
-    
-    /** Maximum number of messages to return */
-    limit?: number;
 }
 ```
+
+The real hand-written `MessageLogEntry` (`message.ts`, UI-only, no Go
+equivalent) is `{ id, flowId, nodeId, message: Message, timestamp, level:
+'debug'|'info'|'warn'|'error' }` — **not** the `{sourceNode?, success,
+error?} extends Message` shape shown in earlier versions of this file,
+which was never implemented. `MessageBatch`/`NodeMessage`/`FlowMessage` in
+`message.ts` are similarly hand-written UI conveniences layered on top of
+the wire `Message`, not generated.
 
 ### API Types (`api.ts`)
 
-**API Response Types:**
-```typescript
-// types/api.ts
-import { Flow, FlowSummary, NodeType, Message } from './index';
+**There is no response envelope.** An earlier version of this file described
+an `ApiResponse<T>` wrapper (`{data?, error?, message?, status}`) with
+`FlowListResponse`/`FlowResponse`/`NodeTypeListResponse`/etc. wrapping every
+resource in a `data` field — none of that was ever real. `utils/api.ts`'s
+`apiRequest<T>()` returns `response.json()` directly, unwrapped; every REST
+endpoint responds with the bare resource (a `Flow`, a `FlowSummary[]`, a
+`NodeMetadata[]`, ...). Do not reintroduce an envelope type unless the Go
+handlers in `cmd/go-red/main.go` actually start wrapping responses that way.
 
-/**
- * Standard API response format.
- * Used for both success and error responses.
- */
-export interface ApiResponse<T = unknown> {
-    /** The data payload on success */
-    data?: T;
-    
-    /** Error message on failure */
-    error?: string;
-    
-    /** Human-readable message */
-    message?: string;
-    
-    /** HTTP status code */
-    status: number;
-}
-
-/**
- * Response for listing flows.
- */
-export interface FlowListResponse extends ApiResponse {
-    data: FlowSummary[];
-}
-
-/**
- * Response for getting a single flow.
- */
-export interface FlowResponse extends ApiResponse {
-    data: Flow;
-}
-
-/**
- * Response for flow creation.
- */
-export interface FlowCreateResponse extends ApiResponse {
-    data: Flow;
-}
-
-/**
- * Response for listing node types.
- */
-export interface NodeTypeListResponse extends ApiResponse {
-    data: NodeType[];
-}
-
-/**
- * Response for getting a single node type.
- */
-export interface NodeTypeResponse extends ApiResponse {
-    data: NodeType;
-}
-
-/**
- * Response for listing messages.
- */
-export interface MessageListResponse extends ApiResponse {
-    data: Message[];
-}
-
-/**
- * Request body for creating a flow.
- */
-export interface CreateFlowRequest {
-    name: string;
-    description?: string;
-    nodes?: Record<string, import('./node').NodeCreateData>;
-    connections?: import('./node').NodeConnection[];
-    config?: import('./flow').FlowConfig;
-}
-
-/**
- * Request body for updating a flow.
- */
-export interface UpdateFlowRequest {
-    name?: string;
-    description?: string;
-    nodes?: Record<string, import('./node').NodeCreateData>;
-    connections?: import('./node').NodeConnection[];
-    config?: Partial<import('./flow').FlowConfig>;
-}
-```
+`FlowSummary`, `FlowCreateRequest`, and `FlowUpdateRequest` are generated
+from `internal/dto` into `generated.ts` and re-exported from `api.ts` — do
+not hand-describe them here (in particular, `FlowCreateRequest` has no
+`nodes`/`connections`/`config` fields; the real Go handler only reads
+`id`/`name`/`description` from it). `PaginatedResponse`, `Pagination`,
+`DeployResponse`/`DeployRequest`, `UndeployRequest`, `HealthCheckResponse`,
+`StatsResponse`, `MessageLogRequest`/`MessageLogResponse`, and
+`FlowExportRequest`/`FlowImportRequest` remain hand-written in `api.ts`
+(no corresponding Go DTO exists yet for most of them).
 
 ---
 
 ## Type Guards
 
+> **Status: not implemented.** There is no `types/guards.ts` or
+> `types/utilities.ts` file anywhere in `web/src/`. The functions below
+> (`isFlowStatus`, `isFlow`, `isNode`, `isMessage`, `validateFlow`, and
+> whatever utilities the "Type Utilities" section further down describes)
+> are a design sketch that was never built — runtime WS message payloads are
+> currently consumed as untyped `any` (see `useWebSocket.ts`) with no
+> validation layer. Treat everything through "Type Testing" below as a
+> proposal, not existing code, until it's actually implemented.
+
 Type guards provide runtime type checking for TypeScript types:
 
 ```typescript
-// types/guards.ts
+// types/guards.ts (proposed, does not exist yet)
 import { Flow, FlowStatus, Node, Message } from './index';
 
 /**
@@ -1030,9 +786,10 @@ Every type should have JSDoc documentation explaining:
  * const myFlow: Flow = {
  *   id: 'flow-1',
  *   name: 'My Flow',
+ *   description: '',
  *   nodes: {
- *     'input': { id: 'input', type: 'inject', x: 0, y: 0, config: {} },
- *     'output': { id: 'output', type: 'debug', x: 100, y: 0, config: {} },
+ *     'input': { id: 'input', type: 'inject', position: { x: 0, y: 0 }, config: {}, status: { state: 'idle' }, disabled: false },
+ *     'output': { id: 'output', type: 'debug', position: { x: 100, y: 0 }, config: {}, status: { state: 'idle' }, disabled: false },
  *   },
  *   connections: [
  *     { id: 'conn-1', sourceNode: 'input', targetNode: 'output' },
@@ -1041,7 +798,7 @@ Every type should have JSDoc documentation explaining:
  *   status: 'draft',
  *   createdAt: new Date().toISOString(),
  *   updatedAt: new Date().toISOString(),
- *   version: '1.0.0',
+ *   version: '1.0',
  * };
  * ```
  */
@@ -1109,3 +866,37 @@ Before finalizing type definitions:
 
 *Last updated: 2026-06-21*
 *Overrides: None (extends web/src/AGENTS.md, web/AGENTS.md, and root AGENTS.md)*
+
+---
+
+## Interface-Verifikation (PFLICHT bei Änderungen an Interfaces)
+
+Trigger: Diese Schritte IMMER ausführen, bevor eine Änderung als fertig gilt, wenn eine der
+folgenden Dateien/Verzeichnisse angefasst wurde:
+- `internal/dto/**`
+- `internal/registry/registry.go` (NodeMetadata/Port/Property/Schema)
+- `cmd/go-red/websocket/hub.go` (WebSocketMessage/MessageType)
+- irgendeine Datei unter `web/src/types/**`
+
+Schritte (in dieser Reihenfolge, nach jeder Interface-Änderung):
+1. `go build ./...` und `go vet ./...` — stellt sicher, dass die Go-Seite kompiliert.
+2. `go generate ./internal/dto/...` — regeneriert `web/src/types/generated.ts` aus den
+   aktuellen Go-DTOs.
+3. `git diff --exit-code -- web/src/types/generated.ts` — falls dieser Befehl NICHT sauber
+   durchläuft (also ein Diff zeigt), bedeutet das: die generierte Datei war vor der Änderung
+   veraltet oder wurde von Hand editiert. Den Diff committen, NIEMALS `generated.ts` von Hand
+   anpassen.
+4. `cd web && npx tsc --noEmit` — deckt Call-Sites auf, die nach einer Schema-Änderung
+   angepasst werden müssen (umbenannte/entfernte Felder etc.). Alle daraus resultierenden
+   Fehler im selben Change beheben, nicht auf später verschieben.
+5. `cd web && npm test` — stellt sicher, dass `types.test.ts` und alle anderen Tests weiterhin
+   gegen die aktuelle Form bestehen.
+6. Bei Änderungen, die REST- oder WebSocket-Payloads betreffen: kurzer manueller Smoke-Test
+   (`go run cmd/go-red/main.go` + `npm run dev`, Flow erstellen/deployen/Message injizieren)
+   um Laufzeitverhalten zu bestätigen, das ein Compiler nicht prüfen kann.
+
+Nicht erlaubt: eine neue Wire-Form (Struct-Feld, Enum-Wert, WS-Message-Typ) einführen, ohne
+dass sie durch `internal/dto` (bzw. `internal/registry`/`cmd/go-red/websocket` für deren
+jeweilige Scan-Ziele) läuft und in `generated.ts` auftaucht. Handschriftliche TS-Interfaces,
+die eine Backend-Form beschreiben, statt sie aus `generated.ts` zu re-exportieren, sind ein
+Rückfall in den alten, driftanfälligen Zustand und müssen vermieden werden.
