@@ -85,31 +85,35 @@ Schriftgrößen, wenig Whitespace im Vergleich zu typischem Tailwind-Default-Spa
 ## Farbpalette: Go statt Node-RED-Rot
 
 Node-RED liefert nur das **Layout-/Interaktionsvorbild**. Alle Farbwerte kommen stattdessen aus
-der offiziellen Go-Marken-Farbpalette (go.dev-Brand-Assets). Referenzwerte, die in Phase 0 gegen
-die aktuellen offiziellen Go-Brand-Guidelines (go.dev) gegengeprüft werden sollen, bevor sie
-final in `tailwind.config.js` landen:
+der offiziellen Go-Marken-Farbpalette. **Verifiziert** (Quelle: Go Brand Book v1.0, siehe
+`golang/go`-Issues #29695 und #25136, die die Hex-Werte des offiziellen PDF gegen dessen eigene
+RGB-Angaben abgleichen): Der offizielle Go-Akzentfarbkanon besteht aus **genau drei** Farben,
+nicht aus einer breiten Palette:
 
-| Rolle | Go-Farbe | Hex (verifizieren) | Verwendung im UI |
+| Rolle | Go-Farbe | Hex (verifiziert) | Verwendung im UI |
 |---|---|---|---|
 | Primär / Marke | Gopher Blue | `#00ADD8` | Header-Hintergrund, aktiver Deploy-Button, Fokus-/Selektions-Outline, Links |
-| Primär dunkel | Deep Blue | `#007D9C` | Header-Hover/Active-States, dunklere Akzente |
-| Sekundär | Aqua | `#00A29C` | Kategorie-Swatch, sekundäre Buttons |
-| Sekundär | Fuchsia | `#CE3262` | Fehler-/Warn-Status, "Löschen"-Aktionen (statt NR-Rot) |
-| Sekundär | Yellow | `#FDDD00` | "processing/busy"-Status, Hinweis-Badges |
-| Neutral dunkel | Navy/Slate | `#17242D` | Text auf hellem Grund, evtl. Dark-Theme-Basis |
-| Neutral hell | Light Blue-Gray | `#E0EBF5` | Canvas-/Palette-Hintergrund, Trennlinien |
+| Sekundär, hell | Light Blue | `#5DC9E2` | Hover-States, sekundäre Akzente, helle Kategorie-Swatches |
+| Sekundär, Kontrast | Fuchsia | `#CE3262` | Fehler-/Warn-Status, "Löschen"-Aktionen (statt NR-Rot) |
+| Neutral | Black / White | `#000000` / `#FFFFFF` | Text, Flächen |
 
-Kategoriefarben der Node-Palette werden als Tinten/Schattierungen dieser Kernfarben abgeleitet
-(z.B. input = Gopher Blue, output = Aqua, function = Deep Blue, storage = Navy-Tint, error/status
-= Fuchsia), statt wie bei NR eine breite Regenbogenpalette pro Kategorie zu verwenden. Damit
-bleibt das Ergebnis erkennbar "Go-farbig" statt NR-rot, auch wenn Struktur/Anordnung von NR
-übernommen ist.
+Für Grautöne/Hintergründe abseits von Schwarz/Weiß macht das Brand Book (ein Print-/Logo-Leitfaden,
+kein UI-Designsystem) keine Vorgabe — dafür wird eine konventionelle neutrale Grauskala
+(Tailwind `slate`/`gray`) verwendet, statt einen erfundenen "Go-Navy"-Ton zu behaupten.
 
-> **Hinweis:** Die obigen Hex-Werte sind der aktuell bekannte Go-Farbkanon, sollten aber zu
-> Beginn von Phase 0 gegen die offiziellen go.dev-Brand-Assets gegengeprüft werden, statt
-> ungeprüft übernommen zu werden — gleiches Vorgehen wie zuvor für die NR-Layoutwerte
-> (Grid-Grau, Node-Geometrie, Typografie), die weiterhin aus einer laufenden Node-RED-Instanz
-> bzw. deren Theme-CSS abgeleitet werden.
+**Konsequenz für die Kategoriefarben der Node-Palette:** Anders als ursprünglich angenommen bietet
+Go *keine* Regenbogenpalette für ~8-10 Node-Kategorien. Kategoriefarben werden daher als
+Tinten/Schattierungen/Opazitätsstufen der drei Kernfarben abgeleitet (z.B. input = Gopher Blue,
+output = Light Blue, function = dunkleres Blue-Tint, storage = neutrales Grau, error/status =
+Fuchsia, weitere Kategorien = weitere Blue-/Fuchsia-Tints), statt wie bei NR pro Kategorie einen
+eigenen Farbton zu vergeben. Das ist eine bewusste Abweichung von NRs Konzept "1 Kategorie = 1
+Farbe", zugunsten von Markentreue zu Go.
+
+Quellen (Recherche in Phase 0 durchgeführt):
+- https://github.com/golang/go/issues/29695
+- https://github.com/golang/go/issues/25136
+- https://go.dev/s/brandbook (offizielles PDF; direkter Abruf war aus dieser Session heraus
+  durch einen 403 blockiert, Werte daher über obige Issues verifiziert, die das PDF zitieren)
 
 ---
 
@@ -119,12 +123,19 @@ Jede Phase = ein eigener, review-barer PR. Reihenfolge so gewählt, dass jede Ph
 vorherigen aufbaut und das UI nach jeder Phase in einem funktionsfähigen Zustand bleibt.
 
 ### Phase 0 — Design Tokens & Grundlage
-- Go-Brand-Farbwerte (siehe Tabelle oben) gegen go.dev-Brand-Assets verifizieren; Node-RED-Geometrie
-  (Höhe/Breite/Radius/Port-Größe, Grid-Raster) weiterhin aus einer laufenden NR-Instanz/deren
-  Theme-CSS ableiten. Beides zusammen als Tailwind-Theme-Erweiterung (`tailwind.config.js`) +
-  CSS-Variablen in `web/src/styles/tailwind.css` ablegen (`--gr-header-bg`, `--gr-cat-input`,
-  `--gr-cat-output`, `--gr-accent`, …). Präfix bewusst `gr-` (Go-RED) statt `nr-`, um klarzustellen,
-  dass es sich um eigene Tokens handelt, nicht um 1:1 kopierte NR-Werte.
+- ✅ Go-Brand-Farbwerte verifiziert (siehe Tabelle oben, Quellen: `golang/go`#29695, #25136) —
+  Gopher Blue `#00ADD8`, Light Blue `#5DC9E2`, Fuchsia `#CE3262`, plus Schwarz/Weiß und eine
+  konventionelle Grauskala für alles, was das Brand Book nicht abdeckt.
+- Aus den drei Kernfarben eine Tint-/Shade-Skala ableiten (z.B. je 3-4 Abstufungen pro Farbe),
+  um genug Kategoriefarben für die Node-Palette (~8-10 Kategorien) zu erzeugen, ohne Farben zu
+  erfinden, die nicht aus dem Brand-Book-Kanon stammen.
+- Node-RED-Geometrie (Höhe/Breite/Radius/Port-Größe, Grid-Raster, Zoom-Control-Platzierung)
+  weiterhin anhand einer laufenden NR-Instanz bzw. deren Theme-CSS ableiten — das ist reine
+  Layout-Referenz, unabhängig von der Farbfrage.
+- Beides zusammen als Tailwind-Theme-Erweiterung (`tailwind.config.js`) + CSS-Variablen in
+  `web/src/styles/tailwind.css` ablegen (`--gr-header-bg`, `--gr-cat-input`, `--gr-cat-output`,
+  `--gr-accent`, …). Präfix bewusst `gr-` (Go-RED) statt `nr-`, um klarzustellen, dass es sich um
+  eigene Tokens handelt, nicht um 1:1 kopierte NR-Werte.
 - Font-Stack auf Node-REDs UI-Font (Systemschrift-Stack, kompaktere Größen) umstellen.
 - Kleine interne Style-Guide-Seite (Dev-only Route) zur visuellen Abnahme der Tokens (Farben +
   Geometrie gemeinsam).
@@ -191,10 +202,11 @@ vorherigen aufbaut und das UI nach jeder Phase in einem funktionsfähigen Zustan
 
 ## Offene Fragen / Risiken
 
-1. **Zwei getrennte Quellen für Design-Tokens** vor Phase 0 verifizieren: (a) Go-Brand-Farbwerte
-   gegen offizielle go.dev-Brand-Assets, (b) NR-Geometrie/Grid/Typografie gegen eine laufende
-   Node-RED-Instanz bzw. deren Theme-CSS. Wird das vermischt oder ungeprüft übernommen, wirkt
-   das Ergebnis weder "Go-artig" noch "Node-RED-artig", sondern beliebig.
+1. **Nur drei Kernfarben im Go-Brand-Kanon** — anders als bei NR (breite Kategoriepalette) muss
+   aus Gopher Blue/Light Blue/Fuchsia + Neutraltönen eine ganze Kategoriefarb-Skala abgeleitet
+   werden. Risiko: zu wenig visuelle Unterscheidbarkeit zwischen Kategorien, falls die
+   Tint-/Shade-Abstufung in Phase 0 nicht sorgfältig genug ausfällt. NR-Geometrie/Grid/Typografie
+   bleibt separat gegen eine laufende Node-RED-Instanz bzw. deren Theme-CSS zu verifizieren.
 2. **Edit-Tray (Phase 5)** ist der aufwändigste Schritt (neue Slide-in-Layout-Infrastruktur,
    Fokus-Trap, Responsiveness). Sollte separat freigegeben werden, bevor Aufwand investiert wird.
 3. **Emoji → SVG-Icons**: Aufwand hängt davon ab, ob ein vorhandenes Icon-Set (z.B. Lucide/Feather,
