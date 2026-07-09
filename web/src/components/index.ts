@@ -4,5 +4,6 @@ export * from './FlowCanvas';
 export * from './NodeComponent';
 export * from './NodePalette';
 export * from './Sidebar';
-export * from './Toolbar';
+export * from './Header';
+export * from './FlowTabs';
 export * from './NodeConfigModal';

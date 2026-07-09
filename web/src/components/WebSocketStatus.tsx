@@ -1,8 +1,33 @@
 import { useWebSocket } from '../hooks/useWebSocket';
 
-export function WebSocketStatus() {
+export interface WebSocketStatusProps {
+  /** 'pill' (default) is the original colored-badge look; 'dot' is a
+   * compact light-on-dark variant for use on the (Gopher Blue) header. */
+  variant?: 'pill' | 'dot';
+}
+
+const dotColors = {
+  connected: 'bg-white',
+  connecting: 'bg-white/70 animate-pulse',
+  error: 'bg-gr-fuchsia-300',
+  unknown: 'bg-white/40',
+};
+
+export function WebSocketStatus({ variant = 'pill' }: WebSocketStatusProps) {
   const { state } = useWebSocket();
   const { connected, connecting, error } = state;
+
+  const label = connected ? 'Connected' : connecting ? 'Connecting...' : error ? 'Disconnected' : 'Unknown';
+  const dotKey = connected ? 'connected' : connecting ? 'connecting' : error ? 'error' : 'unknown';
+
+  if (variant === 'dot') {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-white/90" title={label}>
+        <span className={`w-2 h-2 rounded-full ${dotColors[dotKey]}`} />
+        <span className="hidden sm:inline">{label}</span>
+      </span>
+    );
+  }
 
   if (connected) {
     return (
