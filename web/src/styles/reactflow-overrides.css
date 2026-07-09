@@ -1,0 +1,57 @@
+/*
+ * Go palette overrides for ReactFlow's own stylesheet (Phase 3 of
+ * docs/FRONTEND_NODE_RED_REDESIGN.md — canvas wires/controls). Imported in
+ * FlowCanvas.tsx right after 'reactflow/dist/style.css' so these rules load
+ * after (and win the cascade over) ReactFlow's defaults regardless of the
+ * app's overall CSS bundling order.
+ */
+
+/* Node types that fall through to RF's built-in "default"/"input"/"output"
+   node classes (any node.type not explicitly registered in
+   FlowCanvas's nodeTypeComponents) still pick up ReactFlow's own default
+   node chrome (white background + dark border) even though our custom
+   NodeComponent/InjectNode/DebugNode render their own complete visual —
+   without this, that leftover chrome shows as a stray frame around the
+   (now transparent) node wrapper. */
+.react-flow__node-default,
+.react-flow__node-input,
+.react-flow__node-output {
+  border: none;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  text-align: left;
+  width: auto;
+}
+
+.react-flow__edge-path {
+  stroke: #9ca3af; /* gray-400: neutral wire, not brand-colored by default */
+  stroke-width: 1.5;
+}
+
+.react-flow__edge:hover .react-flow__edge-path,
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--gr-blue-500);
+  stroke-width: 2;
+}
+
+.react-flow__connection-path {
+  stroke: var(--gr-blue-500);
+  stroke-width: 2;
+}
+
+.react-flow__controls {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
+.react-flow__controls-button {
+  border-bottom-color: #e5e7eb;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--gr-blue-50);
+}
+
+.react-flow__controls-button svg {
+  fill: var(--gr-blue-700);
+}

@@ -1,7 +1,6 @@
 import React, { useCallback, useState, useMemo } from 'react';
 import type { NodeMetadata } from '../types/node';
-import DOMPurify from 'dompurify';
-import { CategoryIcon } from './CategoryIcon';
+import { CategoryIcon, NodeIcon } from './CategoryIcon';
 import { getCategoryColor, sortCategories } from '../utils/nodeCategories';
 
 interface NodePaletteProps {
@@ -56,17 +55,7 @@ function NodePaletteItem({ node, onDragStart }: NodePaletteItemProps) {
       title={node.description || node.name}
     >
       <span className={`w-2 h-2 rounded-sm shrink-0 ${color.swatch}`} aria-hidden="true" />
-      {node.icon && node.icon.startsWith('<svg') ? (
-        // Server-provided icons don't reliably set their own width/height,
-        // so the wrapper forces a size onto whatever <svg> DOMPurify lets
-        // through instead of relying on the raw markup's own sizing.
-        <span
-          className="w-3.5 h-3.5 shrink-0 [&>svg]:w-full [&>svg]:h-full"
-          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(node.icon) }}
-        />
-      ) : (
-        <CategoryIcon category={node.category} className={`w-3.5 h-3.5 shrink-0 ${color.softText}`} />
-      )}
+      <NodeIcon icon={node.icon} category={node.category} className={`w-3.5 h-3.5 shrink-0 ${color.softText}`} />
       <span className="text-xs flex-1 truncate">{node.name}</span>
     </div>
   );

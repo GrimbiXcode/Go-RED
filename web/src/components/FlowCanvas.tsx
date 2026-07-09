@@ -14,14 +14,20 @@ import ReactFlow, {
   EdgeTypes,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+import '../styles/reactflow-overrides.css';
 import type { Flow, FlowNode, NodeConnection, NodeRegistry } from '../types/flow';
+import type { NodeMetadata } from '../types/node';
 import { NodeComponent } from './NodeComponent';
 import { InjectNode } from './InjectNode';
 import { DebugNode } from './DebugNode';
 
 interface FlowCanvasProps {
   flow: Flow | null;
-  availableNodeTypes?: NodeRegistry;
+  // NodeEditor passes the flat NodeMetadata[] from useFlows() state, not a
+  // NodeRegistry lookup object — build the registry from it below instead
+  // of indexing the array by node.type (which previously always returned
+  // undefined and silently fell back to 'custom' styling for every node).
+  availableNodeTypes?: NodeMetadata[];
   onNodeSelect: (node: FlowNode) => void;
   onNodeDeselect: () => void;
   onAddNode: (nodeType: string, position: { x: number; y: number }) => void;
@@ -83,7 +89,10 @@ export function FlowCanvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const { screenToFlowPosition } = useReactFlow();
 
-  const nodeRegistry = availableNodeTypes || {};
+  const nodeRegistry: NodeRegistry = useMemo(
+    () => Object.fromEntries((availableNodeTypes || []).map((nt) => [nt.type, nt])),
+    [availableNodeTypes]
+  );
 
   const flowNodes = useMemo(() => {
     if (!flow) return [];
@@ -215,10 +224,10 @@ export function FlowCanvas({
           fitViewOptions={{ padding: 0.5 }}
           minZoom={0.1}
           maxZoom={4}
-          defaultEdgeOptions={{ animated: true }}
+          defaultEdgeOptions={{ animated: false }}
         >
-          <Background color="#f0f0f0" gap={16} />
-          <Controls />
+          <Background color="var(--gr-blue-200)" gap={20} size={1.5} />
+          <Controls position="bottom-left" />
         </ReactFlow>
       </ReactFlowProvider>
     </div>

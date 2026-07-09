@@ -1,9 +1,11 @@
 /**
  * Small monochrome SVG icon set for node categories, replacing the emoji
- * fallbacks in the palette (Phase 2 of docs/FRONTEND_NODE_RED_REDESIGN.md).
- * Server-provided `<svg>` node icons (via NodeMetadata.icon) are untouched
- * and still go through DOMPurify — this only covers the built-in fallback.
+ * fallbacks in the palette and canvas nodes (Phase 2/3 of
+ * docs/FRONTEND_NODE_RED_REDESIGN.md). Server-provided `<svg>` node icons
+ * (via NodeMetadata.icon) are untouched and still go through DOMPurify —
+ * this only covers the built-in fallback (see NodeIcon below).
  */
+import DOMPurify from 'dompurify';
 
 export interface CategoryIconProps {
   category: string;
@@ -95,4 +97,29 @@ export function CategoryIcon({ category, className = 'w-4 h-4' }: CategoryIconPr
       {icons[category] || icons.custom}
     </svg>
   );
+}
+
+export interface NodeIconProps {
+  /** Raw icon string from NodeMetadata — either literal `<svg>...` markup
+   * from the backend, or absent/emoji (ignored in favor of CategoryIcon). */
+  icon?: string;
+  category: string;
+  className?: string;
+}
+
+/**
+ * Picks between a server-provided SVG icon (sanitized, sized to fill its
+ * wrapper regardless of the raw markup's own width/height attributes) and
+ * the monochrome CategoryIcon fallback.
+ */
+export function NodeIcon({ icon, category, className = 'w-4 h-4' }: NodeIconProps) {
+  if (icon && icon.startsWith('<svg')) {
+    return (
+      <span
+        className={`inline-block shrink-0 [&>svg]:w-full [&>svg]:h-full ${className}`}
+        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(icon) }}
+      />
+    );
+  }
+  return <CategoryIcon category={category} className={className} />;
 }
