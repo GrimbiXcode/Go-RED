@@ -165,6 +165,13 @@ export function FlowEditor() {
     }
   }, [selectedNode, updateNode]);
 
+  const handleDeleteConfiguredNode = useCallback(() => {
+    if (!selectedNode) return;
+    handleRemoveNode(selectedNode.id);
+    setShowConfigModal(false);
+    setSelectedNode(null);
+  }, [selectedNode, handleRemoveNode]);
+
   const handleSave = useCallback(async () => {
     if (!selectedFlow) {
       showToast('error', 'No flow selected to save');
@@ -361,6 +368,7 @@ export function FlowEditor() {
           nodeTypes={nodeTypes}
           onClose={handleCloseConfigModal}
           onSave={handleSaveNodeConfig}
+          onDelete={handleDeleteConfiguredNode}
         />
       )}
 
