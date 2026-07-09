@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { WebSocketStatus } from './WebSocketStatus';
 
 export interface HeaderProps {
   hasSelectedFlow: boolean;
@@ -73,8 +72,6 @@ export function Header({
       </div>
 
       <div className="flex items-center gap-3">
-        <WebSocketStatus variant="dot" />
-
         <button
           className={`px-3 py-1.5 rounded text-xs font-medium ${
             canUndeploy

@@ -7,4 +7,5 @@ export * from './Sidebar';
 export * from './Header';
 export * from './FlowTabs';
 export * from './SidebarTabs';
+export * from './StatusBar';
 export * from './NodeConfigModal';

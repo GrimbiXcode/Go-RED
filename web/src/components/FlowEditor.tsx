@@ -8,6 +8,7 @@ import { FlowTabs } from './FlowTabs';
 import { NodeConfigModal } from './NodeConfigModal';
 import { MessageLogPanel } from './MessageLogPanel';
 import { SidebarTabs, InfoTabIcon, DebugTabIcon } from './SidebarTabs';
+import { StatusBar } from './StatusBar';
 import { ExportModal } from './ExportModal';
 import { ImportModal } from './ImportModal';
 import { useToast } from './ToastNotification';
@@ -361,6 +362,8 @@ export function FlowEditor() {
           ]}
         />
       </div>
+
+      <StatusBar flow={selectedFlow} />
 
       {showConfigModal && selectedNode && (
         <NodeConfigModal

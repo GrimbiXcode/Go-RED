@@ -167,7 +167,7 @@ export function NodeConfigModal({ node, nodeTypes, onClose, onSave, onDelete }: 
   };
 
   return (
-    <div className="fixed top-11 bottom-0 right-9 w-80 bg-white border-l border-gray-200 shadow-xl z-30 flex flex-col animate-slide-in-right">
+    <div className="fixed top-11 bottom-6 right-9 w-80 bg-white border-l border-gray-200 shadow-xl z-30 flex flex-col animate-slide-in-right">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200">
         <span className={`w-3 h-3 rounded-sm shrink-0 ${color.swatch}`} aria-hidden="true" />
         <div className="flex-1 min-w-0">
