@@ -6,4 +6,5 @@ export * from './NodePalette';
 export * from './Sidebar';
 export * from './Header';
 export * from './FlowTabs';
+export * from './SidebarTabs';
 export * from './NodeConfigModal';

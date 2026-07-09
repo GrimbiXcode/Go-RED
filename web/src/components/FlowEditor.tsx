@@ -7,6 +7,7 @@ import { Header } from './Header';
 import { FlowTabs } from './FlowTabs';
 import { NodeConfigModal } from './NodeConfigModal';
 import { MessageLogPanel } from './MessageLogPanel';
+import { SidebarTabs, InfoTabIcon, DebugTabIcon } from './SidebarTabs';
 import { ExportModal } from './ExportModal';
 import { ImportModal } from './ImportModal';
 import { useToast } from './ToastNotification';
@@ -38,7 +39,10 @@ export function FlowEditor() {
 
   const [selectedNode, setSelectedNode] = useState<FlowNode | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
-  const [showMessageLog, setShowMessageLog] = useState(false);
+  // Which right-hand sidebar tab is open ('info' | 'debug' | null for
+  // collapsed) — replaces the old always-visible Sidebar column plus the
+  // separately toggled MessageLogPanel overlay (Phase 4).
+  const [activeSidebarTab, setActiveSidebarTab] = useState<string | null>('info');
   const [showExportModal, setShowExportModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   // Local-only "has this flow changed since the last deploy" flag driving
@@ -218,10 +222,6 @@ export function FlowEditor() {
     }
   }, [selectedFlow, updateCurrentFlow, showToast]);
 
-  const handleToggleMessageLog = useCallback(() => {
-    setShowMessageLog((prev) => !prev);
-  }, []);
-
   const handleDeploy = useCallback(async () => {
     if (selectedFlow) {
       await deployCurrentFlow();
@@ -294,7 +294,6 @@ export function FlowEditor() {
         onSave={handleSave}
         onExport={handleExportFlow}
         onImport={handleImportFlow}
-        onToggleMessageLog={handleToggleMessageLog}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -330,13 +329,30 @@ export function FlowEditor() {
           </div>
         </div>
 
-        <div className="w-80 bg-white border-l border-gray-200 overflow-y-auto">
-          <Sidebar
-            flow={selectedFlow}
-            selectedNode={selectedNode}
-            onConfigureNode={handleConfigureNode}
-          />
-        </div>
+        <SidebarTabs
+          activeTabId={activeSidebarTab}
+          onSelectTab={setActiveSidebarTab}
+          tabs={[
+            {
+              id: 'info',
+              label: 'Info',
+              icon: <InfoTabIcon />,
+              content: (
+                <Sidebar
+                  flow={selectedFlow}
+                  selectedNode={selectedNode}
+                  onConfigureNode={handleConfigureNode}
+                />
+              ),
+            },
+            {
+              id: 'debug',
+              label: 'Debug',
+              icon: <DebugTabIcon />,
+              content: <MessageLogPanel selectedFlowId={selectedFlow?.id} />,
+            },
+          ]}
+        />
       </div>
 
       {showConfigModal && selectedNode && (
@@ -347,12 +363,6 @@ export function FlowEditor() {
           onSave={handleSaveNodeConfig}
         />
       )}
-      
-      <MessageLogPanel
-        selectedFlowId={selectedFlow?.id}
-        isOpen={showMessageLog}
-        onClose={() => setShowMessageLog(false)}
-      />
 
       {selectedFlow && (
         <ExportModal

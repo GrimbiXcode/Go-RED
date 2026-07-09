@@ -11,7 +11,6 @@ export interface HeaderProps {
   onSave: () => void;
   onExport: () => void;
   onImport: () => void;
-  onToggleMessageLog: () => void;
 }
 
 function MenuItem({
@@ -44,7 +43,6 @@ export function Header({
   onSave,
   onExport,
   onImport,
-  onToggleMessageLog,
 }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -76,14 +74,6 @@ export function Header({
 
       <div className="flex items-center gap-3">
         <WebSocketStatus variant="dot" />
-
-        <button
-          className="px-3 py-1.5 rounded text-xs font-medium bg-white/15 text-white hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/15"
-          onClick={onToggleMessageLog}
-          title="Debug-Log ein-/ausblenden"
-        >
-          Log
-        </button>
 
         <button
           className={`px-3 py-1.5 rounded text-xs font-medium ${
