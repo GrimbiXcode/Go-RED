@@ -250,13 +250,13 @@ func TestInjectNode_IntervalInjection(t *testing.T) {
         time.Sleep(100 * time.Millisecond)
         
         // Verify ticker was started
-        assert.NotNil(t, node.ticker, "Ticker should be started after Execute with interval > 0")
+        assert.NotNil(t, node.Ticker(), "Ticker should be started after Execute with interval > 0")
         
         // Stop the node to clean up
         node.Stop()
         
         // Verify ticker was stopped
-        assert.Nil(t, node.ticker, "Ticker should be nil after Stop")
+        assert.Nil(t, node.Ticker(), "Ticker should be nil after Stop")
         
         log.Printf("[DEBUG] InjectNode interval injection test passed")
     })
@@ -278,13 +278,13 @@ func TestInjectNode_IntervalInjection(t *testing.T) {
         time.Sleep(100 * time.Millisecond)
         
         // Verify ticker is running
-        assert.NotNil(t, node.ticker, "Ticker should be running after Execute with interval > 0")
+        assert.NotNil(t, node.Ticker(), "Ticker should be running after Execute with interval > 0")
         
         // Stop the node
         node.Stop()
         
         // Verify ticker was stopped
-        assert.Nil(t, node.ticker, "Ticker should be nil after Stop")
+        assert.Nil(t, node.Ticker(), "Ticker should be nil after Stop")
         
         // Verify done channel was closed
         select {
@@ -314,7 +314,7 @@ func TestInjectNode_IntervalInjection(t *testing.T) {
         time.Sleep(100 * time.Millisecond)
         
         // Verify ticker is running
-        assert.NotNil(t, node.ticker, "Ticker should be running after Execute with interval > 0")
+        assert.NotNil(t, node.Ticker(), "Ticker should be running after Execute with interval > 0")
         
         // Cancel context
         cancel()

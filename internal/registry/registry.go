@@ -2,6 +2,7 @@
 package registry
 
 import (
+    "context"
     "errors"
     "log"
     "sync"
@@ -13,17 +14,94 @@ type NodeExecutor interface {
     // Execute processes the input message and returns output.
     // The context can be used for timeout and cancellation.
     Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error)
-    
+
     // Validate checks the node configuration.
     // Should return an error if the configuration is invalid.
     Validate() error
-    
+
     // GetConfig returns the current configuration as a map.
     GetConfig() map[string]interface{}
-    
+
     // SetConfig sets the configuration from a map.
     // Should validate the configuration and return an error if invalid.
     SetConfig(config map[string]interface{}) error
+}
+
+// The interfaces below are optional extensions to NodeExecutor. A node type
+// implements one of them only if it needs the corresponding capability; the
+// engine type-asserts for them at runtime, so existing NodeExecutor
+// implementations (inject, debug, function) are unaffected by their
+// existence. See docs/NODE_PALETTE_PLAN.md ("Architektur-Voraussetzungen,
+// Phase 0") for the gap analysis that motivated them.
+
+// MultiOutputExecutor is implemented by nodes that route different
+// payloads to different output ports of the same node (e.g. a future
+// Switch node picking one of several outputs, or a Catch/RBE node that may
+// emit on no port at all for a given input). The engine calls ExecuteMulti
+// instead of Execute when a node implements this interface.
+type MultiOutputExecutor interface {
+    NodeExecutor
+
+    // ExecuteMulti behaves like Execute but returns one payload per output
+    // port ID (matching registry.Port.ID from the node's NodeMetadata.Outputs).
+    // A port that is absent from the result, or mapped to nil, means: do not
+    // send a message on that port for this invocation.
+    ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[string]map[string]interface{}, error)
+}
+
+// Closeable is implemented by nodes that hold resources (open connections,
+// timers, file handles, ...) which must be released when their flow is
+// undeployed. The engine calls Close exactly once per node instance during
+// Undeploy, after the flow's context has been cancelled and any Start
+// goroutine (see EmittingNode) has returned.
+type Closeable interface {
+    Close() error
+}
+
+// EmittingNode is implemented by nodes that originate messages on their own
+// instead of only reacting to an incoming one (e.g. a TCP listener, an MQTT
+// subscription, a file watcher). The engine invokes Start once, in its own
+// goroutine, when the node's flow is deployed. Start must block until ctx is
+// cancelled (which happens when the flow is undeployed) and call emit for
+// every message it wants to inject at this node's output.
+type EmittingNode interface {
+    NodeExecutor
+
+    Start(ctx context.Context, emit func(payload map[string]interface{})) error
+}
+
+// EagerlyReadyNode is an optional marker an EmittingNode additionally
+// implements to tell the engine: "my Start does synchronous setup - e.g.
+// subscribing to this flow's EventBus - that other nodes' very first
+// Execute call might race against, so wait for it before returning from
+// Deploy." Without this, Deploy returns as soon as Start's goroutine has
+// merely been launched, not run; a message injected immediately
+// afterward (the common "deploy, then inject" sequence in tests and in
+// any caller that doesn't add its own delay) can reach a node that
+// publishes an event - e.g. NodeRuntime.ReportStatus, or the engine's own
+// automatic error/complete events after every Execute - before a Catch/
+// Status/Complete node's Start has actually called OnError/OnStatus/
+// OnComplete to subscribe, silently dropping it (registry.EventBus has no
+// replay/buffering for a subscriber that arrives late).
+//
+// Implementing this interface only makes sense for a node whose readiness
+// depends on order relative to *other nodes in the same flow*, not on an
+// external event source (a TCP listener, an MQTT subscription, a
+// filesystem watch): those originate their own events independently of
+// this flow's message processing, so there's nothing for them to race
+// against in the same "Deploy then inject" sequence, and requiring the
+// engine to wait for them would only add needless latency to every
+// Deploy. Implemented by catch/status/complete; SignalReady/WithReady
+// live in ready.go.
+type EagerlyReadyNode interface {
+    EmittingNode
+
+    // EagerlyReady is a marker method with no meaningful behavior of its
+    // own - implementing it opts a node into the engine's ready-wait (see
+    // startEmittingNodes). The node's real obligation is to call
+    // SignalReady(ctx) synchronously, as the first thing Start does,
+    // once its setup is complete.
+    EagerlyReady()
 }
 
 // NodeFactory is a function that creates a new NodeExecutor instance.

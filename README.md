@@ -37,6 +37,7 @@ Go—RED is a **flow-based programming editor** similar to Node-RED, but complet
 | [Architecture](docs/ARCHITECTURE.md) | Technical architecture, components, data flow |
 | [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) | Detailed roadmap with phases and timeline |
 | [Node Development](docs/NODE_DEVELOPMENT.md) | Guide for developing custom nodes |
+| [Node Palette Plan](docs/NODE_PALETTE_PLAN.md) | Plan for full Node-RED core node palette parity |
 
 ---
 

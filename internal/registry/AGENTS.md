@@ -84,6 +84,60 @@ func GetGlobalRegistry() *NodeRegistry {
 - The flow engine uses the global registry
 - Tests can create isolated registries
 
+### Optional Node Interfaces (`registry.go`)
+
+Beyond `NodeExecutor`, three optional interfaces let a node opt into extra engine
+capabilities (checked via type assertion, so implementing none of them - like
+`inject`/`debug`/`function` - is unaffected):
+
+- **`MultiOutputExecutor`** (`NodeExecutor` + `ExecuteMulti`) - route different payloads
+  to specific output ports by ID (`map[string]map[string]interface{}`; a missing/`nil`
+  port sends nothing on it). Used by `linkout` today; future `switch`/`catch`/`split`.
+- **`Closeable`** (`Close() error`) - release resources on `Undeploy` or a failed
+  `Deploy`. No current node needs it yet (future `mqtt in/out`, `tcp in`, `watch`, ...).
+- **`EmittingNode`** (`NodeExecutor` + `Start(ctx, emit)`) - originate messages instead
+  of only reacting to input; the engine runs `Start` in its own goroutine for the
+  lifetime of the flow. Used by `catch`/`status`/`complete` today (they subscribe to
+  `NodeRuntime` events and `emit` on a match, blocking on `<-ctx.Done()`).
+
+### NodeRuntime, EventBus, ContextStore (`runtime.go`, `eventbus.go`, `context_store.go`)
+
+These three types are the engine-facing services a node reaches via
+`registry.RuntimeFromContext(ctx)` inside `Execute`/`ExecuteMulti`/`Start` (the engine
+embeds a `*NodeRuntime` into the `context.Context` it passes in). They live in
+`registry`, not `internal/engine`, specifically so node packages only ever import
+`internal/registry` like every other node - never `internal/engine` - keeping the same
+dependency direction the plugin system design already assumes.
+
+- **`NodeRuntime`**: per-invocation handle with `FlowContext`/`GlobalContext`
+  (`*ContextStore`), `ReportStatus`/`ReportError` (publish), `OnError`/`OnStatus`/
+  `OnComplete` (subscribe - normally called once, inside `EmittingNode.Start`),
+  `SubmitToNode(nodeID, payload)` (deliver directly to another node's output in the same
+  flow, bypassing a drawn wire - used by `linkout` to reach a `linkin` node; **no
+  cross-flow support yet**), and `GetNode(nodeID) (NodeExecutor, bool)` (Phase 6 - look
+  up another node's *live executor instance* within the same flow, used to reach a
+  shared config node like `mqtt-broker` by the ID stored in a consumer's own string
+  config property; resolved lazily at `Execute`/`ExecuteMulti`/`Start` call time, not at
+  `SetConfig` time, since Deploy's node-init loop iterates a Go map in unspecified order
+  - see `internal/nodes/AGENTS.md`'s config-node section for the full ordering
+  discussion, including why a config node must become "ready" inside its own `SetConfig`
+  rather than an `EmittingNode.Start`).
+- **`EventBus`**: per-flow pub/sub for `NodeErrorEvent`/`NodeStatusEvent`/
+  `NodeCompleteEvent`. The engine auto-publishes an error event on every failed
+  `Execute`/`ExecuteMulti` and a complete event on every successful one; status events
+  are always node-initiated via `ReportStatus`.
+- **`ContextStore`**: thread-safe key-value store (`flow.get`/`set`,
+  `global.get`/`set`); one per flow plus one global one on the engine.
+
+**Feedback-loop hazard:** a `complete` (or any future `NodeCompleteEvent` consumer)
+whose own output feeds back into a node inside its `scope` will re-trigger itself
+forever, because "node finished successfully" is the *same* event every node emits -
+unlike error/status, which normal successful nodes never produce. Always scope such a
+node to the specific node(s) being watched, not to "everything" (see
+`internal/nodes/complete/node.go`'s doc comment and
+`internal/engine/phase1_flow_control_test.go` for a reproduction that was caught while
+writing that test).
+
 ---
 
 ## Development Guidelines

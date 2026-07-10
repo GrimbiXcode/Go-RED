@@ -58,3 +58,22 @@ This document outlines the implementation roadmap for Go—RED.
 ⏳ Phase 3: WebUI - IN PROGRESS
 ⏳ Phase 4: REST API - IN PROGRESS
 ⏳ Phase 5: Production - PENDING
+
+---
+
+## Node Palette
+
+All six planned phases of the Node-RED core palette are now implemented (47 node types:
+`inject`, `debug`, `function`, `junction`, `comment`, `catch`, `status`, `complete`,
+`link in`, `link out`, `switch`, `change`, `range`, `template`, `delay`, `trigger`,
+`rbe`, `exec`, `csv`, `json`, `xml`, `yaml`, `html`, `split`, `join`, `sort`, `batch`,
+`file`, `file in`, `watch`, `tls-config`, `http proxy`, `mqtt-broker`, `mqtt in`,
+`mqtt out`, `http in`, `http response`, `http request`, `websocket-listener`,
+`websocket-client`, `websocket in`, `websocket out`, `tcp in`, `tcp out`,
+`tcp request`, `udp in`, `udp out`). `link call`, `global-config` (as its own NR type
+ID), and `unknown` remain deliberately out of scope - see the plan doc's Phase 1
+section for why. `exec` only runs if `GORED_ENABLE_EXEC` is set on the server; `http
+request` does not block SSRF by default (parity with Node-RED - see
+`internal/nodes/httprequest`'s package doc for the full security rationale). See
+[Node Palette Plan](NODE_PALETTE_PLAN.md) for the full inventory, engine changes
+(including Phase 6's config-node concept), and per-phase scope cuts.

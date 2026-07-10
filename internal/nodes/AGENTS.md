@@ -14,18 +14,196 @@ internal/nodes/
 │   └── node.go
 ├── function/       # JavaScript function node - executes JS code
 │   └── node.go
-└── inject/         # Message injection node - manual message trigger
+├── inject/         # Message injection node - manual message trigger
+│   └── node.go
+├── junction/       # Passthrough wire-routing point (no runtime effect)
+│   └── node.go
+├── comment/        # Editor annotation (no ports, no runtime effect)
+│   └── node.go
+├── catch/          # Fires on another node's error (registry.EmittingNode)
+│   └── node.go
+├── status/         # Fires on another node's status report (registry.EmittingNode)
+│   └── node.go
+├── complete/       # Fires on another node's successful completion (registry.EmittingNode)
+│   └── node.go
+├── linkin/         # "link in" - virtual entry point for linkout (same flow)
+│   └── node.go
+├── linkout/        # "link out" - delivers to a linkin node (registry.MultiOutputExecutor)
+│   └── node.go
+├── switchnode/      # "switch" - rule-based routing (registry.MultiOutputExecutor); named switchnode, "switch" is a Go keyword
+│   └── node.go
+├── change/         # Set/change/delete/move on msg/flow/global (typedvalue.PropertyRef)
+│   └── node.go
+├── rangenode/      # "range" - scale a numeric property; named rangenode, "range" is a Go keyword
+│   └── node.go
+├── rbe/            # Report-by-exception / deadband filter (registry.MultiOutputExecutor)
+│   └── node.go
+├── template/       # {{msg.path}} variable substitution into a message property
+│   └── node.go
+├── delay/          # Fixed delay or rate-limit (registry.EmittingNode + queue)
+│   └── node.go
+├── trigger/        # Send now, optional delayed second send (registry.Closeable timers)
+│   └── node.go
+├── execnode/       # "exec" - run an external command, argv-only, opt-in via GORED_ENABLE_EXEC; named execnode to avoid shadowing the imported os/exec package
+│   └── node.go
+├── jsonnode/       # "json" - JSON string <-> object (direction from payload type); named jsonnode to avoid shadowing the imported encoding/json package
+│   └── node.go
+├── yamlnode/       # "yaml" - YAML string <-> object; named yamlnode to avoid shadowing the imported yaml.v3 package
+│   └── node.go
+├── csvnode/        # "csv" - CSV string <-> array of rows; named csvnode to avoid shadowing the imported encoding/csv package
+│   └── node.go
+├── xmlnode/        # "xml" - XML string <-> object, own schema (see package doc); named xmlnode to avoid shadowing the imported encoding/xml package
+│   └── node.go
+├── htmlnode/       # "html" - CSS-selector-subset extraction; named htmlnode to avoid shadowing the imported golang.org/x/net/html package
+│   └── node.go
+├── split/          # Splits an array/object/string into N messages (registry.MultiOutputExecutor + NodeRuntime.SubmitToNode fan-out)
+│   └── node.go
+├── join/           # Reassembles a msg.parts group back into one message (stateful, registry.MultiOutputExecutor)
+│   └── node.go
+├── sortnode/       # "sort" - buffers a msg.parts group, re-emits sorted; named sortnode to avoid shadowing the imported stdlib sort package
+│   └── node.go
+├── batch/          # Groups messages by count or interval (registry.MultiOutputExecutor + registry.EmittingNode)
+│   └── node.go
+├── file/           # Writes/appends/deletes a file from msg.payload (registry.MultiOutputExecutor)
+│   └── node.go
+├── filein/         # "file in" - reads a file into msg.payload, whole or line-by-line; named filein ("link in" -> linkin is the precedent)
+│   └── node.go
+├── watch/          # Emits on filesystem change events (registry.EmittingNode, no input port, github.com/fsnotify/fsnotify)
+│   └── node.go
+├── tlsconfig/      # "tls-config" config node - reusable TLS cert/key/CA, Category "config"
+│   └── node.go
+├── httpproxy/      # "http proxy" config node - reusable outbound proxy settings, Category "config"
+│   └── node.go
+├── mqttbroker/     # "mqtt-broker" config node - shared paho.mqtt.golang client, Category "config"
+│   └── node.go
+├── mqttin/         # "mqtt in" - subscribes via a shared mqtt-broker (registry.EmittingNode, no input port)
+│   └── node.go
+├── mqttout/        # "mqtt out" - publishes via a shared mqtt-broker
+│   └── node.go
+├── httpin/         # "http in" - shared HTTP listener + router (registry.EmittingNode, no input port); also exports RegisterHandler for websocketlistener
+│   ├── node.go
+│   ├── server.go
+│   └── response_handle.go
+├── httpresponse/   # "http response" - completes the pending request an httpin node is holding open
+│   └── node.go
+├── httprequest/    # "http request" - outgoing HTTP call; see package doc for the security review
+│   └── node.go
+├── websocketlistener/ # "websocket-listener" config node - server-side WS endpoint on httpin's shared listener, Category "config"
+│   └── node.go
+├── websocketclient/   # "websocket-client" config node - outgoing WS connection, auto-reconnecting, Category "config"
+│   └── node.go
+├── websocketin/    # "websocket in" - emits on messages from a websocket-listener/-client (registry.EmittingNode, no input port)
+│   └── node.go
+├── websocketout/   # "websocket out" - sends via a websocket-listener/-client
+│   └── node.go
+├── tcpin/          # "tcp in" - server or client mode (registry.EmittingNode, no input port)
+│   └── node.go
+├── tcpout/         # "tcp out" - connects out and writes, one connection per message
+│   └── node.go
+├── tcprequest/     # "tcp request" - connects out, writes, half-closes, reads the reply
+│   └── node.go
+├── udpin/          # "udp in" - listens for datagrams (registry.EmittingNode, no input port)
+│   └── node.go
+└── udpout/         # "udp out" - sends a single datagram
     └── node.go
 ```
 
-**Future Categories (planned):**
-- `input/` - Message sources (websocket, HTTP, MQTT, etc.)
-- `output/` - Message sinks (file, database, HTTP response, etc.)
-- `logic/` - Control flow (switch, condition, router, etc.)
-- `transform/` - Data transformation (JSON, template, encode, etc.)
-- `network/` - Network operations (HTTP request, TCP, UDP, etc.)
-- `storage/` - Persistence (Redis, MongoDB, PostgreSQL, etc.)
-- `utility/` - Helper nodes (delay, rate-limit, batch, etc.)
+See `docs/NODE_PALETTE_PLAN.md` for the full Node-RED core palette this is working
+towards, including which nodes are implemented, deferred, and why. `catch`/`status`/
+`complete`/`linkin`/`linkout` are the first nodes that use `registry.NodeRuntime`
+(`registry.RuntimeFromContext(ctx)` inside `Execute`/`ExecuteMulti`/`Start`) for
+flow/global context, error/status/complete event subscription, and same-flow message
+delivery — see `internal/registry/runtime.go`, `eventbus.go`, `context_store.go`.
+`switchnode`/`change` are the first nodes to use `typedvalue.PropertyRef`
+(`internal/typedvalue/propertyref.go`) for reading/writing a msg path or a flow/global
+context key generically.
+
+`split`/`join`/`sortnode` are the first nodes to use `msg.parts` grouping metadata -
+represented as a plain `"parts"` key in the same `map[string]interface{}` used for
+`msg.payload`/`msg.topic`/etc., not a dedicated engine field (an earlier
+`engine.Message.Parts` field from Phase 0 had no producer/consumer and was removed
+here - see `docs/NODE_PALETTE_PLAN.md`, Phase 4). They're also the first nodes where one
+input message produces multiple *output* messages on the *same* port: since
+`registry.MultiOutputExecutor` only allows one message per port, `split`/`sortnode`
+return the first message as `ExecuteMulti`'s normal result and dispatch the rest via
+`NodeRuntime.SubmitToNode(rt.NodeID, ...)` - the same mechanism `linkout` uses to reach
+a *different* node, here targeting the node's own ID to re-enter its own outgoing wires.
+
+`file`/`filein`/`watch` (Phase 5, `docs/NODE_PALETTE_PLAN.md`) are the storage-category
+nodes. `file`/`filein` resolve their target path from a `typedvalue.Value` (usually a
+fixed string, optionally `msg`/`env`/flow/global-sourced) rather than reading the path
+straight off the message, mirroring Node-RED's typed-input widget for this field.
+`filein`'s `"lines"` format reuses the same same-port `SubmitToNode` fan-out as
+`split`. `watch` is the first `registry.EmittingNode` with *no* input port at all -
+its `Execute` only exists to satisfy `NodeExecutor` (embedded in `EmittingNode`) and
+always errors if called, since the engine never calls it for a node with no wired
+input; `Start` runs `github.com/fsnotify/fsnotify` until the flow's context is
+cancelled, reporting transient watcher errors via `NodeRuntime.ReportError` (so a Catch
+node can observe them) rather than returning from `Start` and ending emission for the
+rest of the flow's life.
+
+`tlsconfig`/`httpproxy`/`mqttbroker`/`websocketlistener`/`websocketclient` (Phase 6,
+`docs/NODE_PALETTE_PLAN.md`) are Go-RED's first **config nodes** - reusable
+configuration/connection objects with `Category: "config"` and no ports, referenced by
+ID from a plain string config property on a consuming node (e.g. `mqttin.Node.Broker`),
+not through any dedicated wire-format support (`registry.Property.Type: "string"`, same
+as any other property - no `NodeMetadata`/`Property` struct change, so the Interface-
+Verification protocol below doesn't trigger). A consumer resolves the live instance via
+`registry.NodeRuntime.GetNode(configNodeID)` (new in Phase 6 - `runtime.go`'s `getNode`
+field/`GetNode` method, wired from `engine.go`'s `newNodeRuntime` off
+`activeFlow.nodeExecutors`) and type-asserts it to a small Go interface the two packages
+share directly (e.g. `mqttbroker.Broker`, `tlsconfig.Provider`) - a direct Go import
+between sibling node packages, not a registry-mediated contract, since only a handful of
+node types need each one.
+
+**Config-node readiness vs. `Start()` ordering.** `engine.go`'s `startEmittingNodes`
+launches one goroutine per `registry.EmittingNode` with *no ordering guarantee between
+them* - so a config node that only becomes "ready" inside its own `Start` cannot safely
+be consumed from another `EmittingNode`'s `Start` (a real race, not just Go's unordered
+map iteration during Deploy's init loop, which every node's `SetConfig` already
+tolerates by resolving config-node references lazily rather than at `SetConfig` time).
+The fix used throughout Phase 6: `mqttbroker`/`websocketlistener`/`websocketclient` do
+their connection setup (constructing the client, dialing, or mounting an HTTP handler)
+directly inside `SetConfig` - which runs synchronously inside Deploy's single-node-at-a-
+time init loop, always complete before any `Start` goroutine exists - and implement only
+`registry.Closeable`, never `registry.EmittingNode`, themselves. `httpin` sidesteps the
+question entirely: route registration happens in its own `Start` (it has no config-node
+dependency to race against), and `websocketlistener` mounts on `httpin`'s shared
+listener via the exported `httpin.RegisterHandler`, also called from `SetConfig`.
+
+`httpin`/`httpresponse` correlate a live `http.ResponseWriter` with the message that
+carries it through the flow via a `*httpin.ResponseHandle` stored under the plain
+message key `httpin.KeyResponseHandle` - an ordinary `interface{}` value that survives
+every node's shallow `cloneMap` helper along the way (the pointer is just copied, same as
+any other map value), the same "put a live Go value on the message" approach `watch`
+established for filesystem-event metadata. All `httpin`-derived nodes share a single
+process-wide `*http.Server` (env var `GORED_HTTP_NODE_PORT`, default 1880), deliberately
+separate from `cmd/go-red`'s own `-port` editor/API server - node packages self-register
+via `init()` with no access to that server's `mux`.
+
+`httprequest` is the first node in this codebase with a dedicated "Security" section in
+its package doc (mirroring `execnode`'s), since it lets a flow issue arbitrary outgoing
+requests, potentially to an attacker-influenced URL (SSRF) - deliberately *not*
+mitigated here (parity with Node-RED's own http request node; see the package doc for
+why an application-level block-list is the wrong tool), but timeouts/response-size
+caps/redirect caps *are* enforced by default.
+
+Eight directories are named `<type>node` instead of their registered Node-RED type ID
+because that ID isn't a valid Go identifier or would collide with an import of the same
+name: `switchnode`/`rangenode` (`switch`/`range` are Go keywords), and
+`execnode`/`jsonnode`/`yamlnode`/`csvnode`/`xmlnode`/`htmlnode` (each imports a
+stdlib/third-party package - `os/exec`, `encoding/json`, `yaml.v3`, `encoding/csv`,
+`encoding/xml`, `golang.org/x/net/html` respectively - whose own package identifier
+matches the node's natural name). The registered `NodeMetadata.Type`/factory key is
+still the real Node-RED ID (`"switch"`, `"range"`, `"exec"`, `"json"`, `"yaml"`,
+`"csv"`, `"xml"`, `"html"`); only the Go package/directory name differs.
+
+**Category strings (not directories - every node type lives directly under `internal/nodes/`, one directory per type, regardless of category):**
+- `flow-control` - `junction`/`comment`/`catch`/`status`/`complete`/`link in`/`link out`/`split`/`join`/`sort`/`batch`
+- `network` - `mqtt in`/`mqtt out`/`http in`/`http response`/`http request`/`websocket in`/`websocket out`/`tcp in`/`tcp out`/`tcp request`/`udp in`/`udp out` (Phase 6)
+- `storage` - `file`/`file in`/`watch` (Phase 5)
+- `config` - `tls-config`/`http proxy`/`mqtt-broker`/`websocket-listener`/`websocket-client` (Phase 6) - no ports, referenced by ID, see the config-node section above
+- `function` - `function`/`change`/`range`/`rbe`/`template`/`delay`/`trigger`/`exec`/`json`/`yaml`/`csv`/`xml`/`html`
 
 ---
 
@@ -344,9 +522,11 @@ func (n *StatefulNode) Execute(ctx context.Context, input map[string]interface{}
 | `input` | Message sources | inject, websocket-in, http-in, mqtt-in |
 | `output` | Message sinks | debug, file-out, http-out, mqtt-out |
 | `function` | Transformation | function, template, json |
+| `flow-control` | Structural/control, no normal message transform | junction, comment, catch, status, complete, link in, link out |
 | `logic` | Control flow | switch, condition, router, join |
-| `network` | Network ops | http-request, tcp, websocket |
-| `storage` | Persistence | redis, mongodb, postgres, file |
+| `network` | Network ops | mqtt in/out, http in/response/request, websocket in/out, tcp in/out/request, udp in/out |
+| `storage` | Persistence | file, file in, watch |
+| `config` | Reusable config/connection, no ports | tls-config, http proxy, mqtt-broker, websocket-listener, websocket-client |
 | `utility` | Helpers | delay, rate-limit, batch, counter |
 | `sensor` | Data acquisition | serial, gpio, ble |
 | `dashboard` | UI elements | gauge, chart, text, button |
