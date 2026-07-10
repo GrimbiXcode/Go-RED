@@ -259,6 +259,28 @@ func (c *Client) readPump() {
     }
 }
 
+// writeMessage marshals a single WebSocketMessage and writes it as its own
+// WebSocket frame.
+func (c *Client) writeMessage(message WebSocketMessage) error {
+    msgJSON, err := json.Marshal(message)
+    if err != nil {
+        log.Printf("Error marshaling WebSocket message: %v", err)
+        return nil
+    }
+
+    w, err := c.conn.NextWriter(websocket.TextMessage)
+    if err != nil {
+        return err
+    }
+
+    if _, err := w.Write(msgJSON); err != nil {
+        w.Close()
+        return err
+    }
+
+    return w.Close()
+}
+
 // writePump pumps messages from the hub to the WebSocket connection
 func (c *Client) writePump() {
     ticker := time.NewTicker(30 * time.Second)
@@ -277,35 +299,22 @@ func (c *Client) writePump() {
                 return
             }
 
-            // Marshal the message directly - json.RawMessage is handled correctly by json.Marshal
-            msgJSON, err := json.Marshal(message)
-            if err != nil {
-                log.Printf("Error marshaling WebSocket message: %v", err)
+            // Each queued message is sent as its own WebSocket frame - the
+            // client parses every frame with a single JSON.parse(event.data),
+            // so concatenating multiple JSON documents into one frame (as a
+            // previous version did, separated by "\n") produced invalid JSON
+            // on the client and silently dropped every message after the
+            // first whenever more than one update queued up between writes.
+            if err := c.writeMessage(message); err != nil {
                 return
             }
 
-            w, err := c.conn.NextWriter(websocket.TextMessage)
-            if err != nil {
-                return
-            }
-
-            w.Write(msgJSON)
-
-            // Add queued messages to the current WebSocket message
             n := len(c.send)
             for i := 0; i < n; i++ {
-                w.Write([]byte("\n"))
                 nextMessage := <-c.send
-                nextMsgJSON, err := json.Marshal(nextMessage)
-                if err != nil {
-                    log.Printf("Error marshaling WebSocket message: %v", err)
-                    continue
+                if err := c.writeMessage(nextMessage); err != nil {
+                    return
                 }
-                w.Write(nextMsgJSON)
-            }
-
-            if err := w.Close(); err != nil {
-                return
             }
 
         case <-ticker.C:

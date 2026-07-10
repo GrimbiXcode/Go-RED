@@ -34,6 +34,7 @@ export function FlowEditor() {
     deployCurrentFlow,
     undeployCurrentFlow,
     deleteCurrentFlow,
+    positionSavedAt,
   } = useFlowContext();
 
   const { showToast } = useToast();
@@ -46,49 +47,72 @@ export function FlowEditor() {
   const [activeSidebarTab, setActiveSidebarTab] = useState<string | null>('info');
   const [showExportModal, setShowExportModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
-  // Local-only "has this flow changed since the last deploy" flag driving
+  // Local-only "has this flow changed since the last deploy" flags driving
   // the Header's Deploy button (see docs/FRONTEND_NODE_RED_REDESIGN.md
   // Phase 1) — deliberately not persisted, no backend field for this.
-  const [isDirty, setIsDirty] = useState(false);
+  // Keyed per flow ID (not a single flag) so switching to another flow and
+  // back doesn't lose track of pending edits on the flow you left — the
+  // Deploy button must still reflect that flow's real dirty state, not
+  // "whatever flow happens to be selected right now".
+  const [dirtyFlowIds, setDirtyFlowIds] = useState<Set<string>>(new Set());
+  const markDirty = useCallback((flowId: string) => {
+    setDirtyFlowIds((prev) => (prev.has(flowId) ? prev : new Set(prev).add(flowId)));
+  }, []);
+  const clearDirty = useCallback((flowId: string) => {
+    setDirtyFlowIds((prev) => {
+      if (!prev.has(flowId)) return prev;
+      const next = new Set(prev);
+      next.delete(flowId);
+      return next;
+    });
+  }, []);
+  const isDirty = !!selectedFlow && dirtyFlowIds.has(selectedFlow.id);
+  // Briefly shows "Position gespeichert" in the status bar once a
+  // drag-and-drop move is confirmed persisted, then fades it back out.
+  const [showPositionSaved, setShowPositionSaved] = useState(false);
 
   useEffect(() => {
-    setIsDirty(false);
-  }, [selectedFlow?.id]);
+    if (!positionSavedAt) return;
+    setShowPositionSaved(true);
+    const timeout = setTimeout(() => setShowPositionSaved(false), 1500);
+    return () => clearTimeout(timeout);
+  }, [positionSavedAt]);
 
   const handleCreateNewFlow = useCallback(async () => {
-    await createNewFlow('New Flow', 'A new flow');
-  }, [createNewFlow]);
+    const newFlow = await createNewFlow('New Flow', 'A new flow');
+    selectFlow(newFlow.id);
+  }, [createNewFlow, selectFlow]);
 
   const handleAddNode = useCallback(
     (nodeType: string, position: { x: number; y: number }) => {
       addNode(nodeType, position);
-      setIsDirty(true);
+      if (selectedFlow) markDirty(selectedFlow.id);
     },
-    [addNode]
+    [addNode, selectedFlow, markDirty]
   );
 
   const handleRemoveNode = useCallback(
     (nodeId: string) => {
       removeNode(nodeId);
-      setIsDirty(true);
+      if (selectedFlow) markDirty(selectedFlow.id);
     },
-    [removeNode]
+    [removeNode, selectedFlow, markDirty]
   );
 
   const handleAddConnection = useCallback(
     (connection: Omit<NodeConnection, 'id'>) => {
       addConnection(connection);
-      setIsDirty(true);
+      if (selectedFlow) markDirty(selectedFlow.id);
     },
-    [addConnection]
+    [addConnection, selectedFlow, markDirty]
   );
 
   const handleRemoveConnection = useCallback(
     (connectionId: string) => {
       removeConnection(connectionId);
-      setIsDirty(true);
+      if (selectedFlow) markDirty(selectedFlow.id);
     },
-    [removeConnection]
+    [removeConnection, selectedFlow, markDirty]
   );
 
   const handleDeleteSelectedFlow = useCallback(async () => {
@@ -96,11 +120,12 @@ export function FlowEditor() {
     if (!window.confirm(`Flow "${selectedFlow.name}" wirklich löschen?`)) return;
     try {
       await deleteCurrentFlow();
+      clearDirty(selectedFlow.id);
       showToast('success', 'Flow gelöscht');
     } catch (err) {
       showToast('error', `Flow konnte nicht gelöscht werden: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [selectedFlow, deleteCurrentFlow, showToast]);
+  }, [selectedFlow, deleteCurrentFlow, clearDirty, showToast]);
 
   const handleSelectFlow = useCallback((flowId: string) => {
     selectFlow(flowId);
@@ -153,10 +178,17 @@ export function FlowEditor() {
     setShowConfigModal(false);
   }, []);
 
+  const handleUpdateNode = useCallback(
+    (nodeId: string, updates: Partial<FlowNode>) => {
+      updateNode(nodeId, updates);
+      if (selectedFlow) markDirty(selectedFlow.id);
+    },
+    [updateNode, selectedFlow, markDirty]
+  );
+
   const handleSaveNodeConfig = useCallback((config: Record<string, any>) => {
     if (selectedNode && selectedNode.id && selectedNode.id.trim() !== '') {
-      updateNode(selectedNode.id, { config });
-      setIsDirty(true);
+      handleUpdateNode(selectedNode.id, { config });
       setShowConfigModal(false);
       setSelectedNode(null);
     } else {
@@ -164,7 +196,7 @@ export function FlowEditor() {
       setShowConfigModal(false);
       setSelectedNode(null);
     }
-  }, [selectedNode, updateNode]);
+  }, [selectedNode, handleUpdateNode]);
 
   const handleDeleteConfiguredNode = useCallback(() => {
     if (!selectedNode) return;
@@ -173,17 +205,17 @@ export function FlowEditor() {
     setSelectedNode(null);
   }, [selectedNode, handleRemoveNode]);
 
-  const handleSave = useCallback(async () => {
-    if (!selectedFlow) {
-      showToast('error', 'No flow selected to save');
-      return;
-    }
+  // There is no separate "Save" action anymore - Deploy both persists the
+  // current canvas state and starts it, matching Node-RED's own model
+  // where Deploy is the single "commit" step.
+  const handleDeploy = useCallback(async () => {
+    if (!selectedFlow) return;
 
     try {
       // Sanitize nodes and connections before saving
       const sanitizedNodes: Record<string, FlowNode> = {};
       Object.entries(selectedFlow.nodes || {}).forEach(([id, node]) => {
-        if (node && 
+        if (node &&
             id && typeof id === 'string' && id.trim() !== '' &&
             node.id && typeof node.id === 'string' && node.id.trim() !== '' &&
             node.type && typeof node.type === 'string' && node.type.trim() !== '') {
@@ -195,17 +227,17 @@ export function FlowEditor() {
             config: node.config || {},
           };
         } else {
-          console.warn('Skipping invalid node during save:', { id, node });
+          console.warn('Skipping invalid node during deploy:', { id, node });
         }
       });
-      
+
       const sanitizedConnections = (selectedFlow.connections || []).filter(conn => {
         const isValid = conn &&
           conn.id && typeof conn.id === 'string' && conn.id.trim() !== '' &&
           conn.sourceNode && typeof conn.sourceNode === 'string' && conn.sourceNode.trim() !== '' &&
           conn.targetNode && typeof conn.targetNode === 'string' && conn.targetNode.trim() !== '';
         if (!isValid) {
-          console.warn('Skipping invalid connection during save:', { conn });
+          console.warn('Skipping invalid connection during deploy:', { conn });
         }
         return isValid;
       }).map(conn => ({
@@ -222,20 +254,14 @@ export function FlowEditor() {
         connections: sanitizedConnections,
         config: selectedFlow.config,
       });
-      showToast('success', 'Flow saved successfully!');
-      // Reset selected node to prevent stale data in sidebar
-      setSelectedNode(null);
-    } catch (error) {
-      showToast('error', `Failed to save flow: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [selectedFlow, updateCurrentFlow, showToast]);
-
-  const handleDeploy = useCallback(async () => {
-    if (selectedFlow) {
       await deployCurrentFlow();
-      setIsDirty(false);
+      clearDirty(selectedFlow.id);
+      setSelectedNode(null);
+      showToast('success', 'Flow gespeichert und deployt');
+    } catch (error) {
+      showToast('error', `Deploy fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [selectedFlow, deployCurrentFlow]);
+  }, [selectedFlow, updateCurrentFlow, deployCurrentFlow, clearDirty, showToast]);
 
   const handleUndeploy = useCallback(async () => {
     if (selectedFlow) {
@@ -243,11 +269,12 @@ export function FlowEditor() {
     }
   }, [selectedFlow, undeployCurrentFlow]);
 
-  // 'deployed' isn't in the generated FlowStatus union (see
-  // types/generated.ts) but deployCurrentFlow sets it anyway — checking
-  // both here so Undeploy actually becomes clickable after a deploy.
-  const canDeploy = !!selectedFlow && (['draft', 'error'].includes(selectedFlow.status) || isDirty);
-  const canUndeploy = !!selectedFlow && ['running', 'deployed'].includes(selectedFlow.status);
+  // Deployable whenever the flow isn't already running unchanged: a draft,
+  // a stopped flow, an errored one, or a running one with pending edits
+  // (isDirty) can always be (re)deployed. Only a running flow with nothing
+  // changed has nothing to do.
+  const canDeploy = !!selectedFlow && (selectedFlow.status !== 'running' || isDirty);
+  const canUndeploy = !!selectedFlow && selectedFlow.status === 'running';
 
   const handleExportFlow = useCallback(() => {
     if (selectedFlow) {
@@ -299,7 +326,6 @@ export function FlowEditor() {
         canUndeploy={canUndeploy}
         onDeploy={handleDeploy}
         onUndeploy={handleUndeploy}
-        onSave={handleSave}
         onExport={handleExportFlow}
         onImport={handleImportFlow}
       />
@@ -330,6 +356,7 @@ export function FlowEditor() {
                 onNodeDeselect={handleNodeDeselect}
                 onAddNode={handleAddNode}
                 onRemoveNode={handleRemoveNode}
+                onUpdateNode={handleUpdateNode}
                 onAddConnection={handleAddConnection}
                 onRemoveConnection={handleRemoveConnection}
               />
@@ -363,7 +390,7 @@ export function FlowEditor() {
         />
       </div>
 
-      <StatusBar flow={selectedFlow} />
+      <StatusBar flow={selectedFlow} showPositionSaved={showPositionSaved} />
 
       {showConfigModal && selectedNode && (
         <NodeConfigModal

@@ -88,11 +88,6 @@ type FlowEngine struct {
     
     // stateManager is used for persisting flows.
     stateManager StateManager
-    
-    // messageIDCounter is used to generate unique message IDs.
-    messageIDCounter uint64
-    // messageIDMu protects messageIDCounter.
-    messageIDMu sync.Mutex
 
     // messageLog stores recent messages for debugging and monitoring.
     // This is thread-safe and has a maximum size to prevent memory issues.
@@ -146,7 +141,6 @@ func NewFlowEngine(config EngineConfig, nodeRegistry *registry.NodeRegistry) *Fl
         ctx:         ctx,
         cancel:      cancel,
         config:      config,
-        messageIDCounter: 0,
         messageLog:   make([]Message, 0),
         maxMessageLog: 1000, // Store last 1000 messages
         globalStore:  registry.NewContextStore(),
@@ -437,11 +431,13 @@ func (e *FlowEngine) findConnectedNodes(flow *Flow, nodeID string, sourcePort st
 
 // submitMessage submits a message to the message channel.
 func (e *FlowEngine) submitMessage(msg Message) {
-    e.messageIDMu.Lock()
-    e.messageIDCounter++
-    msg.ID = "msg-" + string(rune(e.messageIDCounter))
-    e.messageIDMu.Unlock()
-    
+    // Every other message ID in this package is a UUID (see message.go);
+    // string(rune(counter)) here produced a single, usually unprintable
+    // Unicode code point instead of a decimal number (e.g. counter=1 gave
+    // U+0001), so downstream messages showed as a blank "msg-" with no way
+    // to tell them apart in the debug log.
+    msg.ID = "msg-" + uuid.New().String()
+
     select {
     case e.msgChan <- msg:
         // Message submitted successfully
@@ -471,8 +467,13 @@ func (e *FlowEngine) Deploy(flow *Flow) error {
     }
     log.Printf("[ENGINE] Flow %s validation passed", flow.ID)
     
-    // Check if flow is already deployed
-    if _, exists := e.flows[flow.ID]; exists {
+    // Check if flow is already deployed. CreateFlow registers every flow
+    // in e.flows immediately (even a never-deployed draft) so GetFlow/
+    // GetAllFlows can return drafts too - so mere presence in the map
+    // doesn't mean "running". Only a genuinely active entry blocks a
+    // redeploy; a draft placeholder or a stopped (demoted) entry is fine
+    // to overwrite.
+    if existing, exists := e.flows[flow.ID]; exists && existing.Status == FlowStatusActive {
         log.Printf("[ENGINE] Flow %s is already deployed", flow.ID)
         return errors.New("flow " + flow.ID + " is already deployed")
     }
@@ -524,6 +525,16 @@ func (e *FlowEngine) Deploy(flow *Flow) error {
 
     // Add to active flows
     e.flows[flow.ID] = activeFlow
+
+    // Persist the Active status so a later restart (LoadAllFlows) can tell
+    // this flow was genuinely running, as opposed to a draft that merely
+    // has nodes. Without this, the on-disk copy never reflected runtime
+    // state at all, since Save/CreateFlow only ever wrote FlowStatusInactive.
+    if e.stateManager != nil {
+        if err := e.stateManager.SaveFlow(flow); err != nil {
+            log.Printf("[ENGINE] Failed to persist deployed status for flow %s: %v", flow.ID, err)
+        }
+    }
 
     log.Printf("[ENGINE] Flow %s deployed successfully with %d initialized nodes", flow.ID, len(activeFlow.nodeExecutors))
     return nil
@@ -669,19 +680,52 @@ func (e *FlowEngine) Undeploy(flowID string) error {
     if !exists {
         return errors.New("flow " + flowID + " not found")
     }
-    
-    // Cancel the flow context
-    activeFlow.cancel()
 
-    // Wait for EmittingNode.Start goroutines to observe cancellation and
-    // return before releasing node resources under them.
-    activeFlow.wg.Wait()
+    // A flow that was created but never deployed (e.g. a fresh draft) has
+    // no cancel func yet - Deploy() is the only place that sets it. Skip
+    // the running-flow teardown in that case instead of panicking on a
+    // nil CancelFunc.
+    if activeFlow.cancel != nil {
+        // Cancel the flow context
+        activeFlow.cancel()
 
-    // Release resources held by nodes implementing registry.Closeable.
-    closeNodeExecutors(activeFlow.nodeExecutors)
+        // Wait for EmittingNode.Start goroutines to observe cancellation and
+        // return before releasing node resources under them.
+        activeFlow.wg.Wait()
 
-    // Remove from active flows
-    delete(e.flows, flowID)
+        // Release resources held by nodes implementing registry.Closeable.
+        closeNodeExecutors(activeFlow.nodeExecutors)
+    }
+
+    // Demote back to an inactive placeholder rather than deleting the
+    // entry outright. GetFlow/GetAllFlows read from this map, so removing
+    // it entirely here would make the flow (and its tab) vanish from the
+    // UI the moment it's stopped, instead of just showing it as no longer
+    // running; it would also make a subsequent Deploy fail to find any
+    // persisted definition to redeploy in memory. DeleteFlow is the one
+    // that actually removes the entry.
+    //
+    // cancel/ctx/msgChan are deliberately left untouched rather than
+    // reset: activeFlow.wg only tracks emitting-node goroutines, not
+    // processFlowMessages itself, so that goroutine's own `defer
+    // activeFlow.cancel()` and its `<-activeFlow.msgChan` read can still
+    // be in flight on this exact struct after wg.Wait() returns here.
+    // Mutating either field raced with it (a nil-CancelFunc panic for
+    // cancel, a data race for msgChan). Deploy() always replaces the
+    // whole *ActiveFlow struct on redeploy, so these stale-but-valid
+    // leftovers are never touched again once that happens.
+    activeFlow.Status = FlowStatusInactive
+    activeFlow.Flow.Status = FlowStatusInactive
+    activeFlow.nodeExecutors = nil
+
+    // Persist the Inactive status - otherwise a restart's LoadAllFlows
+    // would have no way to know this flow was deliberately stopped and
+    // would deploy it again regardless of the user's Stop action.
+    if e.stateManager != nil {
+        if err := e.stateManager.SaveFlow(activeFlow.Flow); err != nil {
+            log.Printf("[ENGINE] Failed to persist undeployed status for flow %s: %v", flowID, err)
+        }
+    }
 
     log.Printf("Flow %s undeployed", flowID)
     return nil
@@ -749,7 +793,16 @@ func (e *FlowEngine) InjectMessage(flowID, nodeID string, payload map[string]int
     if !exists {
         return errors.New("flow " + flowID + " not found")
     }
-    
+
+    // A draft or stopped flow has no message-processing goroutine reading
+    // its msgChan - without this check the message would just sit in the
+    // channel buffer forever with no error and no output, which is
+    // indistinguishable from a working-but-silent flow from the caller's
+    // point of view.
+    if activeFlow.Status != FlowStatusActive {
+        return errors.New("flow " + flowID + " is not deployed")
+    }
+
     // Check if node exists
     if _, exists := activeFlow.Flow.Nodes[nodeID]; !exists {
         return errors.New("node " + nodeID + " not found in flow " + flowID)
@@ -797,18 +850,23 @@ func (e *FlowEngine) CreateFlow(id, name string) (*Flow, error) {
     return flow, nil
 }
 
-// DeleteFlow deletes a flow.
+// DeleteFlow permanently removes a flow: stops it first if it's running
+// (ignoring "not found" - a draft that was never deployed has nothing to
+// stop), drops its in-memory registration, and deletes its persisted
+// state. Unlike Undeploy alone, this actually removes the e.flows entry.
 func (e *FlowEngine) DeleteFlow(flowID string) error {
-    // First undeploy if active
     e.Undeploy(flowID)
-    
-    // If state manager is set, delete the flow
+
+    e.mu.Lock()
+    delete(e.flows, flowID)
+    e.mu.Unlock()
+
     if e.stateManager != nil {
         if err := e.stateManager.DeleteFlow(flowID); err != nil {
             return errors.New("failed to delete flow: " + err.Error())
         }
     }
-    
+
     return nil
 }
 
@@ -843,7 +901,28 @@ func (e *FlowEngine) LoadAllFlows() error {
     log.Printf("[ENGINE] Found %d flows to load", len(flows))
     
     for _, flow := range flows {
-        log.Printf("[ENGINE] Loading flow %s with %d nodes and %d connections", flow.ID, len(flow.Nodes), len(flow.Connections))
+        log.Printf("[ENGINE] Loading flow %s with %d nodes and %d connections (status: %s)", flow.ID, len(flow.Nodes), len(flow.Connections), flow.Status)
+
+        // Only redeploy flows that were genuinely running (persisted as
+        // Active) when the server last shut down. Previously every
+        // persisted flow with at least one node was deployed unconditionally
+        // regardless of its saved status, so a draft the user had never
+        // deployed - or one they'd explicitly stopped - would silently
+        // start running again on every restart.
+        if flow.Status != FlowStatusActive {
+            e.mu.Lock()
+            e.flows[flow.ID] = &ActiveFlow{
+                Flow:         flow,
+                Status:       FlowStatusInactive,
+                msgChan:      make(chan Message, e.config.MessageBufferSize),
+                ContextStore: registry.NewContextStore(),
+                EventBus:     registry.NewEventBus(),
+            }
+            e.mu.Unlock()
+            log.Printf("[ENGINE] Flow %s registered as draft (not redeployed)", flow.ID)
+            continue
+        }
+
         // Try to deploy the flow, but if it fails (e.g., validation), log and skip
         if err := e.Deploy(flow); err != nil {
             log.Printf("[ENGINE] Failed to deploy flow %s: %v", flow.ID, err)

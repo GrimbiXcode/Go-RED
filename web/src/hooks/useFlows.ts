@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Flow, FlowNode, NodeConnection, FlowStatus, FlowConfig } from '../types/flow';
 import type { NodeMetadata } from '../types/node';
 import { useWebSocket } from './useWebSocket';
@@ -25,6 +25,11 @@ export interface FlowState {
   nodeTypes: NodeMetadata[];
   nodeTypesLoading: boolean;
   nodeTypesError: Error | null;
+  // Set once a position update sent via updateNode() is confirmed
+  // persisted by the backend's node:update broadcast - lets the UI show a
+  // brief "position saved" indicator instead of leaving drag-and-drop
+  // saves completely silent.
+  positionSavedAt: { nodeId: string; at: number } | null;
 }
 
 export interface FlowActions {
@@ -59,7 +64,11 @@ export function useFlows(): UseFlowsReturn {
     nodeTypes: [],
     nodeTypesLoading: true,
     nodeTypesError: null,
+    positionSavedAt: null,
   });
+  // Node IDs whose most recent update was position-only, awaiting the
+  // node:update broadcast that confirms the backend actually persisted it.
+  const pendingPositionSaves = useRef<Set<string>>(new Set());
   const loadFlows = useCallback(async () => {
     try {
       setState((prev) => ({ ...prev, loading: true, error: null }));
@@ -129,17 +138,22 @@ export function useFlows(): UseFlowsReturn {
       throw new Error('No flow selected');
     }
     console.log('[FRONTEND] deployCurrentFlow - Sending to backend:', { flowId: state.selectedFlowId, force });
-    await deployFlow(state.selectedFlowId, force);
-    console.log('[FRONTEND] deployCurrentFlow - Deploy successful');
+    const response = await deployFlow(state.selectedFlowId, force);
+    console.log('[FRONTEND] deployCurrentFlow - Deploy successful:', response);
+    // Trust the backend's reported status rather than assuming success
+    // means "running" - deploy previously always looked successful in the
+    // UI even when it silently no-op'd server-side, which is exactly what
+    // made that bug invisible.
+    const status = response.status as FlowStatus;
     setState((prev) => ({
       ...prev,
       selectedFlow: prev.selectedFlow ? {
         ...prev.selectedFlow,
-        status: 'deployed' as FlowStatus,
+        status,
       } : null,
       flows: prev.flows.map((flow) =>
         flow.id === state.selectedFlowId
-          ? { ...flow, status: 'deployed' as FlowStatus }
+          ? { ...flow, status }
           : flow
       ),
     }));
@@ -151,17 +165,18 @@ export function useFlows(): UseFlowsReturn {
       throw new Error('No flow selected');
     }
     console.log('[FRONTEND] undeployCurrentFlow - Sending to backend:', { flowId: state.selectedFlowId });
-    await undeployFlow(state.selectedFlowId);
-    console.log('[FRONTEND] undeployCurrentFlow - Undeploy successful');
+    const response = await undeployFlow(state.selectedFlowId);
+    console.log('[FRONTEND] undeployCurrentFlow - Undeploy successful:', response);
+    const status = response.status as FlowStatus;
     setState((prev) => ({
       ...prev,
       selectedFlow: prev.selectedFlow ? {
         ...prev.selectedFlow,
-        status: 'stopped' as FlowStatus,
+        status,
       } : null,
       flows: prev.flows.map((flow) =>
         flow.id === state.selectedFlowId
-          ? { ...flow, status: 'stopped' as FlowStatus }
+          ? { ...flow, status }
           : flow
       ),
     }));
@@ -258,6 +273,10 @@ export function useFlows(): UseFlowsReturn {
   const updateNode = useCallback((nodeId: string, updates: Partial<FlowNode>) => {
     if (!state.selectedFlow || !state.selectedFlow.nodes[nodeId]) {
       throw new Error('Node not found');
+    }
+    const isPositionOnly = Object.keys(updates).length === 1 && 'position' in updates;
+    if (isPositionOnly) {
+      pendingPositionSaves.current.add(nodeId);
     }
     setState((prev) => ({
       ...prev,
@@ -396,6 +415,20 @@ export function useFlows(): UseFlowsReturn {
         setState((prev) => ({ ...prev, flows: data.flows }));
       }
     });
+    // Confirms a node:update the client itself sent was actually persisted
+    // (the backend broadcasts this to every client, including the sender,
+    // after SaveFlow succeeds). Only used here to surface a "position
+    // saved" indicator for drag-and-drop moves - other node:update causes
+    // (config edits) already have their own save feedback.
+    const nodePersistedSub = ws.subscribe('node:update', (data) => {
+      if (data.nodeId && pendingPositionSaves.current.has(data.nodeId)) {
+        pendingPositionSaves.current.delete(data.nodeId);
+        setState((prev) => ({
+          ...prev,
+          positionSavedAt: { nodeId: data.nodeId, at: Date.now() },
+        }));
+      }
+    });
     const errorSub = ws.subscribe('error', (data) => {
       console.error('WebSocket error:', data);
       setState((prev) => ({ ...prev, error: new Error(data.error || 'Unknown error') }));
@@ -404,6 +437,7 @@ export function useFlows(): UseFlowsReturn {
       flowUpdateSub();
       nodeUpdateSub();
       flowListSub();
+      nodePersistedSub();
       errorSub();
     };
   }, [ws]);

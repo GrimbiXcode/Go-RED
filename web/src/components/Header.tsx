@@ -7,7 +7,6 @@ export interface HeaderProps {
   canUndeploy: boolean;
   onDeploy: () => void;
   onUndeploy: () => void;
-  onSave: () => void;
   onExport: () => void;
   onImport: () => void;
 }
@@ -39,7 +38,6 @@ export function Header({
   canUndeploy,
   onDeploy,
   onUndeploy,
-  onSave,
   onExport,
   onImport,
 }: HeaderProps) {
@@ -96,11 +94,11 @@ export function Header({
           title={
             !hasSelectedFlow
               ? 'Kein Flow ausgewählt'
-              : isDirty
-                ? 'Ungespeicherte Änderungen deployen'
-                : canDeploy
-                  ? 'Deploy'
-                  : 'Keine Änderungen zum Deployen'
+              : !canDeploy
+                ? 'Bereits deployt'
+                : isDirty
+                  ? 'Änderungen speichern und deployen'
+                  : 'Speichern und deployen'
           }
         >
           {isDirty ? '● Deploy' : 'Deploy'}
@@ -118,9 +116,6 @@ export function Header({
 
           {menuOpen && (
             <div className="absolute right-0 mt-1 w-48 bg-white text-gray-800 rounded shadow-lg border border-gray-200 py-1 z-20">
-              <MenuItem onClick={runAndClose(onSave)} disabled={!hasSelectedFlow}>
-                Speichern
-              </MenuItem>
               <MenuItem onClick={runAndClose(onExport)} disabled={!hasSelectedFlow}>
                 Exportieren…
               </MenuItem>
