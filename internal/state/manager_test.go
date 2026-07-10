@@ -22,8 +22,24 @@ func TestNewFileStateManager(t *testing.T) {
         assert.NotNil(t, manager)
     })
 
-    t.Run("should fail to create state manager with non-existent directory", func(t *testing.T) {
-        _, err := NewFileStateManager("/non/existent/directory")
+    t.Run("should fail when the base path is blocked by a file", func(t *testing.T) {
+        // NewFileStateManager auto-creates its base directory (and the
+        // "flows" subdirectory) via os.MkdirAll, so a merely-missing path
+        // is not itself an error case - the default "data" dir
+        // (cmd/go-red/main.go's -data-dir flag) relies on exactly that
+        // auto-create behavior on first run. What must fail is a path
+        // that can never become a directory: here, a regular file sits
+        // where a path component needs to be a directory. This fails
+        // deterministically regardless of the test process's
+        // permissions (even root can't mkdir through a file).
+        tmpDir, err := os.MkdirTemp("", "go-red-test")
+        require.NoError(t, err)
+        defer os.RemoveAll(tmpDir)
+
+        blockingFile := filepath.Join(tmpDir, "blocker")
+        require.NoError(t, os.WriteFile(blockingFile, []byte("not a directory"), 0644))
+
+        _, err = NewFileStateManager(filepath.Join(blockingFile, "subdir"))
         assert.Error(t, err)
     })
 }

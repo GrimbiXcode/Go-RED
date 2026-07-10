@@ -31,9 +31,17 @@ type Message struct {
     // Path contains the list of node IDs this message has passed through.
     // This is useful for debugging and tracing message flow.
     Path []string `json:"path"`
-    
+
     // Timestamp indicates when the message was created.
     Timestamp time.Time `json:"timestamp"`
+
+    // OutputPort is the ID of the output port the message last left through
+    // (set by the engine right before routing; empty for newly-injected
+    // messages). findConnectedNodes uses it to restrict routing to
+    // connections whose SourcePort matches, enabling MultiOutputExecutor
+    // nodes. Like Context, this is transient engine-routing state, not part
+    // of the message's wire representation (internal/dto.Message).
+    OutputPort string `json:"-"`
 }
 
 // NewMessage creates a new Message with the given payload and flow ID.
@@ -84,13 +92,14 @@ func (m *Message) GetMetadata(key string) (string, bool) {
 // Clone creates a deep copy of the message.
 func (m *Message) Clone() Message {
     return Message{
-        ID:        uuid.New().String(),
-        Payload:   cloneMap(m.Payload),
-        Metadata:  cloneStringMap(m.Metadata),
-        Context:   m.Context,
-        FlowID:    m.FlowID,
-        Path:      append([]string(nil), m.Path...),
-        Timestamp: m.Timestamp,
+        ID:         uuid.New().String(),
+        Payload:    cloneMap(m.Payload),
+        Metadata:   cloneStringMap(m.Metadata),
+        Context:    m.Context,
+        FlowID:     m.FlowID,
+        Path:       append([]string(nil), m.Path...),
+        Timestamp:  m.Timestamp,
+        OutputPort: m.OutputPort,
     }
 }
 

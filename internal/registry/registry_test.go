@@ -1,7 +1,9 @@
 package registry
 
 import (
+    "context"
     "testing"
+    "time"
 
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
@@ -289,6 +291,124 @@ func (m *MockNodeExecutor) GetConfig() map[string]interface{} {
 
 func (m *MockNodeExecutor) SetConfig(config map[string]interface{}) error {
     return nil
+}
+
+// mockMultiOutputExecutor is a mock implementation of MultiOutputExecutor
+// for testing, embedding MockNodeExecutor for the base NodeExecutor methods.
+type mockMultiOutputExecutor struct {
+    MockNodeExecutor
+}
+
+func (m *mockMultiOutputExecutor) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[string]map[string]interface{}, error) {
+    return map[string]map[string]interface{}{"out1": input}, nil
+}
+
+// mockLifecycleExecutor is a mock implementation of Closeable and
+// EmittingNode for testing, embedding MockNodeExecutor for the base
+// NodeExecutor methods.
+type mockLifecycleExecutor struct {
+    MockNodeExecutor
+    closed bool
+}
+
+func (m *mockLifecycleExecutor) Close() error {
+    m.closed = true
+    return nil
+}
+
+func (m *mockLifecycleExecutor) Start(ctx context.Context, emit func(map[string]interface{})) error {
+    <-ctx.Done()
+    return nil
+}
+
+// mockEagerlyReadyExecutor is a mock EmittingNode that also implements
+// EagerlyReadyNode, calling SignalReady before blocking on ctx - the
+// pattern catch/status/complete use.
+type mockEagerlyReadyExecutor struct {
+    MockNodeExecutor
+}
+
+func (m *mockEagerlyReadyExecutor) EagerlyReady() {}
+
+func (m *mockEagerlyReadyExecutor) Start(ctx context.Context, emit func(map[string]interface{})) error {
+    SignalReady(ctx)
+    <-ctx.Done()
+    return nil
+}
+
+func TestOptionalNodeInterfaces(t *testing.T) {
+    t.Run("MultiOutputExecutor is satisfied by a node with ExecuteMulti", func(t *testing.T) {
+        var exec NodeExecutor = &mockMultiOutputExecutor{}
+        multi, ok := exec.(MultiOutputExecutor)
+        require.True(t, ok)
+
+        outputs, err := multi.ExecuteMulti(context.Background(), map[string]interface{}{"a": 1})
+        require.NoError(t, err)
+        assert.Equal(t, map[string]interface{}{"a": 1}, outputs["out1"])
+    })
+
+    t.Run("Closeable is satisfied by a node with Close", func(t *testing.T) {
+        node := &mockLifecycleExecutor{}
+        var exec NodeExecutor = node
+        closeable, ok := exec.(Closeable)
+        require.True(t, ok)
+
+        require.NoError(t, closeable.Close())
+        assert.True(t, node.closed)
+    })
+
+    t.Run("EmittingNode is satisfied by a node with Start", func(t *testing.T) {
+        var exec NodeExecutor = &mockLifecycleExecutor{}
+        emitter, ok := exec.(EmittingNode)
+        require.True(t, ok)
+
+        ctx, cancel := context.WithCancel(context.Background())
+        done := make(chan error, 1)
+        go func() { done <- emitter.Start(ctx, func(map[string]interface{}) {}) }()
+        cancel()
+        require.NoError(t, <-done)
+    })
+
+    t.Run("EagerlyReadyNode is satisfied by an EmittingNode with EagerlyReady", func(t *testing.T) {
+        var exec NodeExecutor = &mockEagerlyReadyExecutor{}
+        eager, ok := exec.(EagerlyReadyNode)
+        require.True(t, ok)
+
+        ctx, cancel := context.WithCancel(context.Background())
+        defer cancel()
+
+        readyCh := make(chan struct{})
+        readyCtx := WithReady(ctx, func() { close(readyCh) })
+
+        done := make(chan error, 1)
+        go func() { done <- eager.Start(readyCtx, func(map[string]interface{}) {}) }()
+
+        select {
+        case <-readyCh:
+        case <-time.After(time.Second):
+            t.Fatal("SignalReady was not called within the timeout")
+        }
+        cancel()
+        require.NoError(t, <-done)
+    })
+
+    t.Run("plain EmittingNode does not satisfy EagerlyReadyNode", func(t *testing.T) {
+        var exec NodeExecutor = &mockLifecycleExecutor{}
+        _, ok := exec.(EagerlyReadyNode)
+        assert.False(t, ok)
+    })
+
+    t.Run("plain NodeExecutor does not satisfy the optional interfaces", func(t *testing.T) {
+        var exec NodeExecutor = &MockNodeExecutor{}
+        _, ok := exec.(MultiOutputExecutor)
+        assert.False(t, ok)
+        _, ok = exec.(Closeable)
+        assert.False(t, ok)
+        _, ok = exec.(EmittingNode)
+        assert.False(t, ok)
+        _, ok = exec.(EagerlyReadyNode)
+        assert.False(t, ok)
+    })
 }
 
 func TestPortStruct(t *testing.T) {

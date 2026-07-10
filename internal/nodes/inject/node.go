@@ -5,6 +5,7 @@ package inject
 import (
     "context"
     "errors"
+    "sync"
     "time"
 
     "github.com/GrimbiXcode/Go-RED/internal/registry"
@@ -13,13 +14,22 @@ import (
 // InjectNode implements a node that injects messages into a flow.
 type InjectNode struct {
     config InjectConfig
-    
+
+    // mu guards ticker, lastPayload, and stopped - startIntervalInjection
+    // runs in its own goroutine (spawned from Execute) and races with
+    // Stop()/Execute() calls from other goroutines otherwise.
+    mu sync.Mutex
+
     // ticker is used for interval-based injection
     ticker *time.Ticker
-    
+
     // done is used to stop the ticker
     done chan struct{}
-    
+
+    // stopped guards against closing done twice (Stop is not idempotent
+    // otherwise: close of a closed channel panics).
+    stopped bool
+
     // lastPayload stores the last injected payload
     lastPayload map[string]interface{}
 }
@@ -56,51 +66,77 @@ func NewInjectNode() *InjectNode {
 // Execute processes the input message and returns output.
 func (n *InjectNode) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
     if input != nil {
+        n.mu.Lock()
         n.lastPayload = input
+        n.mu.Unlock()
     }
-    
+
     if n.config.Interval > 0 {
         go n.startIntervalInjection(ctx.(context.Context))
     }
-    
+
     if n.config.InjectOnce {
         return n.injectPayload(ctx.(context.Context))
     }
-    
+
     return n.injectPayload(ctx.(context.Context))
 }
 
+// startIntervalInjection runs in its own goroutine (spawned by Execute).
+// It keeps the *time.Ticker in a local variable for the select loop -
+// never re-reading n.ticker after the initial assignment - so a
+// concurrent Stop() clearing n.ticker can't race a nil dereference here.
+// n.ticker itself is still kept in sync (mutex-guarded) purely so
+// external callers/tests can observe whether a ticker is currently
+// running.
 func (n *InjectNode) startIntervalInjection(ctx context.Context) {
     interval := time.Duration(n.config.Interval) * time.Millisecond
-    n.ticker = time.NewTicker(interval)
-    defer n.ticker.Stop()
-    
+    ticker := time.NewTicker(interval)
+    defer ticker.Stop()
+
+    n.mu.Lock()
+    n.ticker = ticker
+    n.mu.Unlock()
+
     for {
         select {
         case <-ctx.Done():
             return
         case <-n.done:
             return
-        case <-n.ticker.C:
+        case <-ticker.C:
+            n.mu.Lock()
             n.lastPayload = n.config.Payload
+            n.mu.Unlock()
         }
     }
 }
 
 func (n *InjectNode) injectPayload(ctx context.Context) (map[string]interface{}, error) {
+    n.mu.Lock()
     payload := n.config.Payload
     if n.lastPayload != nil {
         payload = n.lastPayload
     }
-    
+    n.mu.Unlock()
+
     if n.config.Topic != "" {
         if payload == nil {
             payload = make(map[string]interface{})
         }
         payload["topic"] = n.config.Topic
     }
-    
+
     return payload, nil
+}
+
+// Ticker returns the currently running ticker, if any, for tests/callers
+// that need to observe interval-injection state without racing
+// startIntervalInjection's own goroutine.
+func (n *InjectNode) Ticker() *time.Ticker {
+    n.mu.Lock()
+    defer n.mu.Unlock()
+    return n.ticker
 }
 
 func (n *InjectNode) Validate() error {
@@ -135,11 +171,23 @@ func (n *InjectNode) SetConfig(config map[string]interface{}) error {
     return n.Validate()
 }
 
+// Stop signals startIntervalInjection's goroutine (if any) to exit and
+// releases the ticker. Idempotent - a second call is a no-op rather than
+// panicking on a double-close of done.
 func (n *InjectNode) Stop() {
+    n.mu.Lock()
+    if n.stopped {
+        n.mu.Unlock()
+        return
+    }
+    n.stopped = true
     close(n.done)
-    if n.ticker != nil {
-        n.ticker.Stop()
-        n.ticker = nil
+    ticker := n.ticker
+    n.ticker = nil
+    n.mu.Unlock()
+
+    if ticker != nil {
+        ticker.Stop()
     }
 }
 
