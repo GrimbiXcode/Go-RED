@@ -1,6 +1,7 @@
 package engine
 
 import (
+    "errors"
     "testing"
     "time"
 
@@ -215,9 +216,16 @@ func TestFlowEngineUndeploy(t *testing.T) {
         err = engine.Undeploy("undeploy-test")
         require.NoError(t, err)
 
-        // Verify not found
-        _, err = engine.GetFlow("undeploy-test")
-        assert.Error(t, err)
+        // The flow must stay visible (as inactive) after undeploy - it's
+        // still the same draft the user can edit and redeploy, not a
+        // deleted flow. Only DeleteFlow actually removes it.
+        undeployed, err := engine.GetFlow("undeploy-test")
+        require.NoError(t, err)
+        assert.Equal(t, FlowStatusInactive, undeployed.Status)
+
+        status, err := engine.GetFlowStatus("undeploy-test")
+        require.NoError(t, err)
+        assert.Equal(t, FlowStatusInactive, status)
     })
 
     t.Run("should fail to undeploy non-existent flow", func(t *testing.T) {
@@ -229,12 +237,160 @@ func TestFlowEngineUndeploy(t *testing.T) {
         assert.Error(t, err)
         assert.Contains(t, err.Error(), "not found")
     })
+
+    t.Run("should allow redeploying a flow after it was undeployed", func(t *testing.T) {
+        engine := createTestEngine()
+        engine.Start()
+        defer engine.Stop()
+
+        flow := NewFlow("redeploy-test", "Redeploy Test")
+        flow.Nodes["node-1"] = &Node{ID: "node-1", Type: "debug"}
+
+        require.NoError(t, engine.Deploy(flow))
+        require.NoError(t, engine.Undeploy("redeploy-test"))
+
+        // Deploying the same flow again must succeed, not fail with
+        // "already deployed" - Undeploy leaves an inactive placeholder
+        // behind (so the flow stays visible), and Deploy must recognize
+        // that placeholder isn't a running flow.
+        err := engine.Deploy(flow)
+        require.NoError(t, err)
+
+        status, err := engine.GetFlowStatus("redeploy-test")
+        require.NoError(t, err)
+        assert.Equal(t, FlowStatusActive, status)
+    })
+}
+
+func TestFlowEngineDeleteFlow(t *testing.T) {
+    t.Run("should remove a running flow entirely", func(t *testing.T) {
+        engine := createTestEngine()
+        engine.Start()
+        defer engine.Stop()
+
+        flow := NewFlow("delete-test", "Delete Test")
+        flow.Nodes["node-1"] = &Node{ID: "node-1", Type: "debug"}
+        require.NoError(t, engine.Deploy(flow))
+
+        require.NoError(t, engine.DeleteFlow("delete-test"))
+
+        _, err := engine.GetFlow("delete-test")
+        assert.Error(t, err)
+    })
+
+    t.Run("should remove a never-deployed draft without panicking", func(t *testing.T) {
+        engine := createTestEngine()
+        engine.Start()
+        defer engine.Stop()
+
+        _, err := engine.CreateFlow("draft-delete-test", "Draft Delete Test")
+        require.NoError(t, err)
+
+        require.NoError(t, engine.DeleteFlow("draft-delete-test"))
+
+        _, err = engine.GetFlow("draft-delete-test")
+        assert.Error(t, err)
+    })
+}
+
+// inMemoryStateManager is a minimal StateManager for exercising
+// LoadAllFlows' handling of persisted status without touching disk.
+type inMemoryStateManager struct {
+    flows map[string]*Flow
+}
+
+func newInMemoryStateManager() *inMemoryStateManager {
+    return &inMemoryStateManager{flows: make(map[string]*Flow)}
+}
+
+func (m *inMemoryStateManager) SaveFlow(flow *Flow) error {
+    m.flows[flow.ID] = flow
+    return nil
+}
+
+func (m *inMemoryStateManager) LoadFlow(flowID string) (*Flow, error) {
+    flow, ok := m.flows[flowID]
+    if !ok {
+        return nil, errors.New("flow not found")
+    }
+    return flow, nil
+}
+
+func (m *inMemoryStateManager) LoadAllFlows() ([]*Flow, error) {
+    flows := make([]*Flow, 0, len(m.flows))
+    for _, f := range m.flows {
+        flows = append(flows, f)
+    }
+    return flows, nil
+}
+
+func (m *inMemoryStateManager) DeleteFlow(flowID string) error {
+    delete(m.flows, flowID)
+    return nil
 }
 
 func TestFlowEngineLoadAllFlows(t *testing.T) {
-    // For now, skip these tests as they require a more complex mock setup
-    // These scenarios are tested in the cmd/go-red/main_test.go tests
-    t.Skip("LoadAllFlows tests require state manager mock - tested in cmd/go-red package")
+    t.Run("should not redeploy a draft that was never deployed", func(t *testing.T) {
+        engine := createTestEngine()
+        sm := newInMemoryStateManager()
+        engine.SetStateManager(sm)
+        engine.Start()
+        defer engine.Stop()
+
+        draft := NewFlow("never-deployed-draft", "Never Deployed Draft")
+        draft.Nodes["node-1"] = &Node{ID: "node-1", Type: "debug"}
+        require.NoError(t, sm.SaveFlow(draft))
+
+        require.NoError(t, engine.LoadAllFlows())
+
+        status, err := engine.GetFlowStatus("never-deployed-draft")
+        require.NoError(t, err)
+        assert.Equal(t, FlowStatusInactive, status, "a draft must stay a draft across a restart")
+    })
+
+    t.Run("should redeploy a flow that was genuinely running", func(t *testing.T) {
+        engine := createTestEngine()
+        sm := newInMemoryStateManager()
+        engine.SetStateManager(sm)
+        engine.Start()
+        defer engine.Stop()
+
+        running := NewFlow("was-running", "Was Running")
+        running.Nodes["node-1"] = &Node{ID: "node-1", Type: "debug"}
+        running.Status = FlowStatusActive
+        require.NoError(t, sm.SaveFlow(running))
+
+        require.NoError(t, engine.LoadAllFlows())
+
+        status, err := engine.GetFlowStatus("was-running")
+        require.NoError(t, err)
+        assert.Equal(t, FlowStatusActive, status, "a flow that was running must come back running")
+    })
+
+    t.Run("should not redeploy a flow that was explicitly stopped", func(t *testing.T) {
+        engine := createTestEngine()
+        sm := newInMemoryStateManager()
+        engine.SetStateManager(sm)
+        engine.Start()
+
+        flow := NewFlow("stop-then-restart", "Stop Then Restart")
+        flow.Nodes["node-1"] = &Node{ID: "node-1", Type: "debug"}
+        require.NoError(t, engine.Deploy(flow))
+        require.NoError(t, engine.Undeploy("stop-then-restart"))
+        engine.Stop()
+
+        // Simulate a restart against the same persisted state.
+        restarted := createTestEngine()
+        restarted.SetStateManager(sm)
+        restarted.Start()
+        defer restarted.Stop()
+
+        require.NoError(t, restarted.LoadAllFlows())
+
+        status, err := restarted.GetFlowStatus("stop-then-restart")
+        require.NoError(t, err)
+        assert.Equal(t, FlowStatusInactive, status, "Stop must survive a restart instead of the flow silently starting again")
+    })
 }
 
 

@@ -2,7 +2,6 @@ package main
 
 import (
     "encoding/json"
-    "log"
     "net/http"
     "net/http/httptest"
     "testing"
@@ -82,50 +81,19 @@ func createTestFlowEngine() *engine.FlowEngine {
     return engine
 }
 
-// Modified version of handleDeployFlow for testing that accepts flowID directly
+// handleDeployFlowWithID calls the real handleDeployFlow with the given
+// flow ID set as the request's path value, exactly as the router would
+// for a request to /api/flows/{id}/deploy. A hand-duplicated copy of the
+// handler previously lived here and quietly drifted out of sync with the
+// real one in main.go (it still had the old "already deployed" no-op
+// bug after that was fixed) - calling the real handler is the only way
+// these tests can catch a regression there again.
 func handleDeployFlowWithID(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine, flowID string) {
-    log.Printf("[REST API] Deploy request for flow: %s", flowID)
-    
-    // Check if flow is already deployed
-    if existingFlow, err := e.GetFlow(flowID); err == nil && existingFlow != nil {
-        log.Printf("[REST API] Flow %s is already deployed, returning success", flowID)
-        w.Header().Set("Content-Type", "application/json")
-        json.NewEncoder(w).Encode(map[string]interface{}{
-            "status":  "deployed",
-            "flowId":  flowID,
-            "message": "Flow was already deployed",
-        })
-        return
+    if r == nil {
+        r = httptest.NewRequest(http.MethodPost, "/api/flows/"+flowID+"/deploy", nil)
     }
-    
-    // Flow not in memory, try to load from state manager
-    var flow *engine.Flow
-    if e.GetStateManager() != nil {
-        var err error
-        flow, err = e.GetStateManager().LoadFlow(flowID)
-        if err != nil {
-            log.Printf("[REST API] Failed to load flow %s from state manager: %v", flowID, err)
-            http.Error(w, "flow not found", http.StatusNotFound)
-            return
-        }
-        log.Printf("[REST API] Loaded flow %s from state manager, deploying...", flowID)
-    } else {
-        log.Printf("[REST API] No state manager configured")
-        http.Error(w, "state manager not configured", http.StatusInternalServerError)
-        return
-    }
-    
-    // Deploy the flow
-    log.Printf("[REST API] Deploying flow %s with %d nodes and %d connections", flowID, len(flow.Nodes), len(flow.Connections))
-    if err := e.Deploy(flow); err != nil {
-        log.Printf("[REST API] Failed to deploy flow %s: %v", flowID, err)
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
-    
-    log.Printf("[REST API] Flow %s deployed successfully via REST API", flowID)
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]interface{}{"status": "deployed", "flowId": flowID})
+    r.SetPathValue("id", flowID)
+    handleDeployFlow(w, r, e)
 }
 
 func TestHandleDeployFlow(t *testing.T) {
@@ -158,7 +126,7 @@ func TestHandleDeployFlow(t *testing.T) {
         var response map[string]interface{}
         err := json.Unmarshal(w.Body.Bytes(), &response)
         require.NoError(t, err)
-        assert.Equal(t, "deployed", response["status"])
+        assert.Equal(t, "running", response["status"])
         assert.Equal(t, "test-flow-1", response["flowId"])
 
         // Verify flow is now deployed
@@ -167,12 +135,12 @@ func TestHandleDeployFlow(t *testing.T) {
         assert.Equal(t, engine.FlowStatusActive, deployedFlow.Status)
     })
 
-    t.Run("should return success for already deployed flow", func(t *testing.T) {
+    t.Run("should stop and redeploy an already-running flow with its latest definition", func(t *testing.T) {
         e := createTestFlowEngine()
         e.Start()
         defer e.Stop()
 
-        // Create and deploy a flow first
+        // Deploy a flow with a single node.
         flow := engine.NewFlow("test-flow-2", "Test Flow 2")
         flow.Nodes["node-1"] = &engine.Node{
             ID:   "node-1",
@@ -181,20 +149,45 @@ func TestHandleDeployFlow(t *testing.T) {
         err := e.Deploy(flow)
         require.NoError(t, err)
 
-        // Try to deploy again via REST API
-        w := httptest.NewRecorder()
+        // Simulate editing the flow while it's running (e.g. dragging a
+        // node, or any node:add/node:update over the WebSocket): those
+        // handlers fetch the engine's live *Flow via GetFlow (the same
+        // pointer activeFlow.Flow holds), mutate it in place, then save
+        // it - so reproduce that exact pattern here rather than saving an
+        // unrelated cloned object, which wouldn't exercise the same code
+        // path the real handlers do.
+        liveFlow, err := e.GetFlow("test-flow-2")
+        require.NoError(t, err)
+        liveFlow.Nodes["node-2"] = &engine.Node{
+            ID:   "node-2",
+            Type: "debug",
+        }
+        liveFlow.Connections = []engine.NodeConnection{
+            {ID: "conn-1", SourceNode: "node-1", TargetNode: "node-2"},
+        }
+        mockSM := e.GetStateManager().(*MockStateManager)
+        require.NoError(t, mockSM.SaveFlow(liveFlow))
 
+        // Deploying again while still "running" must actually pick up
+        // that edit - not silently no-op with a fake "already deployed"
+        // response, which previously left the new node without an
+        // executor so messages routed to it vanished with a "node not
+        // found in flow" error nobody surfaced to the user.
+        w := httptest.NewRecorder()
         handleDeployFlowWithID(w, nil, e, "test-flow-2")
 
-        // Should return success, not error
         assert.Equal(t, http.StatusOK, w.Code)
 
         var response map[string]interface{}
         err = json.Unmarshal(w.Body.Bytes(), &response)
         require.NoError(t, err)
-        assert.Equal(t, "deployed", response["status"])
+        assert.Equal(t, "running", response["status"])
         assert.Equal(t, "test-flow-2", response["flowId"])
-        assert.Equal(t, "Flow was already deployed", response["message"])
+
+        redeployed, err := e.GetFlow("test-flow-2")
+        require.NoError(t, err)
+        assert.Len(t, redeployed.Nodes, 2, "redeploy must pick up the node added while the flow was running")
+        assert.Len(t, redeployed.Connections, 1)
     })
 
     t.Run("should return 404 for non-existent flow", func(t *testing.T) {
@@ -249,7 +242,7 @@ func TestHandleDeployFlow(t *testing.T) {
         var response map[string]interface{}
         err = json.Unmarshal(w.Body.Bytes(), &response)
         require.NoError(t, err)
-        assert.Equal(t, "deployed", response["status"])
+        assert.Equal(t, "running", response["status"])
 
         // Verify flow is now deployed with correct node and connection counts
         deployedFlow, err := e.GetFlow("test-flow-3")

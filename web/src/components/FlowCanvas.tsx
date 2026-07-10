@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useRef } from 'react';
 import React from 'react';
 import ReactFlow, {
-  ReactFlowProvider,
   Background,
   Controls,
   Edge,
@@ -32,6 +31,7 @@ interface FlowCanvasProps {
   onNodeDeselect: () => void;
   onAddNode: (nodeType: string, position: { x: number; y: number }) => void;
   onRemoveNode: (nodeId: string) => void;
+  onUpdateNode: (nodeId: string, updates: Partial<FlowNode>) => void;
   onAddConnection: (connection: Omit<NodeConnection, 'id'>) => void;
   onRemoveConnection: (connectionId: string) => void;
 }
@@ -81,13 +81,15 @@ export function FlowCanvas({
   onNodeDeselect,
   onAddNode,
   onRemoveNode,
+  onUpdateNode,
   onAddConnection,
   onRemoveConnection,
 }: FlowCanvasProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, fitView } = useReactFlow();
+  const fittedFlowId = useRef<string | null>(null);
 
   const nodeRegistry: NodeRegistry = useMemo(
     () => Object.fromEntries((availableNodeTypes || []).map((nt) => [nt.type, nt])),
@@ -113,6 +115,20 @@ export function FlowCanvas({
     setEdges(flowEdges);
   }, [flowNodes, flowEdges, setNodes, setEdges]);
 
+  // Fit the view once per opened flow (e.g. switching tabs or loading a
+  // freshly created flow) rather than relying on ReactFlow's `fitView`
+  // prop, which re-fires the first time any node gets measured — including
+  // when the first node is added to an already-open, previously empty
+  // flow, which unexpectedly changes the zoom the user had set.
+  React.useEffect(() => {
+    if (!flow || fittedFlowId.current === flow.id) return;
+    fittedFlowId.current = flow.id;
+    const raf = requestAnimationFrame(() => {
+      fitView({ padding: 0.5 });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [flow, fitView]);
+
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       const flowNode = (node.data as { node: FlowNode }).node;
@@ -128,12 +144,10 @@ export function FlowCanvas({
   const onNodeDragStop = useCallback(
     (_: React.MouseEvent, node: Node) => {
       if (flow) {
-        setNodes((nds) =>
-          nds.map((n) => (n.id === node.id ? { ...n, position: node.position } : n))
-        );
+        onUpdateNode(node.id, { position: node.position });
       }
     },
-    [flow, setNodes]
+    [flow, onUpdateNode]
   );
 
   const onConnect = useCallback(
@@ -175,10 +189,21 @@ export function FlowCanvas({
       const data = event.dataTransfer.getData('application/reactflow');
       if (!data) return;
       const { nodeType } = JSON.parse(data);
-      const position = screenToFlowPosition({
+      // A node's `position` is its top-left corner in ReactFlow, but the
+      // cursor is where the user is looking when they drop it. Without this
+      // offset the node's top-left corner lands under the cursor instead of
+      // its center, so the node appears shifted down-and-right of the drop
+      // point. Half of the default node box (see --gr-node-min-width /
+      // --gr-node-height in tailwind.css) keeps the drop point visually
+      // centered on the node regardless of zoom.
+      const rawPosition = screenToFlowPosition({
         x: event.clientX,
         y: event.clientY,
       });
+      const position = {
+        x: rawPosition.x - 50,
+        y: rawPosition.y - 15,
+      };
       onAddNode(nodeType, position);
     },
     [screenToFlowPosition, flow, onAddNode]
@@ -206,30 +231,26 @@ export function FlowCanvas({
       onDrop={onDrop}
       onDragOver={onDragOver}
     >
-      <ReactFlowProvider>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onNodeClick={onNodeClick}
-          onPaneClick={onCanvasClick}
-          onNodeDragStop={onNodeDragStop}
-          onNodesDelete={onNodesDelete}
-          onEdgesDelete={onEdgesDelete}
-          nodeTypes={nodeTypeComponents}
-          edgeTypes={edgeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.5 }}
-          minZoom={0.1}
-          maxZoom={4}
-          defaultEdgeOptions={{ animated: false }}
-        >
-          <Background color="var(--gr-blue-200)" gap={20} size={1.5} />
-          <Controls position="bottom-left" />
-        </ReactFlow>
-      </ReactFlowProvider>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onNodeClick={onNodeClick}
+        onPaneClick={onCanvasClick}
+        onNodeDragStop={onNodeDragStop}
+        onNodesDelete={onNodesDelete}
+        onEdgesDelete={onEdgesDelete}
+        nodeTypes={nodeTypeComponents}
+        edgeTypes={edgeTypes}
+        minZoom={0.1}
+        maxZoom={4}
+        defaultEdgeOptions={{ animated: false }}
+      >
+        <Background color="var(--gr-blue-200)" gap={20} size={1.5} />
+        <Controls position="bottom-left" />
+      </ReactFlow>
     </div>
   );
 }

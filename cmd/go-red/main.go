@@ -303,15 +303,12 @@ func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
 
 func handleDeleteFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
     flowID := r.PathValue("id")
-    
-    // First undeploy the flow if it's active
-    e.Undeploy(flowID)
-    
-    // Delete from state manager
-    if e.GetStateManager() != nil {
-        e.GetStateManager().DeleteFlow(flowID)
+
+    if err := e.DeleteFlow(flowID); err != nil {
+        writeError(w, http.StatusInternalServerError, "failed to delete flow "+flowID, err)
+        return
     }
-    
+
     w.Header().Set("Content-Type", "application/json")
     w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(map[string]interface{}{"status": "deleted", "flowId": flowID})
@@ -320,20 +317,28 @@ func handleDeleteFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
 func handleDeployFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
     flowID := r.PathValue("id")
     log.Printf("[REST API] Deploy request for flow: %s", flowID)
-    
-    // Check if flow is already deployed
-    if existingFlow, err := e.GetFlow(flowID); err == nil && existingFlow != nil {
-        log.Printf("[REST API] Flow %s is already deployed, returning success", flowID)
-        w.Header().Set("Content-Type", "application/json")
-        json.NewEncoder(w).Encode(map[string]interface{}{
-            "status":  "deployed",
-            "flowId":  flowID,
-            "message": "Flow was already deployed",
-        })
-        return
+
+    // If the flow is currently running, stop it first so Deploy always
+    // rebuilds node executors from the latest persisted definition. The
+    // previous behavior treated "already Active" as "nothing to do" and
+    // returned a fake success without calling Deploy() again - so editing
+    // a node on an already-running flow (e.g. dragging it, or any edit
+    // that doesn't require an explicit Undeploy first) and clicking Deploy
+    // saved the change but never gave it a node executor: the UI reported
+    // success, yet messages routed to that node silently vanished with
+    // "node not found in flow" since nodeExecutors was still whatever it
+    // was at the *previous* Deploy call, not the current definition.
+    if status, err := e.GetFlowStatus(flowID); err == nil && status == engine.FlowStatusActive {
+        log.Printf("[REST API] Flow %s is running, stopping before redeploy", flowID)
+        if err := e.Undeploy(flowID); err != nil {
+            writeError(w, http.StatusInternalServerError, "failed to stop flow "+flowID+" for redeploy", err)
+            return
+        }
     }
-    
-    // Flow not in memory, try to load from state manager
+
+    // Load the flow's latest saved definition and deploy it. This covers
+    // a fresh draft, a previously stopped flow, and a redeploy of a flow
+    // that was just stopped above.
     var flow *engine.Flow
     if e.GetStateManager() != nil {
         var err error
@@ -349,17 +354,17 @@ func handleDeployFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
         http.Error(w, "state manager not configured", http.StatusInternalServerError)
         return
     }
-    
+
     // Deploy the flow
     log.Printf("[REST API] Deploying flow %s with %d nodes and %d connections", flowID, len(flow.Nodes), len(flow.Connections))
     if err := e.Deploy(flow); err != nil {
         writeError(w, http.StatusInternalServerError, "failed to deploy flow "+flowID, err)
         return
     }
-    
+
     log.Printf("[REST API] Flow %s deployed successfully via REST API", flowID)
     w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]interface{}{"status": "deployed", "flowId": flowID})
+    json.NewEncoder(w).Encode(map[string]interface{}{"status": "running", "flowId": flowID})
 }
 
 func handleUndeployFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
@@ -369,7 +374,7 @@ func handleUndeployFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEn
         return
     }
     w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]interface{}{"status": "undeployed", "flowId": flowID})
+    json.NewEncoder(w).Encode(map[string]interface{}{"status": "draft", "flowId": flowID})
 }
 
 func handleGetNodes(w http.ResponseWriter, r *http.Request, reg *registry.NodeRegistry) {
