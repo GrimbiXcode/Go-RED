@@ -1,5 +1,5 @@
 # Go—RED Makefile
-.PHONY: all build run test clean deps generate-types check-types
+.PHONY: all build run test clean deps generate-types check-types lint check
 
 # Go parameters
 GOCMD=go
@@ -36,7 +36,17 @@ run: go.mod
 
 test: go.mod
 	@echo "Running Go backend tests..."
-	$(GOTEST) -v -race ./...
+	$(GOTEST) -race ./...
+
+# Static checks for the Go side (what CI runs).
+lint: go.mod
+	@echo "Checking gofmt..."
+	@UNFORMATTED=$$(gofmt -l .); if [ -n "$$UNFORMATTED" ]; then echo "$$UNFORMATTED"; exit 1; fi
+	$(GOCMD) vet ./...
+
+# Everything CI checks, locally: Go and web.
+check: lint test check-types
+	cd web && npm run typecheck && npm run lint && npx vitest run && npm run build
 
 # Run frontend tests
 test-frontend:
@@ -123,7 +133,9 @@ help:
 	@echo "  make run-dev      - Run both backend and frontend dev servers"
 	@echo "  make run-frontend - Run only frontend dev server"
 	@echo "  make stop-dev     - Stop both backend and frontend dev servers"
-	@echo "  make test         - Run tests"
+	@echo "  make test         - Run Go tests with the race detector"
+	@echo "  make lint         - gofmt + go vet"
+	@echo "  make check        - Everything CI runs (Go + web)"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make deps         - Download dependencies"
 	@echo "  make fmt          - Format code"
