@@ -231,101 +231,132 @@ func TestInjectNode_Execute_InjectOnce(t *testing.T) {
 	})
 }
 
-func TestInjectNode_IntervalInjection(t *testing.T) {
-	t.Run("should start interval injection when interval > 0", func(t *testing.T) {
-		log.Printf("[DEBUG] Testing InjectNode interval injection...")
+// startNode runs Start in the background and returns a channel that
+// receives every emitted payload, plus a function that waits for Start to
+// return.
+func startNode(t *testing.T, node *InjectNode, ctx context.Context) (<-chan map[string]interface{}, func()) {
+	t.Helper()
+	emitted := make(chan map[string]interface{}, 64)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		assert.NoError(t, node.Start(ctx, func(payload map[string]interface{}) {
+			emitted <- payload
+		}))
+	}()
+	return emitted, func() {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Start did not return after cancellation")
+		}
+	}
+}
 
+func TestInjectNode_IntervalInjection(t *testing.T) {
+	t.Run("should emit on every interval tick after Start", func(t *testing.T) {
 		node := NewInjectNode()
 		node.config.Payload = map[string]interface{}{"intervalTest": true}
-		node.config.Interval = 50 // 50ms interval for faster testing
+		node.config.Interval = 20
 
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		// Execute should start the ticker
-		_, err := node.Execute(ctx, nil)
-		assert.NoError(t, err)
+		emitted, wait := startNode(t, node, ctx)
 
-		// Wait for the ticker to be initialized
-		time.Sleep(100 * time.Millisecond)
+		received := 0
+		timeout := time.After(time.Second)
+		for received < 3 {
+			select {
+			case payload := <-emitted:
+				assert.Equal(t, true, payload["intervalTest"])
+				received++
+			case <-timeout:
+				t.Fatalf("expected at least 3 interval emissions, got %d", received)
+			}
+		}
+		assert.NotNil(t, node.Ticker(), "ticker runs while Start is running")
 
-		// Verify ticker was started
-		assert.NotNil(t, node.Ticker(), "Ticker should be started after Execute with interval > 0")
+		cancel()
+		wait()
+		assert.Nil(t, node.Ticker(), "ticker is released when Start returns")
+	})
 
-		// Stop the node to clean up
-		node.Stop()
+	t.Run("should emit exactly once when InjectOnce is set and no interval", func(t *testing.T) {
+		node := NewInjectNode()
+		node.config.Payload = map[string]interface{}{"once": true}
+		node.config.InjectOnce = true
 
-		// Verify ticker was stopped
-		assert.Nil(t, node.Ticker(), "Ticker should be nil after Stop")
+		ctx, cancel := context.WithCancel(context.Background())
+		emitted, wait := startNode(t, node, ctx)
 
-		log.Printf("[DEBUG] InjectNode interval injection test passed")
+		select {
+		case payload := <-emitted:
+			assert.Equal(t, true, payload["once"])
+		case <-time.After(time.Second):
+			t.Fatal("InjectOnce did not emit")
+		}
+		select {
+		case <-emitted:
+			t.Fatal("InjectOnce emitted more than once")
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		cancel()
+		wait()
+	})
+
+	t.Run("should not emit without interval or InjectOnce, but block until cancelled", func(t *testing.T) {
+		node := NewInjectNode()
+		ctx, cancel := context.WithCancel(context.Background())
+		emitted, wait := startNode(t, node, ctx)
+
+		select {
+		case <-emitted:
+			t.Fatal("manual-only inject emitted on its own")
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		cancel()
+		wait()
 	})
 
 	t.Run("should stop interval injection when Stop is called", func(t *testing.T) {
-		log.Printf("[DEBUG] Testing InjectNode Stop functionality...")
-
 		node := NewInjectNode()
 		node.config.Payload = map[string]interface{}{"stopTest": true}
-		node.config.Interval = 50 // 50ms interval
+		node.config.Interval = 20
 
-		ctx := context.Background()
+		emitted, wait := startNode(t, node, context.Background())
 
-		// Execute to start interval injection
-		_, err := node.Execute(ctx, nil)
-		assert.NoError(t, err)
-
-		// Wait for ticker to be started
-		time.Sleep(100 * time.Millisecond)
-
-		// Verify ticker is running
-		assert.NotNil(t, node.Ticker(), "Ticker should be running after Execute with interval > 0")
-
-		// Stop the node
-		node.Stop()
-
-		// Verify ticker was stopped
-		assert.Nil(t, node.Ticker(), "Ticker should be nil after Stop")
-
-		// Verify done channel was closed
 		select {
-		case <-node.done:
-			// Expected - done channel should be closed
-		default:
-			// If not closed, that's also fine - the important thing is ticker is stopped
+		case <-emitted:
+		case <-time.After(time.Second):
+			t.Fatal("no emission before Stop")
 		}
 
-		log.Printf("[DEBUG] InjectNode Stop test passed")
+		node.Stop()
+		wait()
+		assert.Nil(t, node.Ticker(), "Ticker should be nil after Stop")
+
+		// Stop is idempotent and Close delegates to it.
+		node.Stop()
+		assert.NoError(t, node.Close())
 	})
 
-	t.Run("should stop interval injection when context is cancelled", func(t *testing.T) {
-		log.Printf("[DEBUG] Testing InjectNode context cancellation...")
-
+	t.Run("emitted payloads are copies of the configured payload", func(t *testing.T) {
 		node := NewInjectNode()
-		node.config.Payload = map[string]interface{}{"contextTest": true}
-		node.config.Interval = 50 // 50ms interval
+		node.config.Payload = map[string]interface{}{"count": 0}
+		node.config.InjectOnce = true
 
 		ctx, cancel := context.WithCancel(context.Background())
+		emitted, wait := startNode(t, node, ctx)
 
-		// Execute to start interval injection
-		_, err := node.Execute(ctx, nil)
-		assert.NoError(t, err)
+		payload := <-emitted
+		payload["count"] = 99
+		assert.Equal(t, 0, node.config.Payload["count"], "mutating an emitted message must not change the node config")
 
-		// Wait for ticker to be started
-		time.Sleep(100 * time.Millisecond)
-
-		// Verify ticker is running
-		assert.NotNil(t, node.Ticker(), "Ticker should be running after Execute with interval > 0")
-
-		// Cancel context
 		cancel()
-
-		// Wait a bit for goroutine to exit
-		time.Sleep(100 * time.Millisecond)
-
-		// Stop the node to clean up
-		node.Stop()
-
-		log.Printf("[DEBUG] InjectNode context cancellation test passed")
+		wait()
 	})
 }
 

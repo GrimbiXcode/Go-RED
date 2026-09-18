@@ -1,5 +1,10 @@
 // Package inject provides the Inject node implementation.
-// The Inject node is used to inject messages into a flow at specific intervals or manually.
+//
+// An Inject node originates messages: manually (the editor's inject button
+// routes through FlowEngine.InjectMessage, which calls Execute), once when
+// the flow is deployed (InjectOnce), or repeatedly on a fixed interval
+// (Interval > 0). The automatic variants run in Start, which the engine
+// invokes for every registry.EmittingNode when the flow is deployed.
 package inject
 
 import (
@@ -15,22 +20,21 @@ import (
 type InjectNode struct {
 	config InjectConfig
 
-	// mu guards ticker, lastPayload, and stopped - startIntervalInjection
-	// runs in its own goroutine (spawned from Execute) and races with
-	// Stop()/Execute() calls from other goroutines otherwise.
+	// mu guards ticker, lastPayload and stopped: Start runs in its own
+	// goroutine and races with Execute/Stop calls from other goroutines
+	// otherwise.
 	mu sync.Mutex
 
-	// ticker is used for interval-based injection
+	// ticker is the interval ticker while Start is running with Interval > 0.
 	ticker *time.Ticker
 
-	// done is used to stop the ticker
+	// done stops Start (and the ticker) when the node is closed.
 	done chan struct{}
 
-	// stopped guards against closing done twice (Stop is not idempotent
-	// otherwise: close of a closed channel panics).
+	// stopped guards against closing done twice.
 	stopped bool
 
-	// lastPayload stores the last injected payload
+	// lastPayload stores the last manually injected payload.
 	lastPayload map[string]interface{}
 }
 
@@ -46,7 +50,7 @@ type InjectConfig struct {
 	// Topic is an optional topic for the message
 	Topic string `json:"topic"`
 
-	// InjectOnce indicates whether to inject only once at startup
+	// InjectOnce indicates whether to inject once when the flow is deployed
 	InjectOnce bool `json:"injectOnce"`
 }
 
@@ -63,76 +67,106 @@ func NewInjectNode() *InjectNode {
 	}
 }
 
-// Execute processes the input message and returns output.
+// Execute handles a manual injection: the payload given by the caller (or
+// the configured payload when none is given) becomes the emitted message.
 func (n *InjectNode) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
 	if input != nil {
 		n.mu.Lock()
 		n.lastPayload = input
 		n.mu.Unlock()
 	}
-
-	if n.config.Interval > 0 {
-		go n.startIntervalInjection(ctx.(context.Context))
-	}
-
-	if n.config.InjectOnce {
-		return n.injectPayload(ctx.(context.Context))
-	}
-
-	return n.injectPayload(ctx.(context.Context))
+	return n.injectPayload(), nil
 }
 
-// startIntervalInjection runs in its own goroutine (spawned by Execute).
-// It keeps the *time.Ticker in a local variable for the select loop -
-// never re-reading n.ticker after the initial assignment - so a
-// concurrent Stop() clearing n.ticker can't race a nil dereference here.
-// n.ticker itself is still kept in sync (mutex-guarded) purely so
-// external callers/tests can observe whether a ticker is currently
-// running.
-func (n *InjectNode) startIntervalInjection(ctx context.Context) {
-	interval := time.Duration(n.config.Interval) * time.Millisecond
-	ticker := time.NewTicker(interval)
+// Start runs the automatic injections for the lifetime of the flow: one
+// message right away when InjectOnce is set, and one message per Interval
+// while Interval > 0. It blocks until ctx is cancelled (flow undeployed)
+// or the node is stopped, as the registry.EmittingNode contract requires.
+func (n *InjectNode) Start(ctx context.Context, emit func(payload map[string]interface{})) error {
+	if n.config.InjectOnce {
+		emit(n.configuredPayload())
+	}
+
+	if n.config.Interval <= 0 {
+		select {
+		case <-ctx.Done():
+		case <-n.done:
+		}
+		return nil
+	}
+
+	ticker := time.NewTicker(time.Duration(n.config.Interval) * time.Millisecond)
 	defer ticker.Stop()
 
 	n.mu.Lock()
 	n.ticker = ticker
 	n.mu.Unlock()
 
+	defer func() {
+		n.mu.Lock()
+		if n.ticker == ticker {
+			n.ticker = nil
+		}
+		n.mu.Unlock()
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-n.done:
-			return
+			return nil
 		case <-ticker.C:
-			n.mu.Lock()
-			n.lastPayload = n.config.Payload
-			n.mu.Unlock()
+			emit(n.configuredPayload())
 		}
 	}
 }
 
-func (n *InjectNode) injectPayload(ctx context.Context) (map[string]interface{}, error) {
+// configuredPayload returns a fresh copy of the configured payload (plus
+// topic), so downstream nodes mutating the message never touch the config.
+func (n *InjectNode) configuredPayload() map[string]interface{} {
 	n.mu.Lock()
-	payload := n.config.Payload
-	if n.lastPayload != nil {
-		payload = n.lastPayload
-	}
+	payload := clonePayload(n.config.Payload)
 	n.mu.Unlock()
+	return n.withTopic(payload)
+}
 
+// injectPayload returns the payload for a manual injection: the last
+// payload handed to Execute, or the configured one.
+func (n *InjectNode) injectPayload() map[string]interface{} {
+	n.mu.Lock()
+	source := n.config.Payload
+	if n.lastPayload != nil {
+		source = n.lastPayload
+	}
+	payload := clonePayload(source)
+	n.mu.Unlock()
+	return n.withTopic(payload)
+}
+
+func (n *InjectNode) withTopic(payload map[string]interface{}) map[string]interface{} {
 	if n.config.Topic != "" {
 		if payload == nil {
 			payload = make(map[string]interface{})
 		}
 		payload["topic"] = n.config.Topic
 	}
-
-	return payload, nil
+	return payload
 }
 
-// Ticker returns the currently running ticker, if any, for tests/callers
-// that need to observe interval-injection state without racing
-// startIntervalInjection's own goroutine.
+func clonePayload(m map[string]interface{}) map[string]interface{} {
+	if m == nil {
+		return nil
+	}
+	clone := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		clone[k] = v
+	}
+	return clone
+}
+
+// Ticker returns the currently running interval ticker, if any, for
+// tests/callers that need to observe whether Start is ticking.
 func (n *InjectNode) Ticker() *time.Ticker {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -171,9 +205,7 @@ func (n *InjectNode) SetConfig(config map[string]interface{}) error {
 	return n.Validate()
 }
 
-// Stop signals startIntervalInjection's goroutine (if any) to exit and
-// releases the ticker. Idempotent - a second call is a no-op rather than
-// panicking on a double-close of done.
+// Stop ends a running Start loop and releases the ticker. Idempotent.
 func (n *InjectNode) Stop() {
 	n.mu.Lock()
 	if n.stopped {
@@ -190,6 +222,18 @@ func (n *InjectNode) Stop() {
 		ticker.Stop()
 	}
 }
+
+// Close implements registry.Closeable so the engine stops the interval
+// when the flow is undeployed.
+func (n *InjectNode) Close() error {
+	n.Stop()
+	return nil
+}
+
+var (
+	_ registry.EmittingNode = (*InjectNode)(nil)
+	_ registry.Closeable    = (*InjectNode)(nil)
+)
 
 func init() {
 	reg := registry.GetGlobalRegistry()
@@ -212,7 +256,7 @@ func init() {
 				"payload":    {Type: "object", Description: "The data to inject", Default: map[string]interface{}{"payload": ""}},
 				"interval":   {Type: "number", Description: "Time between injections in ms (0 = manual)", Default: 0, Min: floatPtr(0)},
 				"topic":      {Type: "string", Description: "Optional topic for the message", Default: ""},
-				"injectOnce": {Type: "boolean", Description: "Inject only once at startup", Default: false},
+				"injectOnce": {Type: "boolean", Description: "Inject once when the flow is deployed", Default: false},
 			},
 		},
 		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#4CAF50"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>`,
