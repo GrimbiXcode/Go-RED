@@ -4,7 +4,7 @@ package registry
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"sync"
 )
 
@@ -197,7 +197,7 @@ func (r *NodeRegistry) RegisterNode(node *Node) error {
 	r.nodes[node.Type] = node
 	r.factories[node.Type] = node.Factory
 
-	log.Printf("Node type registered: %s (%s)", node.Type, node.Metadata.Name)
+	slog.Debug("node type registered", "type", node.Type, "name", node.Metadata.Name)
 	return nil
 }
 
@@ -303,6 +303,6 @@ func (r *NodeRegistry) Unregister(nodeType string) error {
 	delete(r.nodes, nodeType)
 	delete(r.factories, nodeType)
 
-	log.Printf("Node type unregistered: %s", nodeType)
+	slog.Debug("node type unregistered", "type", nodeType)
 	return nil
 }

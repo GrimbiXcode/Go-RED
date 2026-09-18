@@ -4,12 +4,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -72,100 +75,68 @@ import (
 	_ "github.com/GrimbiXcode/Go-RED/internal/nodes/yamlnode"
 )
 
+// version is set at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
+// Config holds the command-line configuration of the server.
 type Config struct {
 	Port        int
 	DataDir     string
-	PluginDir   string
 	WebUIDir    string
 	MaxWorkers  int
 	MaxMessages int
+	LogLevel    string
 }
+
+// maxBodyBytes caps the size of any REST request body.
+const maxBodyBytes = 10 << 20
 
 func main() {
 	config := parseFlags()
-	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
-	log.Println("Starting Go—RED...")
+	setupLogging(config.LogLevel)
+	slog.Info("starting Go-RED", "version", version, "port", config.Port, "dataDir", config.DataDir, "webDir", config.WebUIDir)
 
 	nodeRegistry := registry.GetGlobalRegistry()
-	log.Printf("Node registry initialized with %d node types", len(nodeRegistry.GetAllNodes()))
+	slog.Info("node registry initialized", "nodeTypes", len(nodeRegistry.GetAllNodes()))
 
 	stateManager, err := state.NewFileStateManager(config.DataDir)
 	if err != nil {
-		log.Fatalf("Failed to create state manager: %v", err)
+		slog.Error("failed to create state manager", "err", err)
+		os.Exit(1)
 	}
 
 	flowEngine := engine.NewFlowEngine(engine.EngineConfig{
-		WorkerPoolSize:    100,
-		MessageBufferSize: 1000,
+		WorkerPoolSize:    config.MaxWorkers,
+		MessageBufferSize: config.MaxMessages,
 		DefaultTimeout:    30 * time.Second,
 		MaxRetries:        3,
 		RetryBackoff:      1 * time.Second,
 	}, nodeRegistry)
-
 	flowEngine.SetStateManager(stateManager)
 
-	if err := flowEngine.LoadAllFlows(); err != nil {
-		log.Printf("Warning: Failed to load existing flows: %v", err)
-	}
-
 	if err := flowEngine.Start(); err != nil {
-		log.Fatalf("Failed to start flow engine: %v", err)
+		slog.Error("failed to start flow engine", "err", err)
+		os.Exit(1)
+	}
+	if err := flowEngine.LoadAllFlows(); err != nil {
+		slog.Warn("failed to load existing flows", "err", err)
 	}
 
-	// Initialize WebSocket hub and handler
 	wsHub := websocket.NewHub()
 	wsHandler := websocket.NewWebSocketHandler(wsHub, flowEngine, nodeRegistry)
 	go wsHub.Run()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/flows", func(w http.ResponseWriter, r *http.Request) {
-		handleGetFlows(w, r, flowEngine)
-	})
-	mux.HandleFunc("POST /api/flows", func(w http.ResponseWriter, r *http.Request) {
-		handleCreateFlow(w, r, flowEngine)
-	})
-	mux.HandleFunc("GET /api/flows/{id}", func(w http.ResponseWriter, r *http.Request) {
-		handleGetFlow(w, r, flowEngine)
-	})
-	mux.HandleFunc("PUT /api/flows/{id}", func(w http.ResponseWriter, r *http.Request) {
-		handleUpdateFlow(w, r, flowEngine)
-	})
-	mux.HandleFunc("DELETE /api/flows/{id}", func(w http.ResponseWriter, r *http.Request) {
-		handleDeleteFlow(w, r, flowEngine)
-	})
-	mux.HandleFunc("POST /api/flows/{id}/deploy", func(w http.ResponseWriter, r *http.Request) {
-		handleDeployFlow(w, r, flowEngine)
-	})
-	mux.HandleFunc("POST /api/flows/{id}/undeploy", func(w http.ResponseWriter, r *http.Request) {
-		handleUndeployFlow(w, r, flowEngine)
-	})
-	mux.HandleFunc("GET /api/nodes", func(w http.ResponseWriter, r *http.Request) {
-		handleGetNodes(w, r, nodeRegistry)
-	})
-	mux.HandleFunc("GET /api/nodes/{type}", func(w http.ResponseWriter, r *http.Request) {
-		handleGetNode(w, r, nodeRegistry)
-	})
-	mux.HandleFunc("GET /api/messages", func(w http.ResponseWriter, r *http.Request) {
-		handleGetMessages(w, r, flowEngine)
-	})
-	mux.HandleFunc("GET /api/flows/{id}/export", func(w http.ResponseWriter, r *http.Request) {
-		handleExportFlow(w, r, flowEngine)
-	})
-	mux.HandleFunc("POST /api/flows/import", func(w http.ResponseWriter, r *http.Request) {
-		handleImportFlow(w, r, flowEngine)
-	})
-	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
-		wsHandler.ServeWebSocket(w, r)
-	})
-	mux.Handle("/", http.FileServer(http.Dir(config.WebUIDir)))
-
-	server := &http.Server{Addr: ":" + strconv.Itoa(config.Port), Handler: mux}
+	server := &http.Server{
+		Addr:              ":" + strconv.Itoa(config.Port),
+		Handler:           newRouter(flowEngine, nodeRegistry, wsHandler, config.WebUIDir),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	go func() {
-		log.Printf("Server listening on port %d", config.Port)
-		log.Printf("WebSocket available at ws://localhost:%d/ws", config.Port)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+		slog.Info("server listening", "addr", server.Addr, "websocket", "/ws")
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server error", "err", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -173,30 +144,124 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down...")
+	slog.Info("shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	flowEngine.Stop()
-	server.Shutdown(ctx)
-
-	activeFlows := flowEngine.GetAllFlows()
-	for _, flow := range activeFlows {
-		stateManager.SaveFlow(flow)
+	if err := server.Shutdown(ctx); err != nil {
+		slog.Warn("http server shutdown", "err", err)
 	}
-	log.Println("Shutdown complete")
+	flowEngine.Stop()
+	slog.Info("shutdown complete")
 }
 
 func parseFlags() Config {
 	var config Config
 	flag.IntVar(&config.Port, "port", 8080, "Port to listen on")
 	flag.StringVar(&config.DataDir, "data-dir", "data", "Directory for flow data")
-	flag.StringVar(&config.PluginDir, "plugin-dir", "plugins", "Directory for plugins")
-	flag.StringVar(&config.WebUIDir, "web-dir", "web/dist", "Directory for WebUI")
-	flag.IntVar(&config.MaxWorkers, "max-workers", 100, "Maximum number of worker goroutines")
-	flag.IntVar(&config.MaxMessages, "max-messages", 1000, "Maximum message buffer size")
+	flag.StringVar(&config.WebUIDir, "web-dir", "web/dist", "Directory for the built WebUI")
+	flag.IntVar(&config.MaxWorkers, "max-workers", 100, "Number of message routing workers")
+	flag.IntVar(&config.MaxMessages, "max-messages", 1000, "Message buffer size")
+	flag.StringVar(&config.LogLevel, "log-level", "info", "Log level: debug, info, warn, error")
+	showVersion := flag.Bool("version", false, "Print the version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("go-red", version)
+		os.Exit(0)
+	}
 	return config
+}
+
+// setupLogging installs a leveled slog handler as the process-wide default.
+// The standard log package is routed through it too, so node packages that
+// still use log.Printf end up in the same stream.
+func setupLogging(level string) {
+	var lvl slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn", "warning":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})))
+}
+
+// server bundles the dependencies the REST handlers need.
+type server struct {
+	engine    *engine.FlowEngine
+	registry  *registry.NodeRegistry
+	ws        *websocket.WebSocketHandler
+	webDir    string
+	startedAt time.Time
+}
+
+// newRouter wires every REST route, the WebSocket endpoint (when ws is not
+// nil) and the static WebUI with SPA fallback into one handler.
+func newRouter(e *engine.FlowEngine, reg *registry.NodeRegistry, ws *websocket.WebSocketHandler, webDir string) http.Handler {
+	s := &server{engine: e, registry: reg, ws: ws, webDir: webDir, startedAt: time.Now()}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/flows", s.handleGetFlows)
+	mux.HandleFunc("POST /api/flows", s.handleCreateFlow)
+	mux.HandleFunc("POST /api/flows/import", s.handleImportFlow)
+	mux.HandleFunc("GET /api/flows/{id}", s.handleGetFlow)
+	mux.HandleFunc("PUT /api/flows/{id}", s.handleUpdateFlow)
+	mux.HandleFunc("DELETE /api/flows/{id}", s.handleDeleteFlow)
+	mux.HandleFunc("POST /api/flows/{id}/deploy", s.handleDeployFlow)
+	mux.HandleFunc("POST /api/flows/{id}/undeploy", s.handleUndeployFlow)
+	mux.HandleFunc("GET /api/flows/{id}/export", s.handleExportFlow)
+	mux.HandleFunc("GET /api/nodes", s.handleGetNodes)
+	mux.HandleFunc("GET /api/nodes/{type}", s.handleGetNode)
+	mux.HandleFunc("GET /api/messages", s.handleGetMessages)
+	if ws != nil {
+		mux.HandleFunc("GET /ws", ws.ServeWebSocket)
+	}
+	mux.Handle("/", spaHandler(webDir))
+	return mux
+}
+
+// spaHandler serves the built WebUI. Existing files are served as-is;
+// any other extension-less path falls back to index.html so client-side
+// routes survive a reload. Missing files with an extension are a plain 404.
+func spaHandler(dir string) http.Handler {
+	files := http.FileServer(http.Dir(dir))
+	index := filepath.Join(dir, "index.html")
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clean := path.Clean("/" + r.URL.Path)
+		full := filepath.Join(dir, filepath.FromSlash(clean))
+
+		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			files.ServeHTTP(w, r)
+			return
+		}
+		if path.Ext(clean) != "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		f, err := os.Open(index)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		// ServeContent (not ServeFile) so the response does not depend on
+		// the request path at all: no "/index.html" redirect and no
+		// rejection of paths containing "..".
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeContent(w, r, "index.html", info.ModTime(), f)
+	})
 }
 
 // sanitizeString strips null bytes and caps the length of user-supplied
@@ -209,64 +274,117 @@ func sanitizeString(s string) string {
 	return s
 }
 
-// writeError logs the full error server-side and returns only a generic,
-// safe message to the client so internal details (file paths, wrapped
-// errors, etc.) are never exposed over the API.
-func writeError(w http.ResponseWriter, status int, publicMessage string, err error) {
-	if err != nil {
-		log.Printf("[ERROR] %s: %v", publicMessage, err)
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Warn("failed to write response", "err", err)
 	}
-	http.Error(w, publicMessage, status)
 }
 
-func handleGetFlows(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
-	flows := e.GetAllFlows()
+// writeError sends a JSON error body with the given status.
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, dto.ErrorResponse{Error: message})
+}
+
+// statusForError maps engine errors to HTTP status codes.
+func statusForError(err error) int {
+	switch {
+	case errors.Is(err, engine.ErrFlowNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, engine.ErrFlowExists):
+		return http.StatusConflict
+	case errors.Is(err, engine.ErrFlowNotDeployed):
+		return http.StatusConflict
+	case errors.Is(err, engine.ErrInvalidFlowID):
+		return http.StatusBadRequest
+	case errors.Is(err, engine.ErrInvalidFlow), errors.Is(err, engine.ErrNodeInit):
+		return http.StatusUnprocessableEntity
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// writeEngineError turns an engine error into a response. Errors the engine
+// classifies (see engine's sentinel errors) are user-facing and returned as
+// they are; anything else is logged in full and answered generically so
+// internal details never reach a client.
+func writeEngineError(w http.ResponseWriter, err error) {
+	status := statusForError(err)
+	if status == http.StatusInternalServerError {
+		slog.Error("request failed", "err", err)
+		writeError(w, status, "internal error")
+		return
+	}
+	writeError(w, status, err.Error())
+}
+
+// decodeJSON reads a size-capped JSON request body into v.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	return json.NewDecoder(r.Body).Decode(v)
+}
+
+func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	flows := s.engine.GetAllFlows()
+	deployed := 0
+	for _, flow := range flows {
+		if s.engine.IsDeployed(flow.ID) {
+			deployed++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":        "ok",
+		"version":       version,
+		"flows":         len(flows),
+		"deployed":      deployed,
+		"uptimeSeconds": int(time.Since(s.startedAt).Seconds()),
+	})
+}
+
+func (s *server) handleGetFlows(w http.ResponseWriter, r *http.Request) {
+	flows := s.engine.GetAllFlows()
 	response := make([]dto.FlowSummary, len(flows))
 	for i, flow := range flows {
 		response[i] = dto.ToWireSummary(flow)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, http.StatusOK, response)
 }
 
-func handleCreateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
+func (s *server) handleCreateFlow(w http.ResponseWriter, r *http.Request) {
 	var request dto.FlowCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body", err)
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	request.Name = sanitizeString(request.Name)
+	request.Name = strings.TrimSpace(sanitizeString(request.Name))
 	request.Description = sanitizeString(request.Description)
-	flow, err := e.CreateFlow(request.ID, request.Name)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create flow", err)
+	if request.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if request.Description != "" {
-		flow.Description = request.Description
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(dto.ToWire(flow))
-}
 
-func handleGetFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
-	flowID := r.PathValue("id")
-	flow, err := e.GetFlow(flowID)
+	flow, err := s.engine.CreateFlow(request.ID, request.Name, request.Description)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "flow not found", err)
+		writeEngineError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(dto.ToWire(flow))
+	writeJSON(w, http.StatusCreated, dto.ToWire(flow))
 }
 
-func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
-	flowID := r.PathValue("id")
+func (s *server) handleGetFlow(w http.ResponseWriter, r *http.Request) {
+	flow, err := s.engine.GetFlow(r.PathValue("id"))
+	if err != nil {
+		writeEngineError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, dto.ToWire(flow))
+}
 
+func (s *server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 	var request dto.FlowUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body", err)
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if request.Name != nil {
@@ -283,209 +401,121 @@ func handleUpdateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngi
 		request.Nodes[id] = node
 	}
 
-	// Get existing flow
-	flow, err := e.GetFlow(flowID)
+	flow, err := s.engine.UpdateFlow(r.PathValue("id"), func(f *engine.Flow) error {
+		request.ApplyTo(f)
+		return nil
+	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "flow not found", err)
+		writeEngineError(w, err)
 		return
 	}
-
-	request.ApplyTo(flow)
-
-	// Save the flow
-	if e.GetStateManager() != nil {
-		e.GetStateManager().SaveFlow(flow)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(dto.ToWire(flow))
+	writeJSON(w, http.StatusOK, dto.ToWire(flow))
 }
 
-func handleDeleteFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
+func (s *server) handleDeleteFlow(w http.ResponseWriter, r *http.Request) {
 	flowID := r.PathValue("id")
-
-	// First undeploy the flow if it's active
-	e.Undeploy(flowID)
-
-	// Delete from state manager
-	if e.GetStateManager() != nil {
-		e.GetStateManager().DeleteFlow(flowID)
+	if err := s.engine.DeleteFlow(flowID); err != nil {
+		writeEngineError(w, err)
+		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "deleted", "flowId": flowID})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "deleted", "flowId": flowID})
 }
 
-func handleDeployFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
+func (s *server) handleDeployFlow(w http.ResponseWriter, r *http.Request) {
 	flowID := r.PathValue("id")
-	log.Printf("[REST API] Deploy request for flow: %s", flowID)
-
-	// Check if flow is already deployed
-	if existingFlow, err := e.GetFlow(flowID); err == nil && existingFlow != nil {
-		log.Printf("[REST API] Flow %s is already deployed, returning success", flowID)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":  "deployed",
-			"flowId":  flowID,
-			"message": "Flow was already deployed",
-		})
+	if err := s.engine.DeployFlow(flowID); err != nil {
+		writeEngineError(w, err)
 		return
 	}
-
-	// Flow not in memory, try to load from state manager
-	var flow *engine.Flow
-	if e.GetStateManager() != nil {
-		var err error
-		flow, err = e.GetStateManager().LoadFlow(flowID)
-		if err != nil {
-			log.Printf("[REST API] Failed to load flow %s from state manager: %v", flowID, err)
-			http.Error(w, "flow not found", http.StatusNotFound)
-			return
-		}
-		log.Printf("[REST API] Loaded flow %s from state manager, deploying...", flowID)
-	} else {
-		log.Printf("[REST API] No state manager configured")
-		http.Error(w, "state manager not configured", http.StatusInternalServerError)
-		return
-	}
-
-	// Deploy the flow
-	log.Printf("[REST API] Deploying flow %s with %d nodes and %d connections", flowID, len(flow.Nodes), len(flow.Connections))
-	if err := e.Deploy(flow); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to deploy flow "+flowID, err)
-		return
-	}
-
-	log.Printf("[REST API] Flow %s deployed successfully via REST API", flowID)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "deployed", "flowId": flowID})
+	writeJSON(w, http.StatusOK, dto.DeployResponse{FlowID: flowID, Status: dto.FlowStatusRunning})
 }
 
-func handleUndeployFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
+func (s *server) handleUndeployFlow(w http.ResponseWriter, r *http.Request) {
 	flowID := r.PathValue("id")
-	if err := e.Undeploy(flowID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to undeploy flow "+flowID, err)
+	if err := s.engine.Undeploy(flowID); err != nil {
+		writeEngineError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "undeployed", "flowId": flowID})
+	writeJSON(w, http.StatusOK, dto.DeployResponse{FlowID: flowID, Status: dto.FlowStatusDraft})
 }
 
-func handleGetNodes(w http.ResponseWriter, r *http.Request, reg *registry.NodeRegistry) {
-	nodes := reg.GetAllNodes()
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(nodes)
+func (s *server) handleGetNodes(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.registry.GetAllNodes())
 }
 
-func handleGetNode(w http.ResponseWriter, r *http.Request, reg *registry.NodeRegistry) {
-	nodeType := r.PathValue("type")
-	metadata, err := reg.GetMetadata(nodeType)
+func (s *server) handleGetNode(w http.ResponseWriter, r *http.Request) {
+	metadata, err := s.registry.GetMetadata(r.PathValue("type"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, "node type not found", err)
+		writeError(w, http.StatusNotFound, "node type not found")
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(metadata)
+	writeJSON(w, http.StatusOK, metadata)
 }
 
-func handleGetMessages(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
-	// Get query parameters for filtering
+func (s *server) handleGetMessages(w http.ResponseWriter, r *http.Request) {
 	flowID := r.URL.Query().Get("flowId")
-	limitStr := r.URL.Query().Get("limit")
 
 	var messages []engine.Message
-
 	if flowID != "" {
-		// Get messages for specific flow
-		messages = e.GetMessageLogForFlow(flowID)
+		messages = s.engine.GetMessageLogForFlow(flowID)
 	} else {
-		// Get all messages
-		messages = e.GetMessageLog()
+		messages = s.engine.GetMessageLog()
 	}
 
-	// Apply limit if specified
-	if limitStr != "" {
-		limit, err := strconv.Atoi(limitStr)
-		if err == nil && limit > 0 {
-			startIndex := len(messages) - limit
-			if startIndex < 0 {
-				startIndex = 0
-			}
-			messages = messages[startIndex:]
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 && len(messages) > limit {
+			messages = messages[len(messages)-limit:]
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(dto.MessagesToWire(messages))
+	writeJSON(w, http.StatusOK, dto.MessagesToWire(messages))
 }
 
-func handleExportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
+func (s *server) handleExportFlow(w http.ResponseWriter, r *http.Request) {
 	flowID := r.PathValue("id")
-
-	// Get the flow
-	flow, err := e.GetFlow(flowID)
+	flow, err := s.engine.GetFlow(flowID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "flow not found", err)
+		writeEngineError(w, err)
 		return
 	}
 
-	// Set headers for file download
-	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=flow-%s.json", flowID))
-
-	json.NewEncoder(w).Encode(dto.ToWire(flow))
+	writeJSON(w, http.StatusOK, dto.ToWire(flow))
 }
 
-func handleImportFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
-	// Only accept POST requests
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Parse the request body as a canonical wire Flow (the same shape
-	// produced by GET /api/flows/{id}/export).
+func (s *server) handleImportFlow(w http.ResponseWriter, r *http.Request) {
+	// The body is a canonical wire Flow (the same shape produced by
+	// GET /api/flows/{id}/export).
 	var importData dto.Flow
-	if err := json.NewDecoder(r.Body).Decode(&importData); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body", err)
+	if err := decodeJSON(w, r, &importData); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	importData.Name = sanitizeString(importData.Name)
+	importData.Name = strings.TrimSpace(sanitizeString(importData.Name))
 	importData.Description = sanitizeString(importData.Description)
-
-	// Validate required fields
 	if importData.Name == "" {
-		http.Error(w, "Flow name is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "flow name is required")
 		return
 	}
 
-	// Create a new flow with a new ID (to avoid conflicts)
-	// But keep the original ID for reference in the response
+	// Imported flows always get a fresh ID so they never collide with an
+	// existing flow; the original ID is echoed back for reference.
 	originalID := importData.ID
-
-	// Create the flow with a new UUID
 	flow := engine.NewFlow(uuid.New().String(), importData.Name)
 	dto.PopulateFromWire(flow, importData)
-
 	for nodeID, node := range flow.Nodes {
 		node.Type = sanitizeString(node.Type)
 		node.Name = sanitizeString(node.Name)
 		flow.Nodes[nodeID] = node
 	}
 
-	// Save the flow to state manager
-	if e.GetStateManager() != nil {
-		if err := e.GetStateManager().SaveFlow(flow); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to save flow", err)
-			return
-		}
+	if err := s.engine.AddFlow(flow); err != nil {
+		writeEngineError(w, err)
+		return
 	}
 
-	// Return success response
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"status":     "imported",
 		"flowId":     flow.ID,
 		"originalId": originalID,

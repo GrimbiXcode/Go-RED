@@ -4,8 +4,9 @@ package websocket
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -81,7 +82,8 @@ var AllMessageTypes = []MessageType{
 	MessageTypeAll,
 }
 
-// WebSocketMessage represents a message sent or received over WebSocket
+// WebSocketMessage represents a message sent or received over WebSocket.
+// Exactly one WebSocketMessage is sent per WebSocket frame.
 type WebSocketMessage struct {
 	Type      MessageType     `json:"type"`
 	Data      json.RawMessage `json:"data"`
@@ -89,15 +91,57 @@ type WebSocketMessage struct {
 	RequestID string          `json:"requestId,omitempty"`
 }
 
-// Client represents a WebSocket client connection
+const (
+	// writeWait is the time allowed to write a message to the peer.
+	writeWait = 10 * time.Second
+	// pongWait is the time allowed to read the next pong from the peer.
+	pongWait = 60 * time.Second
+	// pingPeriod is how often pings are sent; must be less than pongWait.
+	pingPeriod = 30 * time.Second
+	// maxMessageSize is the maximum inbound message size in bytes.
+	maxMessageSize = 512 * 1024
+	// sendBufferSize is the number of outbound messages buffered per client.
+	sendBufferSize = 256
+)
+
+// Client represents a WebSocket client connection.
+//
+// The send channel is never closed; the hub tells a client to go away by
+// closing done, and writePump reacts to that. This way nothing can ever
+// send on a closed channel, whichever goroutine is enqueuing.
 type Client struct {
 	hub            *Hub
 	conn           *websocket.Conn
 	send           chan WebSocketMessage
+	done           chan struct{}
+	closeOnce      sync.Once
 	messageHandler func(*Client, WebSocketMessage)
 }
 
-// Hub maintains the set of active clients and broadcasts messages to them
+// close asks writePump to send a close frame and stop. Safe to call more
+// than once and from any goroutine.
+func (c *Client) close() {
+	c.closeOnce.Do(func() {
+		if c.done != nil {
+			close(c.done)
+		}
+	})
+}
+
+// enqueue queues a message for the client without blocking. It returns
+// false if the client's send buffer is full.
+func (c *Client) enqueue(message WebSocketMessage) bool {
+	select {
+	case c.send <- message:
+		return true
+	default:
+		return false
+	}
+}
+
+// Hub maintains the set of active clients and broadcasts messages to them.
+// The clients map is only ever mutated by Run (via register/unregister) or
+// by removeClient, always under mu.
 type Hub struct {
 	clients    map[*Client]bool
 	broadcast  chan WebSocketMessage
@@ -116,6 +160,14 @@ func NewHub() *Hub {
 	}
 }
 
+func newMessage(messageType MessageType, data json.RawMessage) WebSocketMessage {
+	return WebSocketMessage{
+		Type:      messageType,
+		Data:      data,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
 // Run starts the hub's main loop
 func (h *Hub) Run() {
 	for {
@@ -123,35 +175,20 @@ func (h *Hub) Run() {
 		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client] = true
+			count := len(h.clients)
 			h.mu.Unlock()
-			log.Printf("WebSocket client connected. Total clients: %d", len(h.clients))
+			slog.Info("websocket client connected", "clients", count)
 
-			// Send initial state sync to new client
-			initialState := WebSocketMessage{
-				Type:      MessageTypeStateSync,
-				Data:      json.RawMessage(`{"message": "connected"}`),
-				Timestamp: time.Now().UTC().Format(time.RFC3339),
-			}
-			client.send <- initialState
+			client.enqueue(newMessage(MessageTypeStateSync, json.RawMessage(`{"message": "connected"}`)))
 
 		case client := <-h.unregister:
-			h.mu.Lock()
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-				close(client.send)
-			}
-			h.mu.Unlock()
-			log.Printf("WebSocket client disconnected. Total clients: %d", len(h.clients))
+			h.removeClient(client)
 
 		case message := <-h.broadcast:
 			h.mu.RLock()
 			for client := range h.clients {
-				select {
-				case client.send <- message:
-				default:
-					// Client buffer full, close connection
-					close(client.send)
-					delete(h.clients, client)
+				if !client.enqueue(message) {
+					slog.Warn("websocket client send buffer full, dropping broadcast", "type", message.Type)
 				}
 			}
 			h.mu.RUnlock()
@@ -159,46 +196,51 @@ func (h *Hub) Run() {
 	}
 }
 
+// removeClient drops a client from the hub and tells its writePump to
+// finish. Safe to call for a client that was already removed.
+func (h *Hub) removeClient(client *Client) {
+	h.mu.Lock()
+	_, known := h.clients[client]
+	if known {
+		delete(h.clients, client)
+	}
+	count := len(h.clients)
+	h.mu.Unlock()
+
+	client.close()
+	if known {
+		slog.Info("websocket client disconnected", "clients", count)
+	}
+}
+
 // Broadcast sends a message to all connected clients
 func (h *Hub) Broadcast(messageType MessageType, data interface{}) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		log.Printf("Error marshaling WebSocket message data: %v", err)
+		slog.Error("failed to marshal websocket broadcast", "type", messageType, "err", err)
 		return
 	}
 
-	message := WebSocketMessage{
-		Type:      messageType,
-		Data:      json.RawMessage(jsonData),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}
-
 	select {
-	case h.broadcast <- message:
+	case h.broadcast <- newMessage(messageType, jsonData):
 	default:
-		log.Println("Broadcast channel full, dropping message")
+		slog.Warn("websocket broadcast channel full, dropping message", "type", messageType)
 	}
 }
 
-// BroadcastToClient sends a message to a specific client
+// BroadcastToClient sends a message to a specific client. A client whose
+// send buffer is full loses the message (and is logged); it is not
+// disconnected here - a client that never drains its buffer trips the
+// write deadline in writePump and is removed through the normal path.
 func (h *Hub) BroadcastToClient(client *Client, messageType MessageType, data interface{}) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		log.Printf("Error marshaling WebSocket message data: %v", err)
+		slog.Error("failed to marshal websocket message", "type", messageType, "err", err)
 		return
 	}
 
-	message := WebSocketMessage{
-		Type:      messageType,
-		Data:      json.RawMessage(jsonData),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}
-
-	select {
-	case client.send <- message:
-	default:
-		close(client.send)
-		delete(h.clients, client)
+	if !client.enqueue(newMessage(messageType, jsonData)) {
+		slog.Warn("websocket client send buffer full, dropping message", "type", messageType)
 	}
 }
 
@@ -220,48 +262,64 @@ func (h *Hub) GetClients() []*Client {
 	return clients
 }
 
-// readPump pumps messages from the WebSocket connection to the hub
+// readPump pumps messages from the WebSocket connection to the handler.
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
 		c.conn.Close()
 	}()
 
-	c.conn.SetReadLimit(512 * 1024) // 512KB max message size
-	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.conn.SetReadLimit(maxMessageSize)
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
 
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket error: %v", err)
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
+				slog.Debug("websocket read error", "err", err)
 			}
 			break
 		}
 
 		var wsMessage WebSocketMessage
 		if err := json.Unmarshal(message, &wsMessage); err != nil {
-			log.Printf("Error unmarshaling WebSocket message: %v", err)
+			slog.Warn("ignoring malformed websocket message", "err", err, "bytes", len(message))
 			continue
 		}
 
-		// Handle the message using the custom message handler if provided
-		if c.messageHandler != nil {
-			c.messageHandler(c, wsMessage)
-		} else {
-			// Default handling - just log the message
-			log.Printf("Received WebSocket message of type: %s (no handler configured)", wsMessage.Type)
-		}
+		c.dispatch(wsMessage)
 	}
 }
 
-// writePump pumps messages from the hub to the WebSocket connection
+// dispatch runs the message handler for one inbound message. A panic in a
+// handler is logged and answered with an error message instead of taking
+// the whole server down.
+func (c *Client) dispatch(message WebSocketMessage) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("panic in websocket handler", "type", message.Type, "panic", r, "stack", string(debug.Stack()))
+			c.hub.BroadcastToClient(c, MessageTypeError, map[string]string{
+				"error":   "internal error",
+				"message": "the server failed to handle this message",
+			})
+		}
+	}()
+
+	if c.messageHandler == nil {
+		slog.Debug("websocket message without handler", "type", message.Type)
+		return
+	}
+	c.messageHandler(c, message)
+}
+
+// writePump pumps messages from the hub to the WebSocket connection, one
+// WebSocketMessage per frame, and keeps the connection alive with pings.
 func (c *Client) writePump() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
 		c.conn.Close()
@@ -269,47 +327,24 @@ func (c *Client) writePump() {
 
 	for {
 		select {
-		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if !ok {
-				// Hub closed the channel
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-
-			// Marshal the message directly - json.RawMessage is handled correctly by json.Marshal
-			msgJSON, err := json.Marshal(message)
+		case message := <-c.send:
+			data, err := json.Marshal(message)
 			if err != nil {
-				log.Printf("Error marshaling WebSocket message: %v", err)
+				slog.Error("failed to marshal websocket message", "type", message.Type, "err", err)
+				continue
+			}
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
 				return
 			}
 
-			w, err := c.conn.NextWriter(websocket.TextMessage)
-			if err != nil {
-				return
-			}
-
-			w.Write(msgJSON)
-
-			// Add queued messages to the current WebSocket message
-			n := len(c.send)
-			for i := 0; i < n; i++ {
-				w.Write([]byte("\n"))
-				nextMessage := <-c.send
-				nextMsgJSON, err := json.Marshal(nextMessage)
-				if err != nil {
-					log.Printf("Error marshaling WebSocket message: %v", err)
-					continue
-				}
-				w.Write(nextMsgJSON)
-			}
-
-			if err := w.Close(); err != nil {
-				return
-			}
+		case <-c.done:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			return
 
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
@@ -320,33 +355,33 @@ func (c *Client) writePump() {
 // ServeWebSocket handles WebSocket requests and upgrades the connection
 // It accepts an optional messageHandler function for custom message processing
 func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request, messageHandler func(*Client, WebSocketMessage)) {
-	// Check Origin header for CORS (optional, can be configured)
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		CheckOrigin: func(r *http.Request) bool {
-			// Allow all origins for development
-			// In production, you should validate the origin
+			// Every origin is accepted for now; origin checks and
+			// authentication are part of the Phase 6 security baseline
+			// (docs/NEXT_LEVEL_PLAN.md).
 			return true
 		},
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("WebSocket upgrade error: %v", err)
+		slog.Warn("websocket upgrade failed", "err", err)
 		return
 	}
 
 	client := &Client{
 		hub:            h,
 		conn:           conn,
-		send:           make(chan WebSocketMessage, 256),
+		send:           make(chan WebSocketMessage, sendBufferSize),
+		done:           make(chan struct{}),
 		messageHandler: messageHandler,
 	}
 
 	h.register <- client
 
-	// Start goroutines for reading and writing
 	go client.writePump()
 	go client.readPump()
 }

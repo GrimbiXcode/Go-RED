@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
-	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/dto"
 	"github.com/GrimbiXcode/Go-RED/internal/engine"
 	_ "github.com/GrimbiXcode/Go-RED/internal/nodes/debug"
 	_ "github.com/GrimbiXcode/Go-RED/internal/nodes/function"
@@ -16,32 +20,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockStateManager implements StateManager interface for testing
-type MockStateManager struct {
+// memoryStateManager is an in-memory engine.StateManager for handler tests.
+type memoryStateManager struct {
 	flows map[string]*engine.Flow
 }
 
-func NewMockStateManager() *MockStateManager {
-	return &MockStateManager{
-		flows: make(map[string]*engine.Flow),
-	}
+func newMemoryStateManager() *memoryStateManager {
+	return &memoryStateManager{flows: make(map[string]*engine.Flow)}
 }
 
-func (m *MockStateManager) SaveFlow(flow *engine.Flow) error {
-	m.flows[flow.ID] = flow
+func (m *memoryStateManager) SaveFlow(flow *engine.Flow) error {
+	m.flows[flow.ID] = flow.Clone()
 	return nil
 }
 
-func (m *MockStateManager) LoadFlow(flowID string) (*engine.Flow, error) {
-	flow, exists := m.flows[flowID]
-	if !exists {
-		return nil, &httpPathError{path: flowID, err: "not found"}
+func (m *memoryStateManager) LoadFlow(flowID string) (*engine.Flow, error) {
+	flow, ok := m.flows[flowID]
+	if !ok {
+		return nil, engine.ErrFlowNotFound
 	}
-	// Return a copy to avoid mutation
 	return flow.Clone(), nil
 }
 
-func (m *MockStateManager) LoadAllFlows() ([]*engine.Flow, error) {
+func (m *memoryStateManager) LoadAllFlows() ([]*engine.Flow, error) {
 	flows := make([]*engine.Flow, 0, len(m.flows))
 	for _, flow := range m.flows {
 		flows = append(flows, flow.Clone())
@@ -49,338 +50,332 @@ func (m *MockStateManager) LoadAllFlows() ([]*engine.Flow, error) {
 	return flows, nil
 }
 
-func (m *MockStateManager) DeleteFlow(flowID string) error {
+func (m *memoryStateManager) DeleteFlow(flowID string) error {
+	if _, ok := m.flows[flowID]; !ok {
+		return engine.ErrFlowNotFound
+	}
 	delete(m.flows, flowID)
 	return nil
 }
 
-// httpPathError is a simple error type for testing
-type httpPathError struct {
-	path string
-	err  string
+var _ engine.StateManager = (*memoryStateManager)(nil)
+
+// newTestServer returns a started engine and the real router (without the
+// WebSocket endpoint) so tests exercise exactly the routes main wires up.
+func newTestServer(t *testing.T) (*engine.FlowEngine, http.Handler) {
+	t.Helper()
+	reg := registry.GetGlobalRegistry()
+	e := engine.NewFlowEngine(engine.EngineConfig{
+		WorkerPoolSize:    4,
+		MessageBufferSize: 100,
+		DefaultTimeout:    5 * time.Second,
+	}, reg)
+	e.SetStateManager(newMemoryStateManager())
+	require.NoError(t, e.Start())
+	t.Cleanup(func() { e.Stop() })
+	return e, newRouter(e, reg, nil, t.TempDir())
 }
 
-func (e *httpPathError) Error() string {
-	return e.path + ": " + e.err
-}
-
-func createTestFlowEngine() *engine.FlowEngine {
-	config := engine.EngineConfig{
-		WorkerPoolSize:    10,
-		MessageBufferSize: 1000,
-		DefaultTimeout:    30,
-		MaxRetries:        3,
-		RetryBackoff:      1,
-	}
-	// Use the global registry which has built-in nodes registered via init()
-	nodeRegistry := registry.GetGlobalRegistry()
-
-	engine := engine.NewFlowEngine(config, nodeRegistry)
-	mockSM := NewMockStateManager()
-	engine.SetStateManager(mockSM)
-
-	return engine
-}
-
-// Modified version of handleDeployFlow for testing that accepts flowID directly
-func handleDeployFlowWithID(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine, flowID string) {
-	log.Printf("[REST API] Deploy request for flow: %s", flowID)
-
-	// Check if flow is already deployed
-	if existingFlow, err := e.GetFlow(flowID); err == nil && existingFlow != nil {
-		log.Printf("[REST API] Flow %s is already deployed, returning success", flowID)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":  "deployed",
-			"flowId":  flowID,
-			"message": "Flow was already deployed",
-		})
-		return
-	}
-
-	// Flow not in memory, try to load from state manager
-	var flow *engine.Flow
-	if e.GetStateManager() != nil {
-		var err error
-		flow, err = e.GetStateManager().LoadFlow(flowID)
-		if err != nil {
-			log.Printf("[REST API] Failed to load flow %s from state manager: %v", flowID, err)
-			http.Error(w, "flow not found", http.StatusNotFound)
-			return
-		}
-		log.Printf("[REST API] Loaded flow %s from state manager, deploying...", flowID)
+func do(t *testing.T, h http.Handler, method, target string, body interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	var reader *bytes.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		require.NoError(t, err)
+		reader = bytes.NewReader(data)
 	} else {
-		log.Printf("[REST API] No state manager configured")
-		http.Error(w, "state manager not configured", http.StatusInternalServerError)
-		return
+		reader = bytes.NewReader(nil)
 	}
-
-	// Deploy the flow
-	log.Printf("[REST API] Deploying flow %s with %d nodes and %d connections", flowID, len(flow.Nodes), len(flow.Connections))
-	if err := e.Deploy(flow); err != nil {
-		log.Printf("[REST API] Failed to deploy flow %s: %v", flowID, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("[REST API] Flow %s deployed successfully via REST API", flowID)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "deployed", "flowId": flowID})
+	req := httptest.NewRequest(method, target, reader)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
 }
 
-func TestHandleDeployFlow(t *testing.T) {
-	t.Run("should deploy flow not in memory", func(t *testing.T) {
-		e := createTestFlowEngine()
-		e.Start()
-		defer e.Stop()
+func decodeBody(t *testing.T, w *httptest.ResponseRecorder, v interface{}) {
+	t.Helper()
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), v), "body: %s", w.Body.String())
+}
 
-		// Create a flow in the state manager
-		flow := engine.NewFlow("test-flow-1", "Test Flow 1")
-		flow.Nodes["node-1"] = &engine.Node{
-			ID:   "node-1",
-			Type: "debug",
-			X:    0,
-			Y:    0,
-		}
-		mockSM := e.GetStateManager().(*MockStateManager)
-		mockSM.SaveFlow(flow)
+func TestCreateFlow(t *testing.T) {
+	_, h := newTestServer(t)
 
-		// Create request
-		w := httptest.NewRecorder()
+	w := do(t, h, http.MethodPost, "/api/flows", dto.FlowCreateRequest{ID: "demo", Name: "Demo", Description: "hello"})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created dto.Flow
+	decodeBody(t, w, &created)
+	assert.Equal(t, "demo", created.ID)
+	assert.Equal(t, "Demo", created.Name)
+	assert.Equal(t, "hello", created.Description)
+	assert.Equal(t, dto.FlowStatusDraft, created.Status)
 
-		// Call handler with explicit flow ID
-		handleDeployFlowWithID(w, nil, e, "test-flow-1")
+	w = do(t, h, http.MethodGet, "/api/flows", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var list []dto.FlowSummary
+	decodeBody(t, w, &list)
+	require.Len(t, list, 1)
+	assert.Equal(t, "demo", list[0].ID)
 
-		// Verify response
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-
-		var response map[string]interface{}
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
-		assert.Equal(t, "deployed", response["status"])
-		assert.Equal(t, "test-flow-1", response["flowId"])
-
-		// Verify flow is now deployed
-		deployedFlow, err := e.GetFlow("test-flow-1")
-		require.NoError(t, err)
-		assert.Equal(t, engine.FlowStatusActive, deployedFlow.Status)
+	t.Run("duplicate ID is a conflict", func(t *testing.T) {
+		w := do(t, h, http.MethodPost, "/api/flows", dto.FlowCreateRequest{ID: "demo", Name: "Again"})
+		assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
 	})
 
-	t.Run("should return success for already deployed flow", func(t *testing.T) {
-		e := createTestFlowEngine()
-		e.Start()
-		defer e.Stop()
-
-		// Create and deploy a flow first
-		flow := engine.NewFlow("test-flow-2", "Test Flow 2")
-		flow.Nodes["node-1"] = &engine.Node{
-			ID:   "node-1",
-			Type: "debug",
-		}
-		err := e.Deploy(flow)
-		require.NoError(t, err)
-
-		// Try to deploy again via REST API
-		w := httptest.NewRecorder()
-
-		handleDeployFlowWithID(w, nil, e, "test-flow-2")
-
-		// Should return success, not error
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var response map[string]interface{}
-		err = json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
-		assert.Equal(t, "deployed", response["status"])
-		assert.Equal(t, "test-flow-2", response["flowId"])
-		assert.Equal(t, "Flow was already deployed", response["message"])
+	t.Run("missing name is rejected", func(t *testing.T) {
+		w := do(t, h, http.MethodPost, "/api/flows", dto.FlowCreateRequest{Name: "   "})
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("should return 404 for non-existent flow", func(t *testing.T) {
-		e := createTestFlowEngine()
-		e.Start()
-		defer e.Stop()
+	t.Run("invalid ID is rejected before it reaches storage", func(t *testing.T) {
+		w := do(t, h, http.MethodPost, "/api/flows", dto.FlowCreateRequest{ID: "../../etc/passwd", Name: "Evil"})
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		var resp dto.ErrorResponse
+		decodeBody(t, w, &resp)
+		assert.Contains(t, resp.Error, "invalid flow ID")
+	})
 
-		// Try to deploy a flow that doesn't exist
-		w := httptest.NewRecorder()
+	t.Run("generated IDs are valid", func(t *testing.T) {
+		w := do(t, h, http.MethodPost, "/api/flows", dto.FlowCreateRequest{Name: "No ID"})
+		require.Equal(t, http.StatusCreated, w.Code)
+		var created dto.Flow
+		decodeBody(t, w, &created)
+		assert.NoError(t, engine.ValidateFlowID(created.ID))
+	})
+}
 
-		handleDeployFlowWithID(w, nil, e, "non-existent")
+func TestDeployLifecycle(t *testing.T) {
+	e, h := newTestServer(t)
 
+	w := do(t, h, http.MethodPost, "/api/flows", dto.FlowCreateRequest{ID: "lc", Name: "Lifecycle"})
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	// A flow created through the API can be edited ...
+	w = do(t, h, http.MethodPut, "/api/flows/lc", dto.FlowUpdateRequest{
+		Nodes: map[string]dto.Node{
+			"n1": {ID: "n1", Type: "debug", Position: dto.Position{X: 10, Y: 20}, Config: map[string]interface{}{}},
+		},
+	})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var updated dto.Flow
+	decodeBody(t, w, &updated)
+	assert.Equal(t, 10.0, updated.Nodes["n1"].Position.X)
+
+	// ... and then actually deployed (this used to be a silent no-op).
+	w = do(t, h, http.MethodPost, "/api/flows/lc/deploy", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var deployResp dto.DeployResponse
+	decodeBody(t, w, &deployResp)
+	assert.Equal(t, dto.FlowStatusRunning, deployResp.Status)
+	assert.True(t, e.IsDeployed("lc"))
+
+	w = do(t, h, http.MethodGet, "/api/flows/lc", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var fetched dto.Flow
+	decodeBody(t, w, &fetched)
+	assert.Equal(t, dto.FlowStatusRunning, fetched.Status)
+
+	// Editing while running is allowed and does not disturb the runtime.
+	w = do(t, h, http.MethodPut, "/api/flows/lc", dto.FlowUpdateRequest{
+		Nodes: map[string]dto.Node{
+			"n2": {ID: "n2", Type: "debug", Config: map[string]interface{}{}},
+		},
+	})
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, e.IsDeployed("lc"))
+
+	// Deploying again is a redeploy, not an error.
+	w = do(t, h, http.MethodPost, "/api/flows/lc/deploy", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, e.IsDeployed("lc"))
+
+	w = do(t, h, http.MethodPost, "/api/flows/lc/undeploy", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	decodeBody(t, w, &deployResp)
+	assert.Equal(t, dto.FlowStatusDraft, deployResp.Status)
+	assert.False(t, e.IsDeployed("lc"))
+
+	// The flow is still listed after undeploy.
+	w = do(t, h, http.MethodGet, "/api/flows", nil)
+	var list []dto.FlowSummary
+	decodeBody(t, w, &list)
+	require.Len(t, list, 1)
+	assert.Equal(t, dto.FlowStatusDraft, list[0].Status)
+
+	w = do(t, h, http.MethodDelete, "/api/flows/lc", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	w = do(t, h, http.MethodGet, "/api/flows/lc", nil)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	w = do(t, h, http.MethodDelete, "/api/flows/lc", nil)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestDeployErrors(t *testing.T) {
+	_, h := newTestServer(t)
+
+	t.Run("unknown flow is 404", func(t *testing.T) {
+		w := do(t, h, http.MethodPost, "/api/flows/nope/deploy", nil)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		w = do(t, h, http.MethodPost, "/api/flows/nope/undeploy", nil)
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
-	t.Run("should load from state manager and deploy", func(t *testing.T) {
-		e := createTestFlowEngine()
-		e.Start()
-		defer e.Stop()
+	t.Run("invalid flow is 422 with a readable message", func(t *testing.T) {
+		w := do(t, h, http.MethodPost, "/api/flows", dto.FlowCreateRequest{ID: "empty", Name: "Empty"})
+		require.Equal(t, http.StatusCreated, w.Code)
 
-		// Create a flow in state manager but not in engine memory
-		flow := engine.NewFlow("test-flow-3", "Test Flow 3")
-		flow.Nodes["node-1"] = &engine.Node{
-			ID:   "node-1",
-			Type: "debug",
-		}
-		flow.Nodes["node-2"] = &engine.Node{
-			ID:   "node-2",
-			Type: "debug",
-		}
-		flow.Connections = []engine.NodeConnection{
-			{
-				ID:         "conn-1",
-				SourceNode: "node-1",
-				TargetNode: "node-2",
-			},
-		}
-		mockSM := e.GetStateManager().(*MockStateManager)
-		mockSM.SaveFlow(flow)
+		w = do(t, h, http.MethodPost, "/api/flows/empty/deploy", nil)
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+		var resp dto.ErrorResponse
+		decodeBody(t, w, &resp)
+		assert.Contains(t, resp.Error, "at least one node")
 
-		// Flow should not be in engine yet
-		_, err := e.GetFlow("test-flow-3")
-		assert.Error(t, err)
+		w = do(t, h, http.MethodGet, "/api/flows/empty", nil)
+		var flow dto.Flow
+		decodeBody(t, w, &flow)
+		assert.Equal(t, dto.FlowStatusDraft, flow.Status, "a rejected deploy leaves the flow as it was")
+	})
 
-		// Deploy via REST API
-		w := httptest.NewRecorder()
+	t.Run("connection to a missing node is 422", func(t *testing.T) {
+		w := do(t, h, http.MethodPost, "/api/flows", dto.FlowCreateRequest{ID: "badconn", Name: "Bad"})
+		require.Equal(t, http.StatusCreated, w.Code)
+		w = do(t, h, http.MethodPut, "/api/flows/badconn", dto.FlowUpdateRequest{
+			Nodes:       map[string]dto.Node{"n1": {ID: "n1", Type: "debug", Config: map[string]interface{}{}}},
+			Connections: []dto.Connection{{ID: "c1", SourceNode: "n1", TargetNode: "ghost"}},
+		})
+		require.Equal(t, http.StatusOK, w.Code)
+		w = do(t, h, http.MethodPost, "/api/flows/badconn/deploy", nil)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+	})
 
-		handleDeployFlowWithID(w, nil, e, "test-flow-3")
+	t.Run("unknown node type is 422", func(t *testing.T) {
+		w := do(t, h, http.MethodPost, "/api/flows", dto.FlowCreateRequest{ID: "unknowntype", Name: "Unknown"})
+		require.Equal(t, http.StatusCreated, w.Code)
+		w = do(t, h, http.MethodPut, "/api/flows/unknowntype", dto.FlowUpdateRequest{
+			Nodes: map[string]dto.Node{"n1": {ID: "n1", Type: "does-not-exist", Config: map[string]interface{}{}}},
+		})
+		require.Equal(t, http.StatusOK, w.Code)
+		w = do(t, h, http.MethodPost, "/api/flows/unknowntype/deploy", nil)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
 
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var response map[string]interface{}
-		err = json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
-		assert.Equal(t, "deployed", response["status"])
-
-		// Verify flow is now deployed with correct node and connection counts
-		deployedFlow, err := e.GetFlow("test-flow-3")
-		require.NoError(t, err)
-		assert.Len(t, deployedFlow.Nodes, 2)
-		assert.Len(t, deployedFlow.Connections, 1)
+		w = do(t, h, http.MethodGet, "/api/flows/unknowntype", nil)
+		var flow dto.Flow
+		decodeBody(t, w, &flow)
+		assert.Equal(t, dto.FlowStatusError, flow.Status)
 	})
 }
 
-func TestHandleDeployFlow_ValidationErrors(t *testing.T) {
-	t.Run("should return 500 for invalid flow in state manager", func(t *testing.T) {
-		e := createTestFlowEngine()
-		e.Start()
-		defer e.Stop()
+func TestPathTraversalIDsNeverReachStorage(t *testing.T) {
+	_, h := newTestServer(t)
 
-		// Create an invalid flow (no nodes) in state manager
-		flow := engine.NewFlow("invalid-flow", "Invalid Flow")
-		// Don't add any nodes - will fail validation
-		mockSM := e.GetStateManager().(*MockStateManager)
-		mockSM.SaveFlow(flow)
+	for _, target := range []string{
+		"/api/flows/..%2F..%2Fetc%2Fpasswd",
+		"/api/flows/..%2F..%2Fetc%2Fpasswd/deploy",
+	} {
+		w := do(t, h, http.MethodGet, target, nil)
+		assert.True(t, w.Code == http.StatusNotFound || w.Code == http.StatusBadRequest || w.Code == http.StatusMethodNotAllowed, "%s -> %d", target, w.Code)
+	}
+	w := do(t, h, http.MethodDelete, "/api/flows/..%2F..%2Fetc%2Fpasswd", nil)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
 
-		// Try to deploy
-		w := httptest.NewRecorder()
+func TestImportFlow(t *testing.T) {
+	_, h := newTestServer(t)
 
-		handleDeployFlowWithID(w, nil, e, "invalid-flow")
-
-		// Should return 500 because deployment fails
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	w := do(t, h, http.MethodPost, "/api/flows/import", dto.Flow{
+		ID:   "original",
+		Name: "Imported",
+		Nodes: map[string]dto.Node{
+			"n1": {ID: "n1", Type: "inject", Config: map[string]interface{}{}},
+			"n2": {ID: "n2", Type: "debug", Config: map[string]interface{}{}},
+		},
+		Connections: []dto.Connection{{ID: "c1", SourceNode: "n1", TargetNode: "n2"}},
 	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var resp map[string]interface{}
+	decodeBody(t, w, &resp)
+	assert.Equal(t, "original", resp["originalId"])
+	newID, _ := resp["flowId"].(string)
+	require.NotEmpty(t, newID)
+	assert.NotEqual(t, "original", newID)
 
-	t.Run("should return 500 for flow with invalid connections", func(t *testing.T) {
-		e := createTestFlowEngine()
-		e.Start()
-		defer e.Stop()
+	// The imported flow is immediately visible and deployable.
+	w = do(t, h, http.MethodGet, "/api/flows/"+newID, nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var flow dto.Flow
+	decodeBody(t, w, &flow)
+	assert.Len(t, flow.Nodes, 2)
+	assert.Len(t, flow.Connections, 1)
 
-		// Create a flow with invalid connection (references non-existent node)
-		flow := engine.NewFlow("invalid-conn-flow", "Invalid Connection Flow")
-		flow.Nodes["node-1"] = &engine.Node{
-			ID:   "node-1",
-			Type: "debug",
-		}
-		// Connection references non-existent node
-		flow.Connections = []engine.NodeConnection{
-			{
-				ID:         "conn-1",
-				SourceNode: "node-1",
-				TargetNode: "node-does-not-exist",
-			},
-		}
-		mockSM := e.GetStateManager().(*MockStateManager)
-		mockSM.SaveFlow(flow)
+	w = do(t, h, http.MethodPost, "/api/flows/"+newID+"/deploy", nil)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-		// Try to deploy
-		w := httptest.NewRecorder()
-
-		handleDeployFlowWithID(w, nil, e, "invalid-conn-flow")
-
-		// Should return 500 because validation fails
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	t.Run("name is required", func(t *testing.T) {
+		w := do(t, h, http.MethodPost, "/api/flows/import", dto.Flow{ID: "x"})
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
+}
+
+func TestHealth(t *testing.T) {
+	_, h := newTestServer(t)
+	w := do(t, h, http.MethodGet, "/api/health", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	decodeBody(t, w, &resp)
+	assert.Equal(t, "ok", resp["status"])
+}
+
+func TestSPAFallback(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>app</html>"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "assets"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets", "app.js"), []byte("console.log(1)"), 0o644))
+
+	h := spaHandler(dir)
+	get := func(target string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+		return w
+	}
+
+	assert.Equal(t, "<html>app</html>", get("/").Body.String())
+	assert.Equal(t, "<html>app</html>", get("/flow/abc").Body.String(), "client-side routes fall back to index.html")
+	assert.Equal(t, "console.log(1)", get("/assets/app.js").Body.String())
+	assert.Equal(t, http.StatusNotFound, get("/assets/missing.js").Code, "missing assets are a real 404")
+	assert.Equal(t, "<html>app</html>", get("/../../etc/passwd").Body.String(), "traversal attempts stay inside the web dir")
 }
 
 func TestFlowValidation(t *testing.T) {
 	t.Run("should pass validation with valid nodes and connections", func(t *testing.T) {
 		flow := engine.NewFlow("valid-flow", "Valid Flow")
-		flow.Nodes["node-1"] = &engine.Node{
-			ID:   "node-1",
-			Type: "debug",
-		}
-		flow.Nodes["node-2"] = &engine.Node{
-			ID:   "node-2",
-			Type: "debug",
-		}
-		flow.Connections = []engine.NodeConnection{
-			{
-				ID:         "conn-1",
-				SourceNode: "node-1",
-				TargetNode: "node-2",
-			},
-		}
-
-		err := flow.Validate()
-		assert.NoError(t, err)
+		flow.Nodes["node-1"] = &engine.Node{ID: "node-1", Type: "debug"}
+		flow.Nodes["node-2"] = &engine.Node{ID: "node-2", Type: "debug"}
+		flow.Connections = []engine.NodeConnection{{ID: "conn-1", SourceNode: "node-1", TargetNode: "node-2"}}
+		assert.NoError(t, flow.Validate())
 	})
 
 	t.Run("should fail validation with no nodes", func(t *testing.T) {
 		flow := engine.NewFlow("no-nodes-flow", "No Nodes Flow")
-
 		err := flow.Validate()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "at least one node")
 	})
 
 	t.Run("should fail validation with connection to non-existent node", func(t *testing.T) {
 		flow := engine.NewFlow("bad-conn-flow", "Bad Connection Flow")
-		flow.Nodes["node-1"] = &engine.Node{
-			ID:   "node-1",
-			Type: "debug",
-		}
-		flow.Connections = []engine.NodeConnection{
-			{
-				ID:         "conn-1",
-				SourceNode: "node-1",
-				TargetNode: "node-does-not-exist",
-			},
-		}
-
+		flow.Nodes["node-1"] = &engine.Node{ID: "node-1", Type: "debug"}
+		flow.Connections = []engine.NodeConnection{{ID: "conn-1", SourceNode: "node-1", TargetNode: "node-does-not-exist"}}
 		err := flow.Validate()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "non-existent")
 	})
 
 	t.Run("should fail validation with connection from non-existent node", func(t *testing.T) {
 		flow := engine.NewFlow("bad-source-flow", "Bad Source Flow")
-		flow.Nodes["node-1"] = &engine.Node{
-			ID:   "node-1",
-			Type: "debug",
-		}
-		flow.Connections = []engine.NodeConnection{
-			{
-				ID:         "conn-1",
-				SourceNode: "node-does-not-exist",
-				TargetNode: "node-1",
-			},
-		}
-
+		flow.Nodes["node-1"] = &engine.Node{ID: "node-1", Type: "debug"}
+		flow.Connections = []engine.NodeConnection{{ID: "conn-1", SourceNode: "node-does-not-exist", TargetNode: "node-1"}}
 		err := flow.Validate()
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "non-existent")
 	})
 }
-
-// Ensure StateManager interface is satisfied
-var _ engine.StateManager = (*MockStateManager)(nil)

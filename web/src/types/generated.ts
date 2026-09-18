@@ -97,6 +97,16 @@ export interface Message {
   timestamp: string;
 }
 
+export interface DeployResponse {
+  flowId: string;
+  status: FlowStatus;
+  message?: string;
+}
+
+export interface ErrorResponse {
+  error: string;
+}
+
 export interface Port {
   id: string;
   name: string;

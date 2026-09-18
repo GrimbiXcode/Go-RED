@@ -123,3 +123,16 @@ type FlowUpdateRequest struct {
 	Connections []Connection    `json:"connections,omitempty"`
 	Config      *FlowConfig     `json:"config,omitempty"`
 }
+
+// DeployResponse is the response body of POST /api/flows/{id}/deploy and
+// POST /api/flows/{id}/undeploy: the flow's status after the operation.
+type DeployResponse struct {
+	FlowID  string     `json:"flowId"`
+	Status  FlowStatus `json:"status"`
+	Message string     `json:"message,omitempty"`
+}
+
+// ErrorResponse is the JSON body every REST error carries.
+type ErrorResponse struct {
+	Error string `json:"error"`
+}

@@ -2,9 +2,9 @@ package websocket
 
 import (
 	"encoding/json"
-	"log"
+	"errors"
+	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/GrimbiXcode/Go-RED/internal/dto"
 	"github.com/GrimbiXcode/Go-RED/internal/engine"
@@ -27,180 +27,184 @@ func NewWebSocketHandler(hub *Hub, flowEngine *engine.FlowEngine, nodeRegistry *
 	}
 }
 
-// HandleMessage processes incoming WebSocket messages with full engine integration
-func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessage) {
-	messageType := string(message.Type)
-	log.Printf("Received WebSocket message of type: %s", messageType)
+// Inbound payload shapes. Kept as named types so handlers have a signature
+// a reader can follow (and tests can construct).
 
-	// message.Data is a string containing JSON, ready for unmarshaling
-	// Convert to []byte for json.Unmarshal
-	data := []byte(message.Data)
-
-	switch messageType {
-	// Flow-related messages
-	case "flow:list":
-		h.handleFlowList(client)
-	case "flow:get":
-		var flowData struct {
-			FlowID string `json:"flowId"`
-		}
-		if err := json.Unmarshal(data, &flowData); err == nil {
-			h.handleFlowGet(client, flowData.FlowID)
-		}
-	case "flow:create":
-		var flowData struct {
-			Name        string `json:"name"`
-			Description string `json:"description,omitempty"`
-		}
-		if err := json.Unmarshal(data, &flowData); err == nil {
-			h.handleFlowCreate(client, flowData.Name, flowData.Description)
-		}
-	case "flow:update":
-		var flowData struct {
-			FlowID string                `json:"flowId"`
-			Flow   dto.FlowUpdateRequest `json:"flow"`
-		}
-		if err := json.Unmarshal(data, &flowData); err == nil {
-			h.handleFlowUpdate(client, flowData.FlowID, flowData.Flow)
-		}
-	case "flow:delete":
-		var flowData struct {
-			FlowID string `json:"flowId"`
-		}
-		if err := json.Unmarshal(data, &flowData); err == nil {
-			h.handleFlowDelete(client, flowData.FlowID)
-		}
-	case "flow:deploy":
-		var flowData struct {
-			FlowID string `json:"flowId"`
-			Force  bool   `json:"force,omitempty"`
-		}
-		if err := json.Unmarshal(data, &flowData); err == nil {
-			h.handleFlowDeploy(client, flowData.FlowID, flowData.Force)
-		}
-	case "flow:undeploy":
-		var flowData struct {
-			FlowID string `json:"flowId"`
-		}
-		if err := json.Unmarshal(data, &flowData); err == nil {
-			h.handleFlowUndeploy(client, flowData.FlowID)
-		}
-
-	// Node-related messages
-	case "node:add":
-		var nodeData struct {
-			Node   dto.Node `json:"node"`
-			FlowID string   `json:"flowId"`
-		}
-		if err := json.Unmarshal(data, &nodeData); err == nil {
-			log.Printf("[BACKEND] node:add received - flowId: %s, nodeId: %s, type: %s", nodeData.FlowID, nodeData.Node.ID, nodeData.Node.Type)
-			h.handleNodeAdd(client, nodeData)
-		} else {
-			log.Printf("[BACKEND] node:add parse error: %v, data: %s", err, string(data))
-		}
-	case "node:remove":
-		var nodeData struct {
-			NodeID string `json:"nodeId"`
-			FlowID string `json:"flowId"`
-		}
-		if err := json.Unmarshal(data, &nodeData); err == nil {
-			h.handleNodeRemove(client, nodeData.NodeID, nodeData.FlowID)
-		}
-	case "node:update":
-		var nodeData struct {
-			Node   dto.Node `json:"node"`
-			FlowID string   `json:"flowId"`
-		}
-		if err := json.Unmarshal(data, &nodeData); err == nil {
-			log.Printf("[BACKEND] node:update received - flowId: %s, nodeId: %s", nodeData.FlowID, nodeData.Node.ID)
-			h.handleNodeUpdate(client, nodeData)
-		} else {
-			log.Printf("[BACKEND] node:update parse error: %v, data: %s", err, string(data))
-		}
-	case "node:config":
-		var nodeData struct {
-			NodeID string                 `json:"nodeId"`
-			Config map[string]interface{} `json:"config"`
-		}
-		if err := json.Unmarshal(data, &nodeData); err == nil {
-			h.handleNodeConfig(client, nodeData.NodeID, nodeData.Config)
-		}
-	case "node:status":
-		var nodeData struct {
-			NodeID string                 `json:"nodeId"`
-			FlowID string                 `json:"flowId"`
-			Status map[string]interface{} `json:"status"`
-		}
-		if err := json.Unmarshal(data, &nodeData); err == nil {
-			h.BroadcastToClient(client, MessageTypeNodeStatus, nodeData)
-		}
-
-	// Connection-related messages
-	case "connection:add":
-		var connData struct {
-			Connection dto.Connection `json:"connection"`
-			FlowID     string         `json:"flowId"`
-		}
-		if err := json.Unmarshal(data, &connData); err == nil {
-			log.Printf("[BACKEND] connection:add received - flowId: %s, sourceNode: %s, targetNode: %s", connData.FlowID, connData.Connection.SourceNode, connData.Connection.TargetNode)
-			h.handleConnectionAdd(client, connData)
-		} else {
-			log.Printf("[BACKEND] connection:add parse error: %v, data: %s", err, string(data))
-		}
-	case "connection:remove":
-		var connData struct {
-			ConnectionID string `json:"connectionId"`
-			FlowID       string `json:"flowId"`
-		}
-		if err := json.Unmarshal(data, &connData); err == nil {
-			h.handleConnectionRemove(client, connData.ConnectionID, connData.FlowID)
-		}
-
-	// System messages
-	case "ping":
-		h.BroadcastToClient(client, MessageTypePong, map[string]string{"message": "pong"})
-	case "state:sync":
-		h.handleStateSync(client)
-	case "message:log":
-		var logRequest struct {
-			FlowID string `json:"flowId"`
-			Limit  int    `json:"limit"`
-		}
-		if err := json.Unmarshal(data, &logRequest); err == nil {
-			h.handleMessageLog(client, logRequest.FlowID, logRequest.Limit)
-		} else {
-			log.Printf("[WEBSOCKET] message:log parse error: %v, data: %s", err, string(data))
-		}
-	case "message:send":
-		var msgData struct {
-			FlowID  string                 `json:"flowId"`
-			NodeID  string                 `json:"nodeId"`
-			Payload map[string]interface{} `json:"payload"`
-		}
-		if err := json.Unmarshal(data, &msgData); err == nil {
-			log.Printf("[WEBSOCKET] Handling message:send - flowId: %s, nodeId: %s, payload: %v", msgData.FlowID, msgData.NodeID, msgData.Payload)
-			h.handleMessageSend(client, msgData.FlowID, msgData.NodeID, msgData.Payload)
-		} else {
-			log.Printf("[WEBSOCKET] message:send parse error: %v, data: %s", err, string(data))
-			h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-				"error":   "failed to parse message send request",
-				"message": err.Error(),
-			})
-		}
-
-	// Unknown message type
-	default:
-		log.Printf("[WEBSOCKET] Unknown WebSocket message type: %s, data: %s", messageType, message.Data)
-		errorResponse := map[string]interface{}{
-			"error":   "unknown message type",
-			"type":    messageType,
-			"message": "Received unknown message type",
-		}
-		h.BroadcastToClient(client, MessageTypeError, errorResponse)
-	}
+type flowIDPayload struct {
+	FlowID string `json:"flowId"`
 }
 
-// Flow handlers with full engine integration
+type flowCreatePayload struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+type flowUpdatePayload struct {
+	FlowID string                `json:"flowId"`
+	Flow   dto.FlowUpdateRequest `json:"flow"`
+}
+
+type flowDeployPayload struct {
+	FlowID string `json:"flowId"`
+	Force  bool   `json:"force,omitempty"`
+}
+
+type nodePayload struct {
+	Node   dto.Node `json:"node"`
+	FlowID string   `json:"flowId"`
+}
+
+type nodeRemovePayload struct {
+	NodeID string `json:"nodeId"`
+	FlowID string `json:"flowId"`
+}
+
+type connectionPayload struct {
+	Connection dto.Connection `json:"connection"`
+	FlowID     string         `json:"flowId"`
+}
+
+type connectionRemovePayload struct {
+	ConnectionID string `json:"connectionId"`
+	FlowID       string `json:"flowId"`
+}
+
+type messageLogPayload struct {
+	FlowID string `json:"flowId"`
+	Limit  int    `json:"limit"`
+}
+
+type messageSendPayload struct {
+	FlowID  string                 `json:"flowId"`
+	NodeID  string                 `json:"nodeId"`
+	Payload map[string]interface{} `json:"payload"`
+}
+
+// publicError returns the text of err that is safe to show a client. Every
+// error the engine returns is user-facing by construction (unknown flow,
+// invalid definition, node config problems), except persistence failures,
+// which may carry file system details.
+func publicError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, engine.ErrPersist) {
+		return "failed to save flow"
+	}
+	return err.Error()
+}
+
+// sendError answers client with an error message. code is a short, stable
+// identifier for the failure; err becomes the human-readable message.
+func (h *WebSocketHandler) sendError(client *Client, code string, err error, fields map[string]interface{}) {
+	payload := map[string]interface{}{
+		"error":   code,
+		"message": publicError(err),
+	}
+	for k, v := range fields {
+		payload[k] = v
+	}
+	h.BroadcastToClient(client, MessageTypeError, payload)
+}
+
+// HandleMessage processes incoming WebSocket messages with full engine integration
+func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessage) {
+	slog.Debug("websocket message received", "type", message.Type)
+
+	data := []byte(message.Data)
+	decode := func(v interface{}) bool {
+		if len(data) == 0 {
+			return true
+		}
+		if err := json.Unmarshal(data, v); err != nil {
+			slog.Warn("malformed websocket payload", "type", message.Type, "err", err)
+			h.sendError(client, "invalid payload", errors.New("payload could not be parsed"), map[string]interface{}{"type": message.Type})
+			return false
+		}
+		return true
+	}
+
+	switch message.Type {
+	case MessageTypeFlowList:
+		h.handleFlowList(client)
+	case MessageTypeFlowGet:
+		var p flowIDPayload
+		if decode(&p) {
+			h.handleFlowGet(client, p.FlowID)
+		}
+	case MessageTypeFlowCreate:
+		var p flowCreatePayload
+		if decode(&p) {
+			h.handleFlowCreate(client, p.Name, p.Description)
+		}
+	case MessageTypeFlowUpdate:
+		var p flowUpdatePayload
+		if decode(&p) {
+			h.handleFlowUpdate(client, p.FlowID, p.Flow)
+		}
+	case MessageTypeFlowDelete:
+		var p flowIDPayload
+		if decode(&p) {
+			h.handleFlowDelete(client, p.FlowID)
+		}
+	case MessageTypeFlowDeploy:
+		var p flowDeployPayload
+		if decode(&p) {
+			h.handleFlowDeploy(client, p.FlowID)
+		}
+	case MessageTypeFlowUndeploy:
+		var p flowIDPayload
+		if decode(&p) {
+			h.handleFlowUndeploy(client, p.FlowID)
+		}
+
+	case MessageTypeNodeAdd:
+		var p nodePayload
+		if decode(&p) {
+			h.handleNodeAdd(client, p)
+		}
+	case MessageTypeNodeRemove:
+		var p nodeRemovePayload
+		if decode(&p) {
+			h.handleNodeRemove(client, p.NodeID, p.FlowID)
+		}
+	case MessageTypeNodeUpdate:
+		var p nodePayload
+		if decode(&p) {
+			h.handleNodeUpdate(client, p)
+		}
+
+	case MessageTypeConnectionAdd:
+		var p connectionPayload
+		if decode(&p) {
+			h.handleConnectionAdd(client, p)
+		}
+	case MessageTypeConnectionRemove:
+		var p connectionRemovePayload
+		if decode(&p) {
+			h.handleConnectionRemove(client, p.ConnectionID, p.FlowID)
+		}
+
+	case MessageTypePing:
+		h.BroadcastToClient(client, MessageTypePong, map[string]string{"message": "pong"})
+	case MessageTypeStateSync:
+		h.handleStateSync(client)
+	case MessageTypeMessageLog:
+		var p messageLogPayload
+		if decode(&p) {
+			h.handleMessageLog(client, p.FlowID, p.Limit)
+		}
+	case MessageTypeMessageSend:
+		var p messageSendPayload
+		if decode(&p) {
+			h.handleMessageSend(client, p.FlowID, p.NodeID, p.Payload)
+		}
+
+	default:
+		slog.Debug("unknown websocket message type", "type", message.Type)
+		h.sendError(client, "unknown message type", errors.New("unknown message type"), map[string]interface{}{"type": message.Type})
+	}
+}
 
 // allFlowSummaries returns the wire-format summary of every flow, for the
 // flow:list broadcast (both the direct response to a flow:list request and
@@ -214,384 +218,192 @@ func (h *WebSocketHandler) allFlowSummaries() []dto.FlowSummary {
 	return summaries
 }
 
+// broadcastFlowList pushes the current flow list to every client.
+func (h *WebSocketHandler) broadcastFlowList() {
+	h.hub.Broadcast(MessageTypeFlowList, map[string]interface{}{"flows": h.allFlowSummaries()})
+}
+
+// broadcastFlowStatus pushes a flow's current lifecycle status to every
+// client, in the same wire enum GET /api/flows uses.
+func (h *WebSocketHandler) broadcastFlowStatus(flowID string) {
+	status, err := h.flowEngine.GetFlowStatus(flowID)
+	if err != nil {
+		return
+	}
+	h.hub.Broadcast(MessageTypeFlowStatus, map[string]interface{}{
+		"flowId": flowID,
+		"status": dto.FlowStatusFromEngine(status),
+	})
+}
+
 func (h *WebSocketHandler) handleFlowList(client *Client) {
-	log.Println("Handling flow:list request")
 	h.BroadcastToClient(client, MessageTypeFlowList, map[string]interface{}{
 		"flows": h.allFlowSummaries(),
 	})
 }
 
 func (h *WebSocketHandler) handleFlowGet(client *Client, flowID string) {
-	log.Printf("Handling flow:get request for flow: %s", flowID)
 	flow, err := h.flowEngine.GetFlow(flowID)
 	if err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "flow not found",
-			"flowId":  flowID,
-			"message": err.Error(),
-		})
+		h.sendError(client, "flow not found", err, map[string]interface{}{"flowId": flowID})
 		return
 	}
 	h.BroadcastToClient(client, MessageTypeFlowGet, dto.ToWire(flow))
 }
 
 func (h *WebSocketHandler) handleFlowCreate(client *Client, name, description string) {
-	log.Printf("[BACKEND] handleFlowCreate - Creating flow: name=%s, description=%s", name, description)
-	flow, err := h.flowEngine.CreateFlow("", name)
+	flow, err := h.flowEngine.CreateFlow("", name, description)
 	if err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "failed to create flow",
-			"name":    name,
-			"message": err.Error(),
-		})
+		h.sendError(client, "failed to create flow", err, map[string]interface{}{"name": name})
 		return
 	}
 
-	if description != "" {
-		flow.Description = description
-	}
-
-	// Save the flow to state manager
-	if h.flowEngine.GetStateManager() != nil {
-		h.flowEngine.GetStateManager().SaveFlow(flow)
-	}
-
-	// Broadcast to client
 	h.BroadcastToClient(client, MessageTypeFlowCreate, dto.ToWire(flow))
+	h.broadcastFlowList()
 }
 
 func (h *WebSocketHandler) handleFlowUpdate(client *Client, flowID string, req dto.FlowUpdateRequest) {
-	log.Printf("[BACKEND] handleFlowUpdate - Updating flow: flowId=%s", flowID)
-
-	// Get the existing flow
-	flow, err := h.flowEngine.GetFlow(flowID)
+	flow, err := h.flowEngine.UpdateFlow(flowID, func(f *engine.Flow) error {
+		req.ApplyTo(f)
+		return nil
+	})
 	if err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "flow not found",
-			"flowId":  flowID,
-			"message": err.Error(),
-		})
+		h.sendError(client, "failed to update flow", err, map[string]interface{}{"flowId": flowID})
 		return
 	}
 
-	req.ApplyTo(flow)
-	log.Printf("[BACKEND] handleFlowUpdate - Flow now has %d nodes, %d connections", len(flow.Nodes), len(flow.Connections))
-
-	// Save the flow to state manager
-	if h.flowEngine.GetStateManager() != nil {
-		h.flowEngine.GetStateManager().SaveFlow(flow)
-	}
-
-	// Broadcast updates
 	h.BroadcastToClient(client, MessageTypeFlowUpdate, dto.ToWire(flow))
-	h.hub.Broadcast(MessageTypeFlowList, map[string]interface{}{
-		"flows": h.allFlowSummaries(),
-	})
+	h.broadcastFlowList()
 }
 
 func (h *WebSocketHandler) handleFlowDelete(client *Client, flowID string) {
-	log.Printf("[BACKEND] handleFlowDelete - Deleting flow: flowId=%s", flowID)
-
-	// First undeploy the flow if it's active
-	h.flowEngine.Undeploy(flowID)
-
-	// Delete from state manager
-	if h.flowEngine.GetStateManager() != nil {
-		h.flowEngine.GetStateManager().DeleteFlow(flowID)
+	if err := h.flowEngine.DeleteFlow(flowID); err != nil {
+		h.sendError(client, "failed to delete flow", err, map[string]interface{}{"flowId": flowID})
+		return
 	}
 
-	// Broadcast deletion
 	h.hub.Broadcast(MessageTypeFlowDelete, map[string]interface{}{
 		"flowId": flowID,
 	})
-	h.hub.Broadcast(MessageTypeFlowList, map[string]interface{}{"flows": h.allFlowSummaries()})
+	h.broadcastFlowList()
 }
 
-func (h *WebSocketHandler) handleFlowDeploy(client *Client, flowID string, force bool) {
-	log.Printf("Handling flow:deploy request for flow: %s (force: %v)", flowID, force)
-
-	// Get the flow
-	flow, err := h.flowEngine.GetFlow(flowID)
-	if err != nil {
-		// Flow might not be loaded yet, try to load it from state manager
-		if h.flowEngine.GetStateManager() != nil {
-			flow, err = h.flowEngine.GetStateManager().LoadFlow(flowID)
-			if err != nil {
-				h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-					"error":   "flow not found",
-					"flowId":  flowID,
-					"message": err.Error(),
-				})
-				return
-			}
-		} else {
-			h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-				"error":   "flow not found",
-				"flowId":  flowID,
-				"message": err.Error(),
-			})
-			return
-		}
-	}
-
-	// Deploy the flow
-	if err := h.flowEngine.Deploy(flow); err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "failed to deploy flow",
-			"flowId":  flowID,
-			"message": err.Error(),
-		})
+func (h *WebSocketHandler) handleFlowDeploy(client *Client, flowID string) {
+	if err := h.flowEngine.DeployFlow(flowID); err != nil {
+		h.sendError(client, "failed to deploy flow", err, map[string]interface{}{"flowId": flowID})
+		h.broadcastFlowStatus(flowID)
 		return
 	}
 
-	// Broadcast success
 	h.hub.Broadcast(MessageTypeFlowDeploy, map[string]interface{}{
 		"flowId": flowID,
-		"status": "deployed",
+		"status": dto.FlowStatusRunning,
 	})
-	h.hub.Broadcast(MessageTypeFlowStatus, map[string]interface{}{
-		"flowId": flowID,
-		"status": "deployed",
-	})
-	h.hub.Broadcast(MessageTypeFlowList, map[string]interface{}{"flows": h.allFlowSummaries()})
+	h.broadcastFlowStatus(flowID)
+	h.broadcastFlowList()
 }
 
 func (h *WebSocketHandler) handleFlowUndeploy(client *Client, flowID string) {
-	log.Printf("Handling flow:undeploy request for flow: %s", flowID)
-
 	if err := h.flowEngine.Undeploy(flowID); err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "failed to undeploy flow",
-			"flowId":  flowID,
-			"message": err.Error(),
-		})
+		h.sendError(client, "failed to undeploy flow", err, map[string]interface{}{"flowId": flowID})
 		return
 	}
 
-	// Broadcast success
 	h.hub.Broadcast(MessageTypeFlowUndeploy, map[string]interface{}{
 		"flowId": flowID,
-		"status": "undeployed",
+		"status": dto.FlowStatusDraft,
 	})
-	h.hub.Broadcast(MessageTypeFlowStatus, map[string]interface{}{
-		"flowId": flowID,
-		"status": "inactive",
-	})
-	h.hub.Broadcast(MessageTypeFlowList, map[string]interface{}{"flows": h.allFlowSummaries()})
+	h.broadcastFlowStatus(flowID)
+	h.broadcastFlowList()
 }
 
-func (h *WebSocketHandler) handleNodeAdd(client *Client, nodeData struct {
-	Node   dto.Node `json:"node"`
-	FlowID string   `json:"flowId"`
-}) {
-	log.Printf("[BACKEND] handleNodeAdd - flowId: %s, nodeId: %s, type: %s, position: (%.1f, %.1f)",
-		nodeData.FlowID, nodeData.Node.ID, nodeData.Node.Type, nodeData.Node.Position.X, nodeData.Node.Position.Y)
+func (h *WebSocketHandler) handleNodeAdd(client *Client, p nodePayload) {
+	node := dto.NodeFromWire(p.Node.ID, p.Node)
 
-	// Get the flow
-	flow, err := h.flowEngine.GetFlow(nodeData.FlowID)
+	_, err := h.flowEngine.UpdateFlow(p.FlowID, func(f *engine.Flow) error {
+		return f.AddNode(node)
+	})
 	if err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "flow not found",
-			"flowId":  nodeData.FlowID,
-			"message": err.Error(),
-		})
+		h.sendError(client, "failed to add node", err, map[string]interface{}{"flowId": p.FlowID, "nodeId": p.Node.ID})
 		return
 	}
 
-	// Create new node - use the node ID from frontend
-	node := dto.NodeFromWire(nodeData.Node.ID, nodeData.Node)
-	log.Printf("[BACKEND] handleNodeAdd - Created node with ID: %s, type: %s", node.ID, node.Type)
-
-	// Add node to flow
-	if err := flow.AddNode(node); err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "failed to add node",
-			"message": err.Error(),
-		})
-		return
-	}
-
-	// Save the flow
-	if h.flowEngine.GetStateManager() != nil {
-		h.flowEngine.GetStateManager().SaveFlow(flow)
-	}
-
-	// Broadcast node addition
 	h.hub.Broadcast(MessageTypeNodeAdd, map[string]interface{}{
-		"flowId": nodeData.FlowID,
+		"flowId": p.FlowID,
 		"node":   dto.NodeToWire(node),
 	})
 }
 
 func (h *WebSocketHandler) handleNodeRemove(client *Client, nodeID, flowID string) {
-	log.Printf("Handling node:remove request for node: %s in flow: %s", nodeID, flowID)
-
-	// Get the flow
-	flow, err := h.flowEngine.GetFlow(flowID)
+	_, err := h.flowEngine.UpdateFlow(flowID, func(f *engine.Flow) error {
+		return f.RemoveNode(nodeID)
+	})
 	if err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "flow not found",
-			"flowId":  flowID,
-			"message": err.Error(),
-		})
+		h.sendError(client, "failed to remove node", err, map[string]interface{}{"flowId": flowID, "nodeId": nodeID})
 		return
 	}
 
-	// Remove node from flow
-	if err := flow.RemoveNode(nodeID); err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "failed to remove node",
-			"message": err.Error(),
-		})
-		return
-	}
-
-	// Save the flow
-	if h.flowEngine.GetStateManager() != nil {
-		h.flowEngine.GetStateManager().SaveFlow(flow)
-	}
-
-	// Broadcast node removal
 	h.hub.Broadcast(MessageTypeNodeRemove, map[string]interface{}{
 		"flowId": flowID,
 		"nodeId": nodeID,
 	})
 }
 
-func (h *WebSocketHandler) handleNodeUpdate(client *Client, nodeData struct {
-	Node   dto.Node `json:"node"`
-	FlowID string   `json:"flowId"`
-}) {
-	log.Printf("[BACKEND] handleNodeUpdate - flowId: %s, nodeId: %s", nodeData.FlowID, nodeData.Node.ID)
-
-	// Get the flow
-	flow, err := h.flowEngine.GetFlow(nodeData.FlowID)
+func (h *WebSocketHandler) handleNodeUpdate(client *Client, p nodePayload) {
+	var updated *engine.Node
+	_, err := h.flowEngine.UpdateFlow(p.FlowID, func(f *engine.Flow) error {
+		node, exists := f.Nodes[p.Node.ID]
+		if !exists {
+			return errors.New("node " + p.Node.ID + " not found in flow")
+		}
+		node.Type = p.Node.Type
+		node.Name = p.Node.Name
+		node.Config = p.Node.Config
+		node.X = p.Node.Position.X
+		node.Y = p.Node.Position.Y
+		node.Disabled = p.Node.Disabled
+		copied := *node
+		updated = &copied
+		return nil
+	})
 	if err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "flow not found",
-			"flowId":  nodeData.FlowID,
-			"message": err.Error(),
-		})
+		h.sendError(client, "failed to update node", err, map[string]interface{}{"flowId": p.FlowID, "nodeId": p.Node.ID})
 		return
 	}
 
-	// Get the node
-	node, exists := flow.Nodes[nodeData.Node.ID]
-	if !exists {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "node not found",
-			"nodeId":  nodeData.Node.ID,
-			"message": "node not found in flow",
-		})
-		return
-	}
-
-	// Apply updates from the node data
-	node.Type = nodeData.Node.Type
-	node.Name = nodeData.Node.Name
-	node.Config = nodeData.Node.Config
-	node.X = nodeData.Node.Position.X
-	node.Y = nodeData.Node.Position.Y
-	node.Disabled = nodeData.Node.Disabled
-
-	// Update flow timestamp
-	flow.UpdatedAt = time.Now().UTC()
-
-	// Save the flow
-	if h.flowEngine.GetStateManager() != nil {
-		h.flowEngine.GetStateManager().SaveFlow(flow)
-	}
-
-	// Broadcast node update
 	h.hub.Broadcast(MessageTypeNodeUpdate, map[string]interface{}{
-		"flowId": nodeData.FlowID,
-		"nodeId": nodeData.Node.ID,
-		"node":   dto.NodeToWire(node),
+		"flowId": p.FlowID,
+		"nodeId": p.Node.ID,
+		"node":   dto.NodeToWire(updated),
 	})
 }
 
-func (h *WebSocketHandler) handleNodeConfig(client *Client, nodeID string, config map[string]interface{}) {
-	log.Printf("Handling node:config request for node: %s with config: %+v", nodeID, config)
+func (h *WebSocketHandler) handleConnectionAdd(client *Client, p connectionPayload) {
+	conn := dto.ConnectionFromWire(p.Connection)
 
-	// Broadcast configuration update
-	h.hub.Broadcast(MessageTypeNodeConfig, map[string]interface{}{
-		"nodeId": nodeID,
-		"config": config,
+	_, err := h.flowEngine.UpdateFlow(p.FlowID, func(f *engine.Flow) error {
+		return f.AddConnection(conn)
 	})
-}
-
-func (h *WebSocketHandler) handleConnectionAdd(client *Client, connData struct {
-	Connection dto.Connection `json:"connection"`
-	FlowID     string         `json:"flowId"`
-}) {
-	log.Printf("[BACKEND] handleConnectionAdd - flowId: %s, sourceNode: %s, targetNode: %s",
-		connData.FlowID, connData.Connection.SourceNode, connData.Connection.TargetNode)
-
-	// Get the flow
-	flow, err := h.flowEngine.GetFlow(connData.FlowID)
 	if err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "flow not found",
-			"flowId":  connData.FlowID,
-			"message": err.Error(),
-		})
+		h.sendError(client, "failed to add connection", err, map[string]interface{}{"flowId": p.FlowID})
 		return
 	}
 
-	// Create connection
-	conn := dto.ConnectionFromWire(connData.Connection)
-	log.Printf("[BACKEND] handleConnectionAdd - Creating connection: %s -> %s", connData.Connection.SourceNode, connData.Connection.TargetNode)
-
-	// Add connection to flow
-	if err := flow.AddConnection(conn); err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "failed to add connection",
-			"message": err.Error(),
-		})
-		return
-	}
-
-	// Save the flow
-	if h.flowEngine.GetStateManager() != nil {
-		h.flowEngine.GetStateManager().SaveFlow(flow)
-	}
-
-	// Broadcast connection addition
 	h.hub.Broadcast(MessageTypeConnectionAdd, map[string]interface{}{
-		"flowId":     connData.FlowID,
+		"flowId":     p.FlowID,
 		"connection": dto.ConnectionToWire(conn),
 	})
 }
 
 func (h *WebSocketHandler) handleConnectionRemove(client *Client, connectionID, flowID string) {
-	log.Printf("Handling connection:remove request for connection: %s in flow: %s", connectionID, flowID)
-
-	// Get the flow
-	flow, err := h.flowEngine.GetFlow(flowID)
+	_, err := h.flowEngine.UpdateFlow(flowID, func(f *engine.Flow) error {
+		return f.RemoveConnection(connectionID)
+	})
 	if err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "flow not found",
-			"flowId":  flowID,
-			"message": err.Error(),
-		})
+		h.sendError(client, "failed to remove connection", err, map[string]interface{}{"flowId": flowID, "connectionId": connectionID})
 		return
 	}
 
-	// Remove connection from flow
-	if err := flow.RemoveConnection(connectionID); err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "failed to remove connection",
-			"message": err.Error(),
-		})
-		return
-	}
-
-	// Save the flow
-	if h.flowEngine.GetStateManager() != nil {
-		h.flowEngine.GetStateManager().SaveFlow(flow)
-	}
-
-	// Broadcast connection removal
 	h.hub.Broadcast(MessageTypeConnectionRemove, map[string]interface{}{
 		"flowId":       flowID,
 		"connectionId": connectionID,
@@ -599,59 +411,34 @@ func (h *WebSocketHandler) handleConnectionRemove(client *Client, connectionID, 
 }
 
 func (h *WebSocketHandler) handleStateSync(client *Client) {
-	log.Println("Handling state:sync request")
-
-	// Send full state to the client, using the same canonical wire Flow
-	// shape as every other endpoint (previously this sent raw engine.Flow
-	// objects, a distinct shape from flow:get/flow:list).
 	engineFlows := h.flowEngine.GetAllFlows()
 	flows := make([]dto.Flow, len(engineFlows))
 	for i, f := range engineFlows {
 		flows[i] = dto.ToWire(f)
 	}
-	nodes := h.nodeRegistry.GetAllNodes()
 
-	state := map[string]interface{}{
+	h.BroadcastToClient(client, MessageTypeStateSync, map[string]interface{}{
 		"flows":     flows,
-		"nodeTypes": nodes,
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-	}
-
-	h.BroadcastToClient(client, MessageTypeStateSync, state)
-}
-
-func (h *WebSocketHandler) handleMessageSend(client *Client, flowID, nodeID string, payload map[string]interface{}) {
-	log.Printf("Handling message:send request - flowId: %s, nodeId: %s", flowID, nodeID)
-
-	// Inject the message into the specified flow at the specified node
-	err := h.flowEngine.InjectMessage(flowID, nodeID, payload)
-	if err != nil {
-		h.BroadcastToClient(client, MessageTypeError, map[string]interface{}{
-			"error":   "failed to inject message",
-			"flowId":  flowID,
-			"nodeId":  nodeID,
-			"message": err.Error(),
-		})
-		return
-	}
-
-	// Broadcast success
-	h.BroadcastToClient(client, MessageTypeMessageSend, map[string]interface{}{
-		"status":  "sent",
-		"flowId":  flowID,
-		"nodeId":  nodeID,
-		"message": "Message injected successfully",
+		"nodeTypes": h.nodeRegistry.GetAllNodes(),
 	})
 }
 
-// handleMessageLog answers a message:log request with the actual logged
-// messages (optionally filtered by flowId, optionally capped by limit).
-// Previously this only acknowledged receipt without returning any data,
-// even though the frontend (useMessageLog.ts) already expected a real
-// {messages: [...]} response on this same message type.
-func (h *WebSocketHandler) handleMessageLog(client *Client, flowID string, limit int) {
-	log.Printf("Handling message:log request - flowId: %s, limit: %d", flowID, limit)
+func (h *WebSocketHandler) handleMessageSend(client *Client, flowID, nodeID string, payload map[string]interface{}) {
+	if err := h.flowEngine.InjectMessage(flowID, nodeID, payload); err != nil {
+		h.sendError(client, "failed to inject message", err, map[string]interface{}{"flowId": flowID, "nodeId": nodeID})
+		return
+	}
 
+	h.BroadcastToClient(client, MessageTypeMessageSend, map[string]interface{}{
+		"status": "sent",
+		"flowId": flowID,
+		"nodeId": nodeID,
+	})
+}
+
+// handleMessageLog answers a message:log request with the logged messages
+// (optionally filtered by flowId, optionally capped by limit).
+func (h *WebSocketHandler) handleMessageLog(client *Client, flowID string, limit int) {
 	var messages []engine.Message
 	if flowID != "" {
 		messages = h.flowEngine.GetMessageLogForFlow(flowID)
@@ -664,6 +451,7 @@ func (h *WebSocketHandler) handleMessageLog(client *Client, flowID string, limit
 	}
 
 	h.BroadcastToClient(client, MessageTypeMessageLog, map[string]interface{}{
+		"flowId":   flowID,
 		"messages": dto.MessagesToWire(messages),
 	})
 }
@@ -678,16 +466,12 @@ func (h *WebSocketHandler) Broadcast(messageType MessageType, data interface{}) 
 	h.hub.Broadcast(messageType, data)
 }
 
-// generateID generates a unique ID for nodes
-func generateID() string {
-	return "" + time.Now().UTC().Format("20060102150405000000000")
-}
-
 // GetHub returns the underlying hub
 func (h *WebSocketHandler) GetHub() *Hub {
 	return h.hub
 }
 
+// ServeWebSocket upgrades the request and attaches HandleMessage to the client.
 func (h *WebSocketHandler) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	h.hub.ServeWebSocket(w, r, h.HandleMessage)
 }

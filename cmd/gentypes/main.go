@@ -186,6 +186,8 @@ func main() {
 	g.ensureStruct(reflect.TypeOf(dto.FlowCreateRequest{}))
 	g.ensureStruct(reflect.TypeOf(dto.FlowUpdateRequest{}))
 	g.ensureStruct(reflect.TypeOf(dto.Message{}))
+	g.ensureStruct(reflect.TypeOf(dto.DeployResponse{}))
+	g.ensureStruct(reflect.TypeOf(dto.ErrorResponse{}))
 	g.ensureStruct(reflect.TypeOf(registry.NodeMetadata{}))
 	g.ensureStruct(reflect.TypeOf(websocket.WebSocketMessage{}))
 
