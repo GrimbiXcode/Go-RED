@@ -46,3 +46,7 @@ vendor/
 # Go workspace file
 .go.work
 .go.work.sum
+
+# Local build artifacts (never commit the server binary)
+/go-red
+/tmp/

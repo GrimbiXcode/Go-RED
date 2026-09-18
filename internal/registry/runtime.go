@@ -1,8 +1,8 @@
 package registry
 
 import (
-    "context"
-    "time"
+	"context"
+	"time"
 )
 
 // NodeRuntime gives a running node access to engine-level services that
@@ -14,47 +14,47 @@ import (
 // inside Execute, ExecuteMulti, or Start - the engine embeds it into the
 // context.Context it passes to all three.
 type NodeRuntime struct {
-    FlowID        string
-    NodeID        string
-    NodeType      string
-    FlowContext   *ContextStore
-    GlobalContext *ContextStore
+	FlowID        string
+	NodeID        string
+	NodeType      string
+	FlowContext   *ContextStore
+	GlobalContext *ContextStore
 
-    events  *EventBus
-    submit  func(nodeID string, payload map[string]interface{})
-    getNode func(nodeID string) (NodeExecutor, bool)
+	events  *EventBus
+	submit  func(nodeID string, payload map[string]interface{})
+	getNode func(nodeID string) (NodeExecutor, bool)
 }
 
 // NewNodeRuntime constructs a NodeRuntime. events, submit, and getNode may
 // be nil (a runtime built for a context where no engine is backing it, e.g.
 // a unit test); every method on NodeRuntime tolerates that.
 func NewNodeRuntime(flowID, nodeID, nodeType string, flowContext, globalContext *ContextStore, events *EventBus, submit func(nodeID string, payload map[string]interface{}), getNode func(nodeID string) (NodeExecutor, bool)) *NodeRuntime {
-    return &NodeRuntime{
-        FlowID:        flowID,
-        NodeID:        nodeID,
-        NodeType:      nodeType,
-        FlowContext:   flowContext,
-        GlobalContext: globalContext,
-        events:        events,
-        submit:        submit,
-        getNode:       getNode,
-    }
+	return &NodeRuntime{
+		FlowID:        flowID,
+		NodeID:        nodeID,
+		NodeType:      nodeType,
+		FlowContext:   flowContext,
+		GlobalContext: globalContext,
+		events:        events,
+		submit:        submit,
+		getNode:       getNode,
+	}
 }
 
 // ReportStatus publishes a NodeStatusEvent on behalf of this node. Safe to
 // call even if no Status node is listening.
 func (r *NodeRuntime) ReportStatus(status, detail string) {
-    if r == nil || r.events == nil {
-        return
-    }
-    r.events.PublishStatus(NodeStatusEvent{
-        FlowID:    r.FlowID,
-        NodeID:    r.NodeID,
-        NodeType:  r.NodeType,
-        Status:    status,
-        Detail:    detail,
-        Timestamp: time.Now().UTC(),
-    })
+	if r == nil || r.events == nil {
+		return
+	}
+	r.events.PublishStatus(NodeStatusEvent{
+		FlowID:    r.FlowID,
+		NodeID:    r.NodeID,
+		NodeType:  r.NodeType,
+		Status:    status,
+		Detail:    detail,
+		Timestamp: time.Now().UTC(),
+	})
 }
 
 // ReportError publishes a NodeErrorEvent on behalf of this node, for
@@ -62,16 +62,16 @@ func (r *NodeRuntime) ReportStatus(status, detail string) {
 // the message it is currently processing (Execute/ExecuteMulti errors are
 // already published automatically by the engine).
 func (r *NodeRuntime) ReportError(err error) {
-    if r == nil || r.events == nil || err == nil {
-        return
-    }
-    r.events.PublishError(NodeErrorEvent{
-        FlowID:    r.FlowID,
-        NodeID:    r.NodeID,
-        NodeType:  r.NodeType,
-        Err:       err,
-        Timestamp: time.Now().UTC(),
-    })
+	if r == nil || r.events == nil || err == nil {
+		return
+	}
+	r.events.PublishError(NodeErrorEvent{
+		FlowID:    r.FlowID,
+		NodeID:    r.NodeID,
+		NodeType:  r.NodeType,
+		Err:       err,
+		Timestamp: time.Now().UTC(),
+	})
 }
 
 // OnError subscribes handler to every NodeErrorEvent published on this
@@ -79,30 +79,30 @@ func (r *NodeRuntime) ReportError(err error) {
 // deployment). Used by Catch-style nodes, normally from within
 // EmittingNode.Start. A no-op if there is no backing EventBus.
 func (r *NodeRuntime) OnError(handler func(NodeErrorEvent)) {
-    if r == nil || r.events == nil {
-        return
-    }
-    r.events.OnError(handler)
+	if r == nil || r.events == nil {
+		return
+	}
+	r.events.OnError(handler)
 }
 
 // OnStatus subscribes handler to every NodeStatusEvent published on this
 // node's flow. Used by Status-style nodes. A no-op if there is no backing
 // EventBus.
 func (r *NodeRuntime) OnStatus(handler func(NodeStatusEvent)) {
-    if r == nil || r.events == nil {
-        return
-    }
-    r.events.OnStatus(handler)
+	if r == nil || r.events == nil {
+		return
+	}
+	r.events.OnStatus(handler)
 }
 
 // OnComplete subscribes handler to every NodeCompleteEvent published on
 // this node's flow. Used by Complete-style nodes. A no-op if there is no
 // backing EventBus.
 func (r *NodeRuntime) OnComplete(handler func(NodeCompleteEvent)) {
-    if r == nil || r.events == nil {
-        return
-    }
-    r.events.OnComplete(handler)
+	if r == nil || r.events == nil {
+		return
+	}
+	r.events.OnComplete(handler)
 }
 
 // SubmitToNode delivers payload directly to nodeID's output, as if nodeID
@@ -111,10 +111,10 @@ func (r *NodeRuntime) OnComplete(handler func(NodeCompleteEvent)) {
 // same flow without a drawn wire). A no-op if there is no backing engine or
 // nodeID does not exist in this flow.
 func (r *NodeRuntime) SubmitToNode(nodeID string, payload map[string]interface{}) {
-    if r == nil || r.submit == nil {
-        return
-    }
-    r.submit(nodeID, payload)
+	if r == nil || r.submit == nil {
+		return
+	}
+	r.submit(nodeID, payload)
 }
 
 // GetNode returns the live NodeExecutor instance for nodeID within this
@@ -128,10 +128,10 @@ func (r *NodeRuntime) SubmitToNode(nodeID string, payload map[string]interface{}
 // the time any Execute/Start call happens. A no-op returning (nil, false) if
 // there is no backing engine or nodeID does not exist in this flow.
 func (r *NodeRuntime) GetNode(nodeID string) (NodeExecutor, bool) {
-    if r == nil || r.getNode == nil {
-        return nil, false
-    }
-    return r.getNode(nodeID)
+	if r == nil || r.getNode == nil {
+		return nil, false
+	}
+	return r.getNode(nodeID)
 }
 
 type runtimeContextKey struct{}
@@ -140,7 +140,7 @@ type runtimeContextKey struct{}
 // RuntimeFromContext. Called by the engine when constructing the context it
 // passes into a node's Execute/ExecuteMulti/Start.
 func WithRuntime(ctx context.Context, rt *NodeRuntime) context.Context {
-    return context.WithValue(ctx, runtimeContextKey{}, rt)
+	return context.WithValue(ctx, runtimeContextKey{}, rt)
 }
 
 // RuntimeFromContext extracts the NodeRuntime embedded by the engine into a
@@ -148,6 +148,6 @@ func WithRuntime(ctx context.Context, rt *NodeRuntime) context.Context {
 // direct unit tests calling Execute with a plain context.Background()) will
 // get ok == false and should treat runtime services as unavailable.
 func RuntimeFromContext(ctx context.Context) (*NodeRuntime, bool) {
-    rt, ok := ctx.Value(runtimeContextKey{}).(*NodeRuntime)
-    return rt, ok
+	rt, ok := ctx.Value(runtimeContextKey{}).(*NodeRuntime)
+	return rt, ok
 }

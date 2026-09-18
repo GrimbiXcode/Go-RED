@@ -8,12 +8,12 @@
 package typedvalue_test
 
 import (
-    "testing"
+	"testing"
 
-    "github.com/GrimbiXcode/Go-RED/internal/registry"
-    "github.com/GrimbiXcode/Go-RED/internal/typedvalue"
+	"github.com/GrimbiXcode/Go-RED/internal/registry"
+	"github.com/GrimbiXcode/Go-RED/internal/typedvalue"
 )
 
 func TestContextStoreSatisfiesContextAccessor(t *testing.T) {
-    var _ typedvalue.ContextAccessor = (*registry.ContextStore)(nil)
+	var _ typedvalue.ContextAccessor = (*registry.ContextStore)(nil)
 }
