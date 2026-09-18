@@ -5,9 +5,7 @@ import type {
   FlowUpdateRequest,
   FlowSummary,
   NodeMetadata,
-  DeployRequest,
   DeployResponse,
-  UndeployRequest,
 } from '../types/api';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
@@ -27,19 +25,16 @@ async function apiRequest<T, U = undefined>(
   if (data) {
     options.body = JSON.stringify(data);
   }
-  try {
-    const response = await fetch(url, options);
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(
-        `API request failed with status ${response.status}: ${errorData.message || response.statusText}`
-      );
-    }
-    return await response.json();
-  } catch (error) {
-    console.error(`API request error: ${error}`);
-    throw error;
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const detail = errorData.error || errorData.message || response.statusText;
+    throw new Error(detail ? String(detail) : `Request failed with status ${response.status}`);
   }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return await response.json();
 }
 
 export const fetchFlows = async (): Promise<FlowSummary[]> => {
@@ -86,12 +81,8 @@ export const deleteFlow = async (flowId: string): Promise<void> => {
   await apiRequest<void>('DELETE', `/flows/${flowId}`);
 };
 
-export const deployFlow = async (flowId: string, force = false): Promise<DeployResponse> => {
-  const response = await apiRequest<DeployResponse, DeployRequest>(
-    'POST',
-    `/flows/${flowId}/deploy`,
-    { flowId, force }
-  );
+export const deployFlow = async (flowId: string): Promise<DeployResponse> => {
+  const response = await apiRequest<DeployResponse>('POST', `/flows/${flowId}/deploy`);
   if (!response) {
     throw new Error('No data in response');
   }
@@ -99,11 +90,7 @@ export const deployFlow = async (flowId: string, force = false): Promise<DeployR
 };
 
 export const undeployFlow = async (flowId: string): Promise<DeployResponse> => {
-  const response = await apiRequest<DeployResponse, UndeployRequest>(
-    'POST',
-    `/flows/${flowId}/undeploy`,
-    { flowId }
-  );
+  const response = await apiRequest<DeployResponse>('POST', `/flows/${flowId}/undeploy`);
   if (!response) {
     throw new Error('No data in response');
   }

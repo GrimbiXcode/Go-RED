@@ -1,7 +1,5 @@
-import { useCallback, useMemo, useRef } from 'react';
-import React from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import ReactFlow, {
-  ReactFlowProvider,
   Background,
   Controls,
   Edge,
@@ -11,7 +9,6 @@ import ReactFlow, {
   useEdgesState,
   useReactFlow,
   NodeTypes,
-  EdgeTypes,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import '../styles/reactflow-overrides.css';
@@ -21,17 +18,15 @@ import { NodeComponent } from './NodeComponent';
 import { InjectNode } from './InjectNode';
 import { DebugNode } from './DebugNode';
 
-interface FlowCanvasProps {
+export interface FlowCanvasProps {
   flow: Flow | null;
-  // NodeEditor passes the flat NodeMetadata[] from useFlows() state, not a
-  // NodeRegistry lookup object — build the registry from it below instead
-  // of indexing the array by node.type (which previously always returned
-  // undefined and silently fell back to 'custom' styling for every node).
   availableNodeTypes?: NodeMetadata[];
   onNodeSelect: (node: FlowNode) => void;
   onNodeDeselect: () => void;
   onAddNode: (nodeType: string, position: { x: number; y: number }) => void;
   onRemoveNode: (nodeId: string) => void;
+  /** Called once per moved node when a drag ends, with the final position. */
+  onNodeMove: (nodeId: string, position: { x: number; y: number }) => void;
   onAddConnection: (connection: Omit<NodeConnection, 'id'>) => void;
   onRemoveConnection: (connectionId: string) => void;
 }
@@ -42,29 +37,24 @@ const nodeTypeComponents: NodeTypes = {
   debug: DebugNode,
 };
 
-const edgeTypes: EdgeTypes = {};
-
-function flowNodeToReactFlowNode(flowNode: FlowNode, nodeTypes: NodeRegistry, flowId?: string): Node {
-  // Ensure position is always defined with default values if missing
+export function flowNodeToReactFlowNode(flowNode: FlowNode, nodeTypes: NodeRegistry, flowId?: string): Node {
   const position = flowNode.position || { x: 0, y: 0 };
-  
-  // Get metadata for this node type
   const metadata = nodeTypes[flowNode.type] || null;
-  
+
   return {
     id: flowNode.id,
     type: flowNode.type || 'default',
-    position: position,
+    position,
     data: {
       label: flowNode.name || flowNode.type,
       node: flowNode,
-      metadata: metadata,
-      flowId: flowId,
+      metadata,
+      flowId,
     },
   };
 }
 
-function connectionToEdge(connection: NodeConnection): Edge {
+export function connectionToEdge(connection: NodeConnection): Edge {
   return {
     id: connection.id,
     source: connection.sourceNode,
@@ -74,6 +64,26 @@ function connectionToEdge(connection: NodeConnection): Edge {
   };
 }
 
+/**
+ * Merges nodes derived from the flow into the current ReactFlow node list,
+ * keeping the on-screen position of nodes that are being dragged and the
+ * current selection, so a status update arriving mid-drag never yanks a
+ * node back or drops the selection.
+ */
+export function mergeCanvasNodes(current: Node[], incoming: Node[]): Node[] {
+  const byId = new Map(current.map((node) => [node.id, node]));
+  return incoming.map((node) => {
+    const existing = byId.get(node.id);
+    if (!existing) return node;
+    return {
+      ...node,
+      position: existing.dragging ? existing.position : node.position,
+      selected: existing.selected,
+      dragging: existing.dragging,
+    };
+  });
+}
+
 export function FlowCanvas({
   flow,
   availableNodeTypes,
@@ -81,6 +91,7 @@ export function FlowCanvas({
   onNodeDeselect,
   onAddNode,
   onRemoveNode,
+  onNodeMove,
   onAddConnection,
   onRemoveConnection,
 }: FlowCanvasProps) {
@@ -96,20 +107,16 @@ export function FlowCanvas({
 
   const flowNodes = useMemo(() => {
     if (!flow) return [];
-    const nodes = Object.values(flow.nodes);
-    console.log('[FlowCanvas] flowNodes - Converting nodes:', nodes.map(n => ({id: n.id, position: n.position})));
-    return nodes.map(node => flowNodeToReactFlowNode(node, nodeRegistry, flow.id));
+    return Object.values(flow.nodes || {}).map((node) => flowNodeToReactFlowNode(node, nodeRegistry, flow.id));
   }, [flow, nodeRegistry]);
 
   const flowEdges = useMemo(() => {
     if (!flow) return [];
-    const connections = flow.connections || [];
-    console.log('[FlowCanvas] flowEdges - Converting connections:', connections.length);
-    return connections.map(connectionToEdge);
+    return (flow.connections || []).map(connectionToEdge);
   }, [flow]);
 
-  React.useEffect(() => {
-    setNodes(flowNodes);
+  useEffect(() => {
+    setNodes((current) => mergeCanvasNodes(current, flowNodes));
     setEdges(flowEdges);
   }, [flowNodes, flowEdges, setNodes, setEdges]);
 
@@ -121,49 +128,48 @@ export function FlowCanvas({
     [onNodeSelect]
   );
 
-  const onCanvasClick = useCallback(() => {
+  const onPaneClick = useCallback(() => {
     onNodeDeselect();
   }, [onNodeDeselect]);
 
   const onNodeDragStop = useCallback(
-    (_: React.MouseEvent, node: Node) => {
-      if (flow) {
-        setNodes((nds) =>
-          nds.map((n) => (n.id === node.id ? { ...n, position: node.position } : n))
-        );
+    (_: React.MouseEvent, node: Node, draggedNodes?: Node[]) => {
+      if (!flow) return;
+      const moved = draggedNodes && draggedNodes.length > 0 ? draggedNodes : [node];
+      for (const movedNode of moved) {
+        const original = flow.nodes?.[movedNode.id];
+        if (!original) continue;
+        const { x, y } = movedNode.position;
+        if (original.position && original.position.x === x && original.position.y === y) continue;
+        onNodeMove(movedNode.id, { x, y });
       }
     },
-    [flow, setNodes]
+    [flow, onNodeMove]
   );
 
   const onConnect = useCallback(
     (params: Connection) => {
-      if (!flow) return;
-      const connection: Omit<NodeConnection, 'id'> = {
-        sourceNode: params.source!,
+      if (!flow || !params.source || !params.target) return;
+      onAddConnection({
+        sourceNode: params.source,
         sourcePort: params.sourceHandle || 'output',
-        targetNode: params.target!,
+        targetNode: params.target,
         targetPort: params.targetHandle || 'input',
-      };
-      onAddConnection(connection);
+      });
     },
     [flow, onAddConnection]
   );
 
   const onNodesDelete = useCallback(
     (deletedNodes: Node[]) => {
-      deletedNodes.forEach((node) => {
-        onRemoveNode(node.id);
-      });
+      deletedNodes.forEach((node) => onRemoveNode(node.id));
     },
     [onRemoveNode]
   );
 
   const onEdgesDelete = useCallback(
     (deletedEdges: Edge[]) => {
-      deletedEdges.forEach((edge) => {
-        onRemoveConnection(edge.id);
-      });
+      deletedEdges.forEach((edge) => onRemoveConnection(edge.id));
     },
     [onRemoveConnection]
   );
@@ -174,11 +180,14 @@ export function FlowCanvas({
       if (!reactFlowWrapper.current || !flow) return;
       const data = event.dataTransfer.getData('application/reactflow');
       if (!data) return;
-      const { nodeType } = JSON.parse(data);
-      const position = screenToFlowPosition({
-        x: event.clientX,
-        y: event.clientY,
-      });
+      let nodeType: string | undefined;
+      try {
+        nodeType = JSON.parse(data).nodeType;
+      } catch {
+        return;
+      }
+      if (!nodeType) return;
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
       onAddNode(nodeType, position);
     },
     [screenToFlowPosition, flow, onAddNode]
@@ -192,44 +201,35 @@ export function FlowCanvas({
   if (!flow) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-gray-100">
-        <div className="text-gray-500">
-          {flow === null ? 'Select a flow to edit' : 'No flow selected'}
-        </div>
+        <div className="text-gray-500">Select a flow to edit</div>
       </div>
     );
   }
 
   return (
-    <div
-      className="h-full w-full"
-      ref={reactFlowWrapper}
-      onDrop={onDrop}
-      onDragOver={onDragOver}
-    >
-      <ReactFlowProvider>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onNodeClick={onNodeClick}
-          onPaneClick={onCanvasClick}
-          onNodeDragStop={onNodeDragStop}
-          onNodesDelete={onNodesDelete}
-          onEdgesDelete={onEdgesDelete}
-          nodeTypes={nodeTypeComponents}
-          edgeTypes={edgeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.5 }}
-          minZoom={0.1}
-          maxZoom={4}
-          defaultEdgeOptions={{ animated: false }}
-        >
-          <Background color="var(--gr-blue-200)" gap={20} size={1.5} />
-          <Controls position="bottom-left" />
-        </ReactFlow>
-      </ReactFlowProvider>
+    <div className="h-full w-full" ref={reactFlowWrapper} onDrop={onDrop} onDragOver={onDragOver}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onNodeClick={onNodeClick}
+        onPaneClick={onPaneClick}
+        onNodeDragStop={onNodeDragStop}
+        onNodesDelete={onNodesDelete}
+        onEdgesDelete={onEdgesDelete}
+        nodeTypes={nodeTypeComponents}
+        fitView
+        fitViewOptions={{ padding: 0.5 }}
+        minZoom={0.1}
+        maxZoom={4}
+        defaultEdgeOptions={{ animated: false }}
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background color="var(--gr-blue-200)" gap={20} size={1.5} />
+        <Controls position="bottom-left" />
+      </ReactFlow>
     </div>
   );
 }

@@ -15,11 +15,16 @@ import { useToast } from './ToastNotification';
 import { ReactFlowProvider } from 'reactflow';
 import type { FlowNode, NodeConnection } from '../types/flow';
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function FlowEditor() {
   const {
     flows,
     loading,
     error,
+    serverError,
     selectedFlow,
     nodeTypes,
     nodeTypesLoading,
@@ -40,24 +45,34 @@ export function FlowEditor() {
 
   const [selectedNode, setSelectedNode] = useState<FlowNode | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
-  // Which right-hand sidebar tab is open ('info' | 'debug' | null for
-  // collapsed) — replaces the old always-visible Sidebar column plus the
-  // separately toggled MessageLogPanel overlay (Phase 4).
+  // Which right-hand sidebar tab is open ('info' | 'debug' | null for collapsed).
   const [activeSidebarTab, setActiveSidebarTab] = useState<string | null>('info');
   const [showExportModal, setShowExportModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   // Local-only "has this flow changed since the last deploy" flag driving
-  // the Header's Deploy button (see docs/FRONTEND_NODE_RED_REDESIGN.md
-  // Phase 1) — deliberately not persisted, no backend field for this.
+  // the Header's Deploy button. Deliberately not persisted.
   const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
     setIsDirty(false);
   }, [selectedFlow?.id]);
 
+  // Errors the server pushes over the WebSocket (e.g. an inject into a
+  // flow that is not running) are transient: show them, don't replace
+  // the whole editor with an error screen.
+  useEffect(() => {
+    if (serverError) {
+      showToast('error', serverError.message);
+    }
+  }, [serverError, showToast]);
+
   const handleCreateNewFlow = useCallback(async () => {
-    await createNewFlow('New Flow', 'A new flow');
-  }, [createNewFlow]);
+    try {
+      await createNewFlow('New Flow', 'A new flow');
+    } catch (err) {
+      showToast('error', `Flow konnte nicht angelegt werden: ${errorMessage(err)}`);
+    }
+  }, [createNewFlow, showToast]);
 
   const handleAddNode = useCallback(
     (nodeType: string, position: { x: number; y: number }) => {
@@ -70,9 +85,19 @@ export function FlowEditor() {
   const handleRemoveNode = useCallback(
     (nodeId: string) => {
       removeNode(nodeId);
+      setSelectedNode((current) => (current && current.id === nodeId ? null : current));
       setIsDirty(true);
     },
     [removeNode]
+  );
+
+  const handleNodeMove = useCallback(
+    (nodeId: string, position: { x: number; y: number }) => {
+      updateNode(nodeId, { position });
+      setSelectedNode((current) => (current && current.id === nodeId ? { ...current, position } : current));
+      setIsDirty(true);
+    },
+    [updateNode]
   );
 
   const handleAddConnection = useCallback(
@@ -96,47 +121,28 @@ export function FlowEditor() {
     if (!window.confirm(`Flow "${selectedFlow.name}" wirklich löschen?`)) return;
     try {
       await deleteCurrentFlow();
+      setSelectedNode(null);
       showToast('success', 'Flow gelöscht');
     } catch (err) {
-      showToast('error', `Flow konnte nicht gelöscht werden: ${err instanceof Error ? err.message : String(err)}`);
+      showToast('error', `Flow konnte nicht gelöscht werden: ${errorMessage(err)}`);
     }
   }, [selectedFlow, deleteCurrentFlow, showToast]);
 
-  const handleSelectFlow = useCallback((flowId: string) => {
-    selectFlow(flowId);
-    setSelectedNode(null);
-  }, [selectFlow]);
+  const handleSelectFlow = useCallback(
+    (flowId: string) => {
+      selectFlow(flowId);
+      setSelectedNode(null);
+    },
+    [selectFlow]
+  );
 
   const handleNodeSelect = useCallback((node: FlowNode) => {
-    // Validate the selected node before setting state
-    if (!node) {
-      console.error('Cannot select node: node is null or undefined');
-      return;
-    }
-    
-    const nodeId = node.id;
-    const nodeType = node.type;
-    
-    if (!nodeId || typeof nodeId !== 'string' || nodeId.trim() === '') {
-      console.error('Cannot select node: invalid node ID', { nodeId, node });
-      return;
-    }
-    
-    if (!nodeType || typeof nodeType !== 'string' || nodeType.trim() === '') {
-      console.error('Cannot select node: invalid node type', { nodeType, node });
-      return;
-    }
-    
-    // Ensure node has valid position
-    const validatedNode: FlowNode = {
+    if (!node || !node.id || !node.type) return;
+    setSelectedNode({
       ...node,
-      id: nodeId.trim(),
-      type: nodeType.trim(),
       position: node.position || { x: 0, y: 0 },
       config: node.config || {},
-    };
-    
-    setSelectedNode(validatedNode);
+    });
   }, []);
 
   const handleNodeDeselect = useCallback(() => {
@@ -153,18 +159,17 @@ export function FlowEditor() {
     setShowConfigModal(false);
   }, []);
 
-  const handleSaveNodeConfig = useCallback((config: Record<string, any>) => {
-    if (selectedNode && selectedNode.id && selectedNode.id.trim() !== '') {
-      updateNode(selectedNode.id, { config });
-      setIsDirty(true);
+  const handleSaveNodeConfig = useCallback(
+    (config: Record<string, any>) => {
+      if (selectedNode) {
+        updateNode(selectedNode.id, { config });
+        setIsDirty(true);
+      }
       setShowConfigModal(false);
       setSelectedNode(null);
-    } else {
-      console.error('Cannot save node config: invalid selected node');
-      setShowConfigModal(false);
-      setSelectedNode(null);
-    }
-  }, [selectedNode, updateNode]);
+    },
+    [selectedNode, updateNode]
+  );
 
   const handleDeleteConfiguredNode = useCallback(() => {
     if (!selectedNode) return;
@@ -178,76 +183,43 @@ export function FlowEditor() {
       showToast('error', 'No flow selected to save');
       return;
     }
-
     try {
-      // Sanitize nodes and connections before saving
-      const sanitizedNodes: Record<string, FlowNode> = {};
-      Object.entries(selectedFlow.nodes || {}).forEach(([id, node]) => {
-        if (node && 
-            id && typeof id === 'string' && id.trim() !== '' &&
-            node.id && typeof node.id === 'string' && node.id.trim() !== '' &&
-            node.type && typeof node.type === 'string' && node.type.trim() !== '') {
-          sanitizedNodes[id.trim()] = {
-            ...node,
-            id: node.id.trim(),
-            type: node.type.trim(),
-            position: node.position || { x: 0, y: 0 },
-            config: node.config || {},
-          };
-        } else {
-          console.warn('Skipping invalid node during save:', { id, node });
-        }
-      });
-      
-      const sanitizedConnections = (selectedFlow.connections || []).filter(conn => {
-        const isValid = conn &&
-          conn.id && typeof conn.id === 'string' && conn.id.trim() !== '' &&
-          conn.sourceNode && typeof conn.sourceNode === 'string' && conn.sourceNode.trim() !== '' &&
-          conn.targetNode && typeof conn.targetNode === 'string' && conn.targetNode.trim() !== '';
-        if (!isValid) {
-          console.warn('Skipping invalid connection during save:', { conn });
-        }
-        return isValid;
-      }).map(conn => ({
-        ...conn,
-        id: conn.id.trim(),
-        sourceNode: conn.sourceNode.trim(),
-        targetNode: conn.targetNode.trim(),
-        sourcePort: (conn.sourcePort || 'output').trim(),
-        targetPort: (conn.targetPort || 'input').trim(),
-      }));
-
       await updateCurrentFlow({
-        nodes: sanitizedNodes,
-        connections: sanitizedConnections,
+        nodes: selectedFlow.nodes,
+        connections: selectedFlow.connections,
         config: selectedFlow.config,
       });
-      showToast('success', 'Flow saved successfully!');
-      // Reset selected node to prevent stale data in sidebar
+      showToast('success', 'Flow saved');
       setSelectedNode(null);
-    } catch (error) {
-      showToast('error', `Failed to save flow: ${error instanceof Error ? error.message : String(error)}`);
+    } catch (err) {
+      showToast('error', `Failed to save flow: ${errorMessage(err)}`);
     }
   }, [selectedFlow, updateCurrentFlow, showToast]);
 
   const handleDeploy = useCallback(async () => {
-    if (selectedFlow) {
+    if (!selectedFlow) return;
+    try {
       await deployCurrentFlow();
       setIsDirty(false);
+      showToast('success', 'Flow deployed');
+    } catch (err) {
+      showToast('error', `Deploy failed: ${errorMessage(err)}`, 6000);
     }
-  }, [selectedFlow, deployCurrentFlow]);
+  }, [selectedFlow, deployCurrentFlow, showToast]);
 
   const handleUndeploy = useCallback(async () => {
-    if (selectedFlow) {
+    if (!selectedFlow) return;
+    try {
       await undeployCurrentFlow();
+      showToast('success', 'Flow stopped');
+    } catch (err) {
+      showToast('error', `Stop failed: ${errorMessage(err)}`);
     }
-  }, [selectedFlow, undeployCurrentFlow]);
+  }, [selectedFlow, undeployCurrentFlow, showToast]);
 
-  // 'deployed' isn't in the generated FlowStatus union (see
-  // types/generated.ts) but deployCurrentFlow sets it anyway — checking
-  // both here so Undeploy actually becomes clickable after a deploy.
-  const canDeploy = !!selectedFlow && (['draft', 'error'].includes(selectedFlow.status) || isDirty);
-  const canUndeploy = !!selectedFlow && ['running', 'deployed'].includes(selectedFlow.status);
+  const isRunning = selectedFlow?.status === 'running';
+  const canDeploy = !!selectedFlow && (!isRunning || isDirty);
+  const canUndeploy = !!selectedFlow && isRunning;
 
   const handleExportFlow = useCallback(() => {
     if (selectedFlow) {
@@ -261,10 +233,13 @@ export function FlowEditor() {
     setShowImportModal(true);
   }, []);
 
-  const handleFlowImported = useCallback((flowId: string) => {
-    selectFlow(flowId);
-    showToast('success', 'Flow imported and selected');
-  }, [selectFlow, showToast]);
+  const handleFlowImported = useCallback(
+    (flowId: string) => {
+      selectFlow(flowId);
+      showToast('success', 'Flow imported and selected');
+    },
+    [selectFlow, showToast]
+  );
 
   const handleCloseExportModal = useCallback(() => {
     setShowExportModal(false);
@@ -306,10 +281,7 @@ export function FlowEditor() {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="w-64 bg-white border-r border-gray-200 overflow-y-auto">
-          <NodePalette
-            nodeTypes={nodeTypes}
-            loading={nodeTypesLoading}
-          />
+          <NodePalette nodeTypes={nodeTypes} loading={nodeTypesLoading} />
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
@@ -330,6 +302,7 @@ export function FlowEditor() {
                 onNodeDeselect={handleNodeDeselect}
                 onAddNode={handleAddNode}
                 onRemoveNode={handleRemoveNode}
+                onNodeMove={handleNodeMove}
                 onAddConnection={handleAddConnection}
                 onRemoveConnection={handleRemoveConnection}
               />
@@ -345,13 +318,7 @@ export function FlowEditor() {
               id: 'info',
               label: 'Info',
               icon: <InfoTabIcon />,
-              content: (
-                <Sidebar
-                  flow={selectedFlow}
-                  selectedNode={selectedNode}
-                  onConfigureNode={handleConfigureNode}
-                />
-              ),
+              content: <Sidebar flow={selectedFlow} selectedNode={selectedNode} onConfigureNode={handleConfigureNode} />,
             },
             {
               id: 'debug',
@@ -384,11 +351,7 @@ export function FlowEditor() {
         />
       )}
 
-      <ImportModal
-        isOpen={showImportModal}
-        onClose={handleCloseImportModal}
-        onFlowImported={handleFlowImported}
-      />
+      <ImportModal isOpen={showImportModal} onClose={handleCloseImportModal} onFlowImported={handleFlowImported} />
     </div>
   );
 }

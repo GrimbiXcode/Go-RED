@@ -34,7 +34,7 @@ function convertBackendMessage(msg: Message): MessageLogEntry {
 }
 
 export function useMessageLog(selectedFlowId?: string): UseMessageLogReturn {
-  const ws = useWebSocket();
+  const { subscribe, sendMessage } = useWebSocket();
   const [state, setState] = useState<MessageLogState>({
     messages: [],
     loading: false,
@@ -44,20 +44,14 @@ export function useMessageLog(selectedFlowId?: string): UseMessageLogReturn {
   });
 
   const loadMessages = useCallback(async (flowId?: string, limit?: number) => {
+    setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
-      setState((prev) => ({ ...prev, loading: true, error: null }));
-      
-      // Request messages via WebSocket
-      const requestData = {
+      // The answer arrives as a message:log event (see the subscription
+      // below), which clears the loading flag.
+      await sendMessage('message:log', {
         flowId: flowId || selectedFlowId || undefined,
         limit: limit || 100,
-      };
-      
-      // Only send if we have a valid flowId or are requesting all messages
-      if (requestData.flowId || requestData.limit) {
-        ws.sendMessage('message:log', requestData);
-      }
-      
+      });
     } catch (error) {
       setState((prev) => ({
         ...prev,
@@ -65,7 +59,7 @@ export function useMessageLog(selectedFlowId?: string): UseMessageLogReturn {
         error: error as Error,
       }));
     }
-  }, [ws, selectedFlowId]);
+  }, [sendMessage, selectedFlowId]);
 
   const clearMessages = useCallback(() => {
     setState((prev) => ({
@@ -90,7 +84,7 @@ export function useMessageLog(selectedFlowId?: string): UseMessageLogReturn {
 
   // Handle incoming message:log responses
   useEffect(() => {
-    const subscription = ws.subscribe('message:log', (data: any) => {
+    const subscription = subscribe('message:log', (data: any) => {
       if (data && data.messages) {
         const backendMessages: Message[] = data.messages;
         const convertedMessages = backendMessages.map(convertBackendMessage);
@@ -111,7 +105,7 @@ export function useMessageLog(selectedFlowId?: string): UseMessageLogReturn {
     return () => {
       subscription();
     };
-  }, [ws]);
+  }, [subscribe]);
 
   // Auto-filter messages based on state
   const filteredMessages = useMemo(() => {
@@ -141,7 +135,7 @@ export function useMessageLog(selectedFlowId?: string): UseMessageLogReturn {
     if (selectedFlowId) {
       loadMessages(selectedFlowId);
     }
-  }, [selectedFlowId]);
+  }, [selectedFlowId, loadMessages]);
 
   // Merge filtered messages into state for external use
   const effectiveState = {

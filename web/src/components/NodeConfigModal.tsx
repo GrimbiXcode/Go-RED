@@ -211,6 +211,7 @@ export function NodeConfigModal({ node, nodeTypes, onClose, onSave, onDelete }: 
                   try {
                     setConfig(JSON.parse(e.target.value));
                   } catch {
+                    // Keep the last valid config while the JSON is being edited.
                   }
                 }}
                 className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-2 focus:ring-gr-blue-500"

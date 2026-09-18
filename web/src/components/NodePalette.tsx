@@ -122,14 +122,14 @@ export function NodePalette({ nodeTypes, loading }: NodePaletteProps) {
     );
   }, [nodeTypes, searchQuery]);
 
-  const filteredGroupedNodes = groupByCategory(filteredNodeTypes);
-  const filteredCategories = getCategories(filteredNodeTypes);
+  const filteredGroupedNodes = useMemo(() => groupByCategory(filteredNodeTypes), [filteredNodeTypes]);
+  const filteredCategories = useMemo(() => getCategories(filteredNodeTypes), [filteredNodeTypes]);
 
   React.useEffect(() => {
     if (filteredCategories.length > 0 && expandedCategories.size === 0) {
       setExpandedCategories(new Set([filteredCategories[0]]));
     }
-  }, [filteredCategories.length, expandedCategories.size]);
+  }, [filteredCategories, expandedCategories.size]);
 
   const handleDragStart = useCallback(
     (event: React.DragEvent<HTMLDivElement>, nodeType: string) => {

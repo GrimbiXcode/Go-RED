@@ -48,12 +48,6 @@ export function MessageLogPanel({ selectedFlowId }: MessageLogPanelProps) {
     }
   }, [messages]);
 
-  useEffect(() => {
-    if (selectedFlowId) {
-      loadMessages(selectedFlowId, 100);
-    }
-  }, [selectedFlowId]);
-
   const handleRefresh = () => {
     if (selectedFlowId) {
       loadMessages(selectedFlowId, 100);
