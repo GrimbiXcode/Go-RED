@@ -228,6 +228,34 @@ Abnahme: die Repro aus dieser Analyse (Flow anlegen, Node ziehen, speichern, dep
 funktioniert im Browser; Browser-Console leer; genau eine WebSocket-Verbindung; CI rot bei
 Lint/Format/Test-Fehlern.
 
+**Status: umgesetzt** (Branch `claude/projekt-analyse-verbesserung-znm6c6`). Alle Punkte der
+Tabelle sind erledigt; die Abnahme wurde mit einem Playwright-Skript gegen das gebaute UI
+gefahren (14/14 Prüfungen: SPA-Fallback, Position nach Drag persistiert, Deploy setzt `running`,
+kein Zurückspringen, Nachrichten fließen, Debug-Panel zeigt sie, Stop/Redeploy, Reload, genau
+eine WebSocket-Verbindung, leere Console, Health-Endpoint). `go test -race ./...`, `npm run lint`,
+`tsc`, Vitest und `vite build` sind grün.
+
+Über den Plan hinaus gefunden und behoben:
+
+- **Inject-Intervall hat nie gesendet.** Der Ticker aktualisierte nur ein Feld und startete erst,
+  wenn der Node von außen ausgeführt wurde. Inject ist jetzt ein `EmittingNode` (Intervall und
+  "einmal beim Deploy").
+- **Deploy-Fehler waren unsichtbar.** Ein Node mit ungültiger Konfiguration (z. B. `mqtt in`
+  ohne Broker) ließ den Deploy mit dem alten No-op scheinbar gelingen. Jetzt antwortet der Server
+  mit 422 und einer lesbaren Meldung, der Flow bekommt Status `error`, das UI zeigt einen Toast.
+- **Undeployte Flows verschwanden** aus der Liste bis zum Neustart; **importierte Flows** waren
+  bis zum Neustart unsichtbar. Beides geht jetzt durch den Engine-Bestand.
+- **Verschachtelter `ReactFlowProvider`** trennte `screenToFlowPosition` vom echten Viewport
+  (Drop-Position bei Zoom/Pan falsch).
+- Beim Beenden bleibt der persistierte Status erhalten; beim Start werden nur die Flows
+  deployed, die beim letzten Lauf liefen.
+
+Bewusst nicht in Phase 0: `FlowStatus` behält die fünf vorhandenen Werte
+(`draft/running/error/deploying/undeploying`), weil Frontend und Backend jetzt dieselbe
+generierte Quelle nutzen und ein zusätzliches `stopped` keinen Mehrwert hätte. `CheckOrigin`
+und Auth bleiben Phase 6. Der WebSocket-Schreibpfad pro Node (`node:add` …) bleibt bis Phase 1
+bestehen, läuft aber jetzt über `UpdateFlow` unter Lock.
+
 ### Phase 1 — Frontend-Fundament (1–2 Wochen)
 
 - **Store** mit Zustand (bereits installiert): Slices `flows`, `editor` (Selection, Dirty, Undo-Stack,
@@ -381,7 +409,7 @@ Weitere Punkte der Phase:
 
 | Phase | Inhalt | Aufwand | Hängt ab von |
 |---|---|---|---|
-| 0 | Stabilisieren, CI hart | 1 Woche | – |
+| 0 | Stabilisieren, CI hart — **erledigt** | 1 Woche | – |
 | 1 | Store, ein Schreibpfad, xyflow 12, Tests, i18n | 1–2 Wochen | 0 |
 | 2 | Engine-Events, Live-Debug, Node-Status | 1 Woche | 0 |
 | 3 | Schema v2, Edit-Tray v2, Widgets, dynamische Ports | 2 Wochen | 1, 2 |
