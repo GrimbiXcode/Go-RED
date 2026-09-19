@@ -34,6 +34,9 @@ type Node struct {
 	// Name is an optional display name for the node.
 	Name string `json:"name,omitempty"`
 
+	// Description is free text the user keeps with the node (Markdown).
+	Description string `json:"description,omitempty"`
+
 	// Config contains the configuration for this node.
 	Config map[string]interface{} `json:"config"`
 
@@ -308,13 +311,14 @@ func (f *Flow) Clone() *Flow {
 	// Clone nodes
 	for k, v := range f.Nodes {
 		clone.Nodes[k] = &Node{
-			ID:       v.ID,
-			Type:     v.Type,
-			Name:     v.Name,
-			Config:   cloneMap(v.Config),
-			X:        v.X,
-			Y:        v.Y,
-			Disabled: v.Disabled,
+			ID:          v.ID,
+			Type:        v.Type,
+			Name:        v.Name,
+			Description: v.Description,
+			Config:      cloneMap(v.Config),
+			X:           v.X,
+			Y:           v.Y,
+			Disabled:    v.Disabled,
 		}
 	}
 

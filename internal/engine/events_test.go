@@ -197,3 +197,39 @@ func TestFillForStatus(t *testing.T) {
 	assert.Equal(t, "red", fillForStatus("error: timeout"))
 	assert.Equal(t, "blue", fillForStatus("42 msgs"))
 }
+
+func TestDisabledNodes_AreNeitherStartedNorRoutedTo(t *testing.T) {
+	engine := createTestEngine()
+	require.NoError(t, engine.Start())
+	defer engine.Stop()
+
+	rec := &eventRecorder{}
+	unsubscribe := engine.SubscribeEvents(rec.record)
+	defer unsubscribe()
+
+	flow := injectDebugFlow("dis-1")
+	flow.Nodes["n2"].Disabled = true
+	flow.Nodes["n3"] = &Node{ID: "n3", Type: "debug", Name: "Alive", Config: map[string]interface{}{"outputToConsole": false}}
+	flow.Connections = append(flow.Connections, NodeConnection{ID: "c2", SourceNode: "n1", SourcePort: "output", TargetNode: "n3", TargetPort: "input"})
+	require.NoError(t, engine.Deploy(flow))
+
+	engine.mu.RLock()
+	_, started := engine.active["dis-1"].nodeExecutors["n2"]
+	engine.mu.RUnlock()
+	assert.False(t, started, "a disabled node gets no executor")
+
+	require.NoError(t, engine.InjectMessage("dis-1", "n1", map[string]interface{}{"payload": "hi"}))
+	assert.Eventually(t, func() bool {
+		return rec.has(func(ev Event) bool {
+			d, ok := ev.(DebugEvent)
+			return ok && d.NodeID == "n3"
+		})
+	}, 2*time.Second, 10*time.Millisecond, "the enabled sibling still receives the message")
+	assert.False(t, rec.has(func(ev Event) bool {
+		d, ok := ev.(DebugEvent)
+		return ok && d.NodeID == "n2"
+	}), "nothing is routed to the disabled node")
+
+	err := engine.InjectMessage("dis-1", "n2", map[string]interface{}{"payload": "hi"})
+	assert.ErrorContains(t, err, "disabled")
+}

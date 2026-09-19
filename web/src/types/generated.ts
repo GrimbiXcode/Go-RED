@@ -15,6 +15,7 @@ export interface Node {
   id: string;
   type: string;
   name?: string;
+  description?: string;
   position: Position;
   config: Record<string, any>;
   disabled: boolean;
@@ -165,6 +166,21 @@ export interface Port {
   required: boolean;
 }
 
+export interface Option {
+  value: string;
+  label: string;
+}
+
+export interface TypedInputOptions {
+  types: string[];
+  default?: string;
+}
+
+export interface Condition {
+  property: string;
+  values: string[];
+}
+
 export interface Property {
   type: string;
   description: string;
@@ -173,11 +189,30 @@ export interface Property {
   min?: number;
   max?: number;
   pattern: string;
+  label?: string;
+  placeholder?: string;
+  group?: string;
+  order?: number;
+  widget?: string;
+  language?: string;
+  unit?: string;
+  options?: Option[];
+  typedInput?: TypedInputOptions;
+  items?: Schema;
+  nodeTypes?: string[];
+  multiple?: boolean;
+  visibleWhen?: Condition;
 }
 
 export interface Schema {
   properties: Record<string, Property>;
   required: string[];
+}
+
+export interface OutputsFrom {
+  property: string;
+  label?: string;
+  min?: number;
 }
 
 export interface NodeMetadata {
@@ -191,6 +226,10 @@ export interface NodeMetadata {
   configSchema: Schema;
   icon: string;
   tags: string[];
+  outputsFrom?: OutputsFrom;
+  color?: string;
+  help?: string;
+  defaultName?: string;
 }
 
 export interface WebSocketMessage {

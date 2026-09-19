@@ -470,8 +470,8 @@ func (e *FlowEngine) findRootNodes(flow *Flow) []string {
 		targetNodes[conn.TargetNode] = true
 	}
 
-	for nodeID := range flow.Nodes {
-		if !targetNodes[nodeID] {
+	for nodeID, node := range flow.Nodes {
+		if !targetNodes[nodeID] && !node.Disabled {
 			rootNodes = append(rootNodes, nodeID)
 		}
 	}
@@ -494,6 +494,9 @@ func (e *FlowEngine) findConnectedNodes(flow *Flow, nodeID string, sourcePort st
 			continue
 		}
 		if sourcePort != "" && conn.SourcePort != "" && conn.SourcePort != sourcePort {
+			continue
+		}
+		if target, ok := flow.Nodes[conn.TargetNode]; ok && target.Disabled {
 			continue
 		}
 		connectedNodes = append(connectedNodes, conn.TargetNode)
@@ -605,6 +608,11 @@ func (e *FlowEngine) deployLocked(def *Flow) error {
 	e.clearNodeStatus(def.ID)
 
 	for nodeID, node := range snapshot.Nodes {
+		if node.Disabled {
+			// A disabled node is part of the definition but not of the
+			// runtime: it is neither started nor routed to.
+			continue
+		}
 		executor, err := e.registry.InitializeNode(node.Type, node.Config)
 		if err != nil {
 			// Release any resources already-initialized nodes in this flow
@@ -931,8 +939,12 @@ func (e *FlowEngine) InjectMessage(flowID, nodeID string, payload map[string]int
 		return fmt.Errorf("%w: %s", ErrFlowNotDeployed, flowID)
 	}
 
-	if _, exists := activeFlow.Flow.Nodes[nodeID]; !exists {
+	node, exists := activeFlow.Flow.Nodes[nodeID]
+	if !exists {
 		return fmt.Errorf("node %s not found in flow %s", nodeID, flowID)
+	}
+	if node.Disabled {
+		return fmt.Errorf("node %s is disabled", nodeID)
 	}
 
 	msg := NewMessageWithContext(activeFlow.ctx, payload, flowID)

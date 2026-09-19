@@ -416,6 +416,7 @@ func (s *server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 	for id, node := range request.Nodes {
 		node.Type = sanitizeString(node.Type)
 		node.Name = sanitizeString(node.Name)
+		node.Description = sanitizeString(node.Description)
 		request.Nodes[id] = node
 	}
 
@@ -541,6 +542,7 @@ func (s *server) handleImportFlow(w http.ResponseWriter, r *http.Request) {
 	for nodeID, node := range flow.Nodes {
 		node.Type = sanitizeString(node.Type)
 		node.Name = sanitizeString(node.Name)
+		node.Description = sanitizeString(node.Description)
 		flow.Nodes[nodeID] = node
 	}
 

@@ -45,12 +45,14 @@ type NodeStatus struct {
 // Node is the wire representation of a flow node (definition only; runtime
 // status travels separately as NodeStatus events).
 type Node struct {
-	ID       string                 `json:"id"`
-	Type     string                 `json:"type"`
-	Name     string                 `json:"name,omitempty"`
-	Position Position               `json:"position"`
-	Config   map[string]interface{} `json:"config"`
-	Disabled bool                   `json:"disabled"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+	// Description is the user's own note on this node instance (Markdown).
+	Description string                 `json:"description,omitempty"`
+	Position    Position               `json:"position"`
+	Config      map[string]interface{} `json:"config"`
+	Disabled    bool                   `json:"disabled"`
 }
 
 // Connection is the wire representation of a connection between two nodes.

@@ -30,25 +30,27 @@ func FlowStatusFromEngine(s engine.FlowStatus) FlowStatus {
 // NodeToWire converts an engine Node to its canonical wire representation.
 func NodeToWire(n *engine.Node) Node {
 	return Node{
-		ID:       n.ID,
-		Type:     n.Type,
-		Name:     n.Name,
-		Position: Position{X: n.X, Y: n.Y},
-		Config:   n.Config,
-		Disabled: n.Disabled,
+		ID:          n.ID,
+		Type:        n.Type,
+		Name:        n.Name,
+		Description: n.Description,
+		Position:    Position{X: n.X, Y: n.Y},
+		Config:      n.Config,
+		Disabled:    n.Disabled,
 	}
 }
 
 // NodeFromWire converts a wire Node back to an engine Node, given its map key ID.
 func NodeFromWire(id string, n Node) *engine.Node {
 	return &engine.Node{
-		ID:       id,
-		Type:     n.Type,
-		Name:     n.Name,
-		Config:   n.Config,
-		X:        n.Position.X,
-		Y:        n.Position.Y,
-		Disabled: n.Disabled,
+		ID:          id,
+		Type:        n.Type,
+		Name:        n.Name,
+		Description: n.Description,
+		Config:      n.Config,
+		X:           n.Position.X,
+		Y:           n.Position.Y,
+		Disabled:    n.Disabled,
 	}
 }
 
