@@ -31,12 +31,3 @@ export interface FlowMessage extends Message {
   nodeId: string;
   port: string;
 }
-
-export interface MessageLogEntry {
-  id: string;
-  flowId: string;
-  nodeId: string;
-  message: Message;
-  timestamp: string;
-  level: 'debug' | 'info' | 'warn' | 'error';
-}

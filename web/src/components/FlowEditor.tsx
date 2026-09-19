@@ -8,7 +8,7 @@ import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { FlowTabs } from './FlowTabs';
 import { NodeConfigModal } from './NodeConfigModal';
-import { MessageLogPanel } from './MessageLogPanel';
+import { DebugPanel } from './DebugPanel';
 import { SidebarTabs, InfoTabIcon, DebugTabIcon } from './SidebarTabs';
 import { StatusBar } from './StatusBar';
 import { ExportModal } from './ExportModal';
@@ -179,7 +179,7 @@ export function FlowEditor() {
   const sidebarTabs = useMemo(
     () => [
       { id: 'info' as SidebarTab, label: t('sidebar.info'), icon: <InfoTabIcon />, content: <Sidebar /> },
-      { id: 'debug' as SidebarTab, label: t('sidebar.debug'), icon: <DebugTabIcon />, content: <MessageLogPanel flowId={flow?.id} /> },
+      { id: 'debug' as SidebarTab, label: t('sidebar.debug'), icon: <DebugTabIcon />, content: <DebugPanel flowId={flow?.id} /> },
     ],
     [t, flow?.id]
   );

@@ -9,3 +9,4 @@ export * from './SidebarTabs';
 export * from './StatusBar';
 export * from './NodeConfigModal';
 export * from './ToastNotification';
+export * from './DebugPanel';

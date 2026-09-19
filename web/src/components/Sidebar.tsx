@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFlowStore } from '../store/flowStore';
 import { useEditorStore } from '../store/editorStore';
-import { useRuntimeStore, selectNodeStatus } from '../store/runtimeStore';
+import { useRuntimeStore, selectNodeStatus, selectNodeMetrics } from '../store/runtimeStore';
+import { hasVisibleStatus } from './NodeShell';
 import type { Flow, FlowNode } from '../types/flow';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -28,8 +29,8 @@ function NodeDetails({ flow, node }: { flow: Flow; node: FlowNode }) {
   const { t } = useTranslation();
   const openConfig = useEditorStore((state) => state.openConfig);
   const nodeTypes = useFlowStore((state) => state.nodeTypes);
-  const runtimeStatus = useRuntimeStore(selectNodeStatus(flow.id, node.id));
-  const status = runtimeStatus ?? node.status;
+  const status = useRuntimeStore(selectNodeStatus(flow.id, node.id));
+  const metrics = useRuntimeStore(selectNodeMetrics(flow.id, node.id));
   const metadata = nodeTypes.find((nt) => nt.type === node.type);
 
   return (
@@ -66,19 +67,36 @@ function NodeDetails({ flow, node }: { flow: Flow; node: FlowNode }) {
           </Field>
         )}
 
-        {status && status.state && status.state !== 'idle' && (
+        {hasVisibleStatus(status) && (
           <Field label={t('sidebar.status')}>
             <div
               className={`text-sm p-2 rounded ${
-                status.state === 'error'
+                status.fill === 'red'
                   ? 'bg-gr-fuchsia-50 text-gr-fuchsia-700'
-                  : status.state === 'processing'
-                    ? 'bg-gr-skyblue-50 text-gr-skyblue-700'
+                  : status.fill === 'yellow'
+                    ? 'bg-amber-50 text-amber-700'
                     : 'bg-gr-blue-50 text-gr-blue-700'
               }`}
+              data-testid="node-status-detail"
             >
-              {status.state}
-              {status.message && <div className="text-xs mt-1">{status.message}</div>}
+              {status.text || status.fill}
+            </div>
+          </Field>
+        )}
+
+        {metrics && (
+          <Field label={t('sidebar.activity')}>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-gray-50 p-2 rounded">
+                <div className="text-xs text-gray-500">{t('sidebar.messages')}</div>
+                <div className="text-lg font-semibold text-gray-800" data-testid="node-messages">
+                  {metrics.messages}
+                </div>
+              </div>
+              <div className="bg-gray-50 p-2 rounded">
+                <div className="text-xs text-gray-500">{t('sidebar.errors')}</div>
+                <div className={`text-lg font-semibold ${metrics.errors > 0 ? 'text-gr-fuchsia-600' : 'text-gray-800'}`}>{metrics.errors}</div>
+              </div>
             </div>
           </Field>
         )}

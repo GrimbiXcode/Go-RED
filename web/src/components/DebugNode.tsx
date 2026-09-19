@@ -8,7 +8,7 @@ import type { CanvasNode } from './canvasTypes';
 export function DebugNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const { label, node, metadata, flowId } = data;
   const category = metadata?.category || 'output';
-  const status = useRuntimeStore(selectNodeStatus(flowId, id)) ?? node.status;
+  const status = useRuntimeStore(selectNodeStatus(flowId, id));
 
   return (
     <NodeShell

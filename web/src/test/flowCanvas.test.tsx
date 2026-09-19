@@ -8,7 +8,7 @@ const registry: NodeRegistry = {
 };
 
 function node(id: string, overrides: Partial<FlowNode> = {}): FlowNode {
-  return { id, type: 'inject', position: { x: 1, y: 2 }, config: {}, status: { state: 'idle' }, disabled: false, ...overrides };
+  return { id, type: 'inject', position: { x: 1, y: 2 }, config: {}, disabled: false, ...overrides };
 }
 
 describe('flowNodeToCanvasNode', () => {

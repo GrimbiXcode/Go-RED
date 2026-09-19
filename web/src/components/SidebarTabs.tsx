@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
  * icons sits fixed at the far right edge, with the active tab's content
  * shown in a panel to its left. Clicking the active tab's icon again
  * collapses the panel. Replaces the old always-visible Sidebar column plus
- * the separately toggled MessageLogPanel overlay.
+ * the separately toggled message log overlay (now the DebugPanel tab).
  */
 
 export interface SidebarTabDef {

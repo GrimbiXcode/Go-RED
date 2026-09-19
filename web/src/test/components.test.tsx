@@ -137,7 +137,7 @@ describe('StatusBar', () => {
     id: 'f',
     name: 'F',
     description: '',
-    nodes: { a: { id: 'a', type: 'inject', position: { x: 0, y: 0 }, config: {}, status: { state: 'idle' }, disabled: false } },
+    nodes: { a: { id: 'a', type: 'inject', position: { x: 0, y: 0 }, config: {}, disabled: false } },
     connections: [],
     status: 'draft' as const,
     config: { timeout: 30, maxConcurrency: 1, retryPolicy: { maxRetries: 0, backoff: 0, maxBackoff: 0, retryOn: [] }, environment: {} },

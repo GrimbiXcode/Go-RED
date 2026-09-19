@@ -1,26 +1,21 @@
 import type { ReactNode } from 'react';
 import { getCategoryColor } from '../utils/nodeCategories';
+import type { NodeStatus } from '../types/generated';
 
 /**
- * Shared visual shell for canvas node cards (Phase 3 of
- * docs/FRONTEND_NODE_RED_REDESIGN.md): a single flat, category-colored row
- * instead of the old white-card-with-colored-header-bar, a dashed Gopher
- * Blue outline on selection, and an optional status line below the node
- * instead of a status dot in the header. Used by NodeComponent, InjectNode
- * and DebugNode so the three don't each re-implement this.
+ * Shared visual shell for canvas node cards: a single flat, category-colored
+ * row, a dashed Gopher Blue outline on selection, and an optional status
+ * line below the node (Node-RED's {fill, shape, text} indicator). Used by
+ * NodeComponent, InjectNode and DebugNode so the three don't each
+ * re-implement this.
  */
-
-export interface NodeStatusLike {
-  state: string;
-  message?: string;
-}
 
 export interface NodeShellProps {
   category: string;
   label: string;
   icon: ReactNode;
   selected?: boolean;
-  status?: NodeStatusLike;
+  status?: NodeStatus;
   /** Optional small control rendered at the right of the row (e.g. Inject's trigger button). */
   action?: ReactNode;
   title?: string;
@@ -29,17 +24,25 @@ export interface NodeShellProps {
   children?: ReactNode;
 }
 
-const statusDotClass: Record<string, string> = {
-  error: 'bg-gr-fuchsia-500',
-  processing: 'bg-gr-skyblue-500',
-  completed: 'bg-gr-blue-500',
-  running: 'bg-gr-blue-500',
-  deployed: 'bg-gr-blue-500',
+const fillClass: Record<string, string> = {
+  red: 'bg-gr-fuchsia-500 border-gr-fuchsia-500',
+  green: 'bg-emerald-500 border-emerald-500',
+  yellow: 'bg-amber-400 border-amber-400',
+  blue: 'bg-gr-blue-500 border-gr-blue-500',
+  grey: 'bg-gray-400 border-gray-400',
+  gray: 'bg-gray-400 border-gray-400',
 };
+
+/** True when a status has something to show. */
+export function hasVisibleStatus(status?: NodeStatus): status is NodeStatus {
+  return !!status && (!!status.text || !!status.fill);
+}
 
 export function NodeShell({ category, label, icon, selected, status, action, title, children }: NodeShellProps) {
   const color = getCategoryColor(category);
-  const showStatus = !!status?.state && status.state !== 'idle';
+  const showStatus = hasVisibleStatus(status);
+  const fill = fillClass[status?.fill || ''] || fillClass.grey;
+  const ring = status?.shape === 'ring';
 
   return (
     <div style={{ minWidth: 'var(--gr-node-min-width)' }} title={title}>
@@ -57,9 +60,13 @@ export function NodeShell({ category, label, icon, selected, status, action, tit
       {children}
 
       {showStatus && (
-        <div className="mt-1 flex items-center justify-center gap-1 text-[10px] text-gray-600 whitespace-nowrap">
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass[status!.state] || 'bg-gray-400'}`} />
-          <span className="truncate">{status!.message || status!.state}</span>
+        <div
+          className="mt-1 flex items-center gap-1 text-[10px] text-gray-600 whitespace-nowrap"
+          data-testid="node-status"
+          data-fill={status.fill || ''}
+        >
+          <span className={`w-2 h-2 rounded-full shrink-0 border ${fill} ${ring ? '!bg-transparent' : ''}`} />
+          <span className="truncate max-w-[12rem]">{status.text}</span>
         </div>
       )}
     </div>

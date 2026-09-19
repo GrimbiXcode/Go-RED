@@ -1,9 +1,9 @@
 // API response types for Go-RED REST API
 import type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus } from './flow';
 import type { NodeMetadata } from './node';
-import type { MessageLogEntry, WebSocketMessageType } from './message';
+import type { WebSocketMessageType } from './message';
 
-export type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus, NodeMetadata, MessageLogEntry, WebSocketMessageType };
+export type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus, NodeMetadata, WebSocketMessageType };
 
 // FlowSummary, FlowCreateRequest, and FlowUpdateRequest are generated from
 // the Go backend (see internal/dto) via `go generate ./internal/dto/...` —
@@ -28,10 +28,6 @@ export interface NodeDetailResponse {
   metadata: NodeMetadata;
 }
 
-export interface MessageLogResponse {
-  messages: MessageLogEntry[];
-}
-
 export interface HealthCheckResponse {
   status: 'healthy' | 'degraded' | 'unhealthy';
   version: string;
@@ -52,12 +48,6 @@ export interface StatsResponse {
   messagesProcessed: number;
   messagesPerSecond: number;
   averageProcessingTime: number;
-}
-
-export interface MessageLogRequest {
-  flowId?: string;
-  limit?: number;
-  offset?: number;
 }
 
 export interface FlowExportRequest {

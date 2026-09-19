@@ -16,7 +16,7 @@ export function InjectNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const [lastInjectionTime, setLastInjectionTime] = useState<string | null>(null);
 
   const category = metadata?.category || 'input';
-  const status = useRuntimeStore(selectNodeStatus(flowId, id)) ?? node.status;
+  const status = useRuntimeStore(selectNodeStatus(flowId, id));
 
   const handleInject = useCallback(
     async (event: MouseEvent) => {

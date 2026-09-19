@@ -376,7 +376,6 @@ export const useFlowStore = create<FlowState>((set, get) => {
           name: name || '',
           position,
           config: {},
-          status: { state: 'idle' },
           disabled: false,
         };
         return { nodes: { ...doc.nodes, [id]: node }, connections: doc.connections };
