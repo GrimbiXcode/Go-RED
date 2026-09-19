@@ -135,6 +135,22 @@ filter and clear.
 back to the store once per drag; store updates that arrive mid-drag keep the
 dragged node's on-screen position and the current selection.
 
+### Editing nodes
+
+The edit tray (`components/NodeEditTray.tsx`) is generated from the node
+type's `configSchema` (schema v2, see `docs/PROTOCOL.md`): `src/schema`
+resolves labels, widgets, order, groups and visibility, and validates the
+config (required, min/max, pattern, select values, typed inputs, list
+items) on every change; *Done* is enabled only while the form is valid.
+Widgets live in `components/config/` (text, number, select, typed input,
+CodeMirror 6 code and JSON editors with `msg.` completions, rule lists with
+drag ordering, key/value maps, durations with unit conversion, node
+references). Output ports can depend on the config (`outputsFrom`): the
+canvas draws and labels them, and saving a node drops the connections on
+ports that no longer exist in the same undo step. Node `description`
+(Markdown) and the type's `help` are shown in the Info sidebar; disabled
+nodes are kept in the flow but skipped by the engine.
+
 ### Routing and language
 
 `/flow/:id` is the URL of an open flow; a reload restores it (the server

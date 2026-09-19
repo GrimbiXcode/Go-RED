@@ -11,6 +11,9 @@
 > bekommt `node:status`, `debug:message` und `flow:metrics` in den `runtimeStore`; die
 > Debug-Sidebar ist `DebugPanel.tsx` (kein `MessageLogPanel`, kein `message:log`). Alle
 > Nachrichten stehen in `docs/PROTOCOL.md`.
+> Seit Phase 3 wird der Edit-Tray (`NodeEditTray.tsx`, Widgets in `components/config/`) aus dem
+> `configSchema` des Node-Typs erzeugt; `src/schema/` löst Widgets, Reihenfolge, Sichtbarkeit,
+> Validierung und dynamische Ports auf. Es gibt kein `NodeConfigModal` mehr.
 > UI-Texte kommen aus `src/i18n/` (`t('…')`), nie als Literale in Komponenten. Tests:
 > `src/test/*.test.ts(x)` (Vitest) und `e2e/*.spec.ts` (Playwright gegen den echten Server).
 > Die Architektur ist in `docs/ARCHITECTURE.md`, Abschnitt "Frontend Architecture", beschrieben.

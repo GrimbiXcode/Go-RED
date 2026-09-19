@@ -99,9 +99,55 @@ func init() {
         Category: "function",
         Inputs: []registry.Port{{ID: "input", Name: "Input", Required: true}},
         Outputs: []registry.Port{{ID: "output", Name: "Output", Required: true}},
+        ConfigSchema: registry.Schema{
+            Properties: map[string]registry.Property{
+                "url": {
+                    Type: "string", Label: "URL", Order: 1, Widget: registry.WidgetText,
+                    Placeholder: "https://example.org", Description: "Where to send the request",
+                },
+                "timeoutMs": {
+                    Type: "number", Label: "Timeout", Order: 2, Widget: registry.WidgetDuration, Unit: "ms",
+                    Default: float64(30000), Group: "Connection",
+                },
+                "mode": {
+                    Type: "string", Label: "Mode", Order: 3, Widget: registry.WidgetSelect, Default: "simple",
+                    Options: []registry.Option{{Value: "simple", Label: "Simple"}, {Value: "batch", Label: "Batch"}},
+                },
+                "batchSize": {
+                    Type: "number", Label: "Batch size", Order: 4, Widget: registry.WidgetNumber,
+                    VisibleWhen: &registry.Condition{Property: "mode", Values: []string{"batch"}},
+                },
+            },
+            Required: []string{"url"},
+        },
+        Help: "**Sends requests** to a URL. Supports a batch mode.",
     })
 }
 ```
+
+### Configuration schema
+
+`ConfigSchema` is what the edit tray renders and validates (the full field
+reference is in `docs/PROTOCOL.md`, section "Node schemas"). Rules of thumb:
+
+- Give every property a `Label`, an `Order` and a `Widget` (constants in
+  `internal/registry/schema.go`); `Description` is the help text under the
+  field. Use `Group` to split long forms into sections.
+- Use `WidgetTypedInput` with `registry.PropertyRefTypes` for a location
+  (`{type, path}`, resolved with `typedvalue.PropertyRef`) and with
+  `registry.ValueTypes` for a value (`{type, value}`, resolved with
+  `typedvalue.Value`).
+- Use `WidgetList` with `Items` for an ordered list of objects (rules), and
+  `OutputsFrom` on the metadata when each element should own an output port.
+- Use `WidgetNodeSelect` with `NodeTypes` to reference a config node of the
+  same flow (`mqtt-broker`, `tls-config`, ...), `WidgetDuration` with `Unit`
+  for times, `WidgetCode` with `Language` for code and templates.
+- `VisibleWhen` hides a property until another one has a matching value.
+- Add a `Help` text in Markdown; the tray and the Info sidebar show it.
+
+`internal/nodes/schema_test.go` runs `NodeMetadata.Check` over every
+registered node, so an unknown widget or a `VisibleWhen` pointing at a
+missing property fails the build.
 
 ---
 

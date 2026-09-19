@@ -334,6 +334,26 @@ der Sidebar, Debug-Historie nach Reload aus dem Snapshot).
 - **Dynamische Ports**: Canvas rendert Outputs aus `outputs.fromProperty` und benennt sie mit
   Rule-Labels; Kanten auf entfernte Ports werden beim Speichern entfernt (mit Hinweis).
 
+**Status: umgesetzt.** Schema v2 ist additiv in `internal/registry` (`Label`, `Widget`, `Order`,
+`Group`, `Placeholder`, `Options`, `Language`, `Unit`, `TypedInput`, `Items`, `NodeTypes`/`Multiple`,
+`VisibleWhen`; auf Metadaten-Ebene `OutputsFrom`, `Color`, `Help`, `DefaultName`), mit
+`Schema.Check` (Wohlgeformtheit) und `Schema.Validate` (Wertregeln). Alle 47 Nodes sind per Skript
+migriert: geordnete, beschriftete Felder, Gruppen, Sichtbarkeitsregeln, Listen-Schemata für
+Switch- und Change-Regeln, `typedInput` für Property-Referenzen und Werte, `nodeSelect` für
+Config-Node-Referenzen (Broker, TLS, Proxy, WebSocket, Link-Ziele, Scopes), `duration` für alle
+`*Ms`/`*Sec`-Felder, Code-Editoren für Function und Template, Hilfetexte in Markdown; ein Test
+prüft jedes registrierte Schema. Abweichungen: Widgets zusätzlich `stringList` und `nodeSelect`;
+Ausgänge bleiben `Outputs` (fest) plus `OutputsFrom` (dynamisch) statt einer neuen Union;
+Inject-Payload bleibt ein JSON-Objekt. Der Edit-Tray rendert aus dem Schema (Widget-Registry,
+Tabs Eigenschaften/Beschreibung/Darstellung, Name immer oben, Inline-Fehler, „Fertig" nur bei
+gültigem Formular), CodeMirror 6 mit `msg.`-Vervollständigung, Regel-Listen mit Drag-Sortierung.
+Der Canvas rendert dynamische Ports mit Labels; beim Speichern werden Verbindungen auf
+entfernte Ports im selben Undo-Schritt gelöscht (mit Hinweis). Neu dabei: Node-`description`
+(Markdown, im Wire-Format) und die Engine beachtet `disabled` (nicht gestartet, nicht
+angesteuert). Abnahme: Playwright (Switch-Regel entfernen → Port und Kante weg, Undo bringt
+beides zurück; Pflichtfeld sperrt „Fertig"; Function-Code im CodeMirror editiert; Node
+deaktiviert).
+
 ### Phase 4 — Visuelles Redesign (ca. 2 Wochen)
 
 Design-Tokens v2 (Vorschlag, in Phase 4 gegen echte Screens abzustimmen):
@@ -442,7 +462,7 @@ Weitere Punkte der Phase:
 | 0 | Stabilisieren, CI hart — **erledigt** | 1 Woche | – |
 | 1 | Store, ein Schreibpfad, xyflow 12, Tests, i18n — **erledigt** | 1–2 Wochen | 0 |
 | 2 | Engine-Events, Live-Debug, Node-Status — **erledigt** | 1 Woche | 0 |
-| 3 | Schema v2, Edit-Tray v2, Widgets, dynamische Ports | 2 Wochen | 1, 2 |
+| 3 | Schema v2, Edit-Tray v2, Widgets, dynamische Ports — **erledigt** | 2 Wochen | 1, 2 |
 | 4 | Visuelles Redesign, Tokens v2, Icons, Dark Mode | 2 Wochen | 1, 3 |
 | 5 | Editor-Ergonomie, Node-RED-Import | 1–2 Wochen | 1, 4 |
 | 6 | Backend-Reife | 2 Wochen | 0 (parallel) |

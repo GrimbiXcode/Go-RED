@@ -42,7 +42,11 @@ the server log).
 | `GET /api/messages?flowId=&limit=` | – | `Message[]` | the engine's message log, oldest first; for scripts and tests, the editor does not poll it |
 
 `Flow.status` is one of `draft`, `running`, `error`, `deploying`,
-`undeploying`. A draft differs from what is running when
+`undeploying`. A `Node` in a flow is `{id, type, name?, description?,
+position, config, disabled}`: `description` is the user's own note on the
+node instance (Markdown); a node with `disabled: true` stays in the
+definition but is neither started on deploy nor routed to, and cannot be
+injected into. A draft differs from what is running when
 `updatedAt > deployedAt`; the editor's Deploy button uses exactly that.
 
 ## WebSocket
@@ -125,6 +129,42 @@ Configuration `output`: `payload` (default) sends `msg.payload` when the
 message has one, otherwise the whole message; `full` always sends the whole
 message. `console: true` additionally prints the entry to the server's
 stderr. `topic` is copied from `msg.topic`.
+
+## Node schemas (the editor contract)
+
+`GET /api/nodes` describes every node type with a `NodeMetadata`; its
+`configSchema` tells the edit tray how to render and validate the node's
+`config`. The value rules are `type`, `default`, `enum`, `min`, `max`,
+`pattern` and the schema's `required` list. The remaining fields are editor
+hints ("schema v2"); a property without `widget` is rendered by type (enum
+→ select, boolean → checkbox, number → number, object/array → JSON editor,
+string → text), so older schemas keep working.
+
+| Property field | Meaning |
+|---|---|
+| `label`, `description`, `placeholder` | caption, help text under the field, input placeholder |
+| `group`, `order` | section heading and sort position |
+| `widget` | `text`, `textarea`, `number`, `boolean`, `select`, `typedInput`, `code`, `list`, `keyValue`, `credential`, `duration`, `json`, `stringList`, `nodeSelect` |
+| `options` | labelled choices for `select` (`enum` is the unlabelled form) |
+| `language` | syntax of a `code` field: `javascript`, `json`, `mustache`, `text` |
+| `unit` | unit a `duration` value is stored in: `ms` or `s` (the widget converts) |
+| `typedInput` | `{types, default?}`; types are `msg`, `flow`, `global` (stored as `{type, path}`) and `str`, `num`, `bool`, `json`, `env` (stored as `{type, value}`) |
+| `items` | schema of one element of a `list` array |
+| `nodeTypes`, `multiple` | `nodeSelect` offers nodes of these types from the same flow; with `multiple` the value is an array of IDs |
+| `visibleWhen` | `{property, values}`: shown only while the other property's value, as a string, is one of `values` |
+
+Metadata-level fields: `outputsFrom {property, label?, min?}` makes the
+number of output ports follow an array property (one port per Switch
+rule; port IDs are the element indexes, `label` is a template such as
+`{{operator}} {{value.value}}` in which a select property renders its
+option label), `color` overrides the category color on the canvas, `help`
+is the node's documentation in Markdown and `defaultName` the canvas label
+of an unnamed node.
+
+The editor validates on every keystroke and only enables *Done* while the
+config passes; the server keeps its own checks in each node's `SetConfig`
+and, for the shared rules, `registry.Schema.Validate`. A schema is checked
+for well-formedness by `registry.NodeMetadata.Check` in the node tests.
 
 ## Delivery guarantees
 
