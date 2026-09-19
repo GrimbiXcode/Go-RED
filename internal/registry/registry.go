@@ -124,6 +124,36 @@ type Property struct {
 	Min         *float64    `json:"min"`
 	Max         *float64    `json:"max"`
 	Pattern     string      `json:"pattern"` // Regex pattern for strings
+
+	// Editor hints ("schema v2", see docs/PROTOCOL.md). None of them
+	// changes what a value looks like on the wire; a property without a
+	// Widget is rendered by Type: Enum → select, boolean → checkbox,
+	// number → number, object/array → JSON, string → text.
+
+	// Label is the field caption; Description is the help text under it.
+	Label       string `json:"label,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	// Group puts the field under a section heading; Order sorts fields.
+	Group string `json:"group,omitempty"`
+	Order int    `json:"order,omitempty"`
+	// Widget picks the editor control (one of the Widget* constants).
+	Widget string `json:"widget,omitempty"`
+	// Language is the syntax of a WidgetCode field (javascript, json, mustache, text).
+	Language string `json:"language,omitempty"`
+	// Unit is the unit a WidgetDuration value is stored in (ms or s).
+	Unit string `json:"unit,omitempty"`
+	// Options are labelled choices for WidgetSelect; Enum is the unlabelled form.
+	Options []Option `json:"options,omitempty"`
+	// TypedInput configures WidgetTypedInput.
+	TypedInput *TypedInputOptions `json:"typedInput,omitempty"`
+	// Items is the schema of one element of a WidgetList array.
+	Items *Schema `json:"items,omitempty"`
+	// NodeTypes restricts WidgetNodeSelect to these node types (empty: any node).
+	NodeTypes []string `json:"nodeTypes,omitempty"`
+	// Multiple lets WidgetNodeSelect pick several nodes; the value is then an array.
+	Multiple bool `json:"multiple,omitempty"`
+	// VisibleWhen hides the field unless another property has one of the given values.
+	VisibleWhen *Condition `json:"visibleWhen,omitempty"`
 }
 
 // Schema defines the configuration schema for a node.
@@ -145,6 +175,19 @@ type NodeMetadata struct {
 	ConfigSchema Schema   `json:"configSchema"` // Configuration schema
 	Icon         string   `json:"icon"`         // SVG icon for UI
 	Tags         []string `json:"tags"`         // Search tags
+
+	// OutputsFrom makes the number of output ports depend on the length
+	// of an array-typed config property (a Switch node has one output per
+	// rule). Outputs then only names the ports shown while that array is
+	// empty. Port IDs are the element indexes ("0", "1", ...).
+	OutputsFrom *OutputsFrom `json:"outputsFrom,omitempty"`
+	// Color overrides the category color on the canvas (CSS color).
+	Color string `json:"color,omitempty"`
+	// Help is the node's documentation in Markdown, shown in the editor.
+	Help string `json:"help,omitempty"`
+	// DefaultName is the canvas label of a node that has no name; Name is
+	// used when it is empty.
+	DefaultName string `json:"defaultName,omitempty"`
 }
 
 // Node represents a registered node type.
