@@ -80,9 +80,19 @@ func init() {
 		Outputs: []registry.Port{},
 		ConfigSchema: registry.Schema{
 			Properties: map[string]registry.Property{
-				"links": {Type: "array", Description: "Target Link In node IDs in the same flow", Default: []interface{}{}},
+				"links": {
+					Type:        "array",
+					Description: "Target Link In node IDs in the same flow",
+					Default:     []interface{}{},
+					Label:       "Link in nodes",
+					Order:       1,
+					Widget:      "nodeSelect",
+					NodeTypes:   []string{"link in"},
+					Multiple:    true,
+				},
 			},
 		},
+		Help: "**Sends messages to `link in` nodes** without a visible wire, also across flows.",
 		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#607D8B"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>`,
 		Tags: []string{"flow-control", "link"},
 	})

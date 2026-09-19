@@ -169,10 +169,19 @@ func init() {
 		Outputs:     []registry.Port{},
 		ConfigSchema: registry.Schema{
 			Properties: map[string]registry.Property{
-				"path": {Type: "string", Description: "WebSocket endpoint path, e.g. /ws/echo", Default: ""},
+				"path": {
+					Type:        "string",
+					Description: "WebSocket endpoint path, e.g. /ws/echo",
+					Default:     "",
+					Label:       "Path",
+					Placeholder: "/ws",
+					Order:       1,
+					Widget:      "text",
+				},
 			},
 			Required: []string{"path"},
 		},
+		Help: "**WebSocket endpoint** served by Go-RED on the `http in` port. `websocket in` receives what clients send, `websocket out` broadcasts to them.",
 		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v16H4zM8 9l3 3-3 3M13 15h4"/></svg>`,
 		Tags: []string{"config", "websocket", "server"},
 	})

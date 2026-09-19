@@ -284,10 +284,26 @@ func init() {
 		},
 		ConfigSchema: registry.Schema{
 			Properties: map[string]registry.Property{
-				"property":   {Type: "object", Description: `Property to sort by, e.g. {"type":"msg","path":"payload"}`, Default: map[string]interface{}{"type": "msg", "path": "payload"}},
-				"descending": {Type: "boolean", Description: "Sort largest/last first", Default: false},
+				"property": {
+					Type:        "object",
+					Description: `Property to sort by, e.g. {"type":"msg","path":"payload"}`,
+					Default:     map[string]interface{}{"type": "msg", "path": "payload"},
+					Label:       "Property",
+					Order:       1,
+					Widget:      "typedInput",
+					TypedInput:  &registry.TypedInputOptions{Types: registry.PropertyRefTypes, Default: "msg"},
+				},
+				"descending": {
+					Type:        "boolean",
+					Description: "Sort largest/last first",
+					Default:     false,
+					Label:       "Descending",
+					Order:       2,
+					Widget:      "boolean",
+				},
 			},
 		},
+		Help: "**Sorts an array** at the chosen property (numbers numerically, everything else as strings).",
 		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M3 6h12v2H3zm0 5h9v2H3zm0 5h6v2H3zm14-9l4 4h-3v6h-2v-6h-3z"/></svg>`,
 		Tags: []string{"flow-control", "sort", "sequence"},
 	})

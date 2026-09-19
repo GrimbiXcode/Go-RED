@@ -106,11 +106,28 @@ func init() {
 		},
 		ConfigSchema: registry.Schema{
 			Properties: map[string]registry.Property{
-				"host": {Type: "string", Description: "Remote host", Default: ""},
-				"port": {Type: "number", Description: "Remote port", Default: float64(0), Min: floatPtr(1), Max: floatPtr(65535)},
+				"host": {
+					Type:        "string",
+					Description: "Remote host",
+					Default:     "",
+					Label:       "Host",
+					Order:       1,
+					Widget:      "text",
+				},
+				"port": {
+					Type:        "number",
+					Description: "Remote port",
+					Default:     float64(0),
+					Min:         floatPtr(1),
+					Max:         floatPtr(65535),
+					Label:       "Port",
+					Order:       2,
+					Widget:      "number",
+				},
 			},
 			Required: []string{"host", "port"},
 		},
+		Help: "**Sends `msg.payload` as a UDP datagram** to the given host and port.",
 		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v16H4zM8 9l3 3-3 3M13 15h4"/></svg>`,
 		Tags: []string{"network", "udp", "client"},
 	})

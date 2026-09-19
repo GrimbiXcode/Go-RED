@@ -247,6 +247,7 @@ func init() {
 			{ID: "output", Name: "Output", Description: "Message with the converted payload", Required: true},
 		},
 		ConfigSchema: registry.Schema{},
+		Help:         "**Converts between XML text and objects** in `msg.payload`: a string is parsed, an object is serialised.",
 		Icon:         `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M8 3L2 12l6 9h2l-6-9 6-9zm8 0l6 9-6 9h-2l6-9-6-9z"/></svg>`,
 		Tags:         []string{"parser", "xml"},
 	})

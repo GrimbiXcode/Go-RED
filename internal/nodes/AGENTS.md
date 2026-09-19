@@ -689,52 +689,57 @@ func TestNode_Integration(t *testing.T) {
 
 ## Node Configuration Schema
 
-The `ConfigSchema` in `NodeMetadata` defines how nodes are configured in the UI.
-It is `registry.Schema`, not a bare map — required property *names* are listed
-separately from the properties themselves, and there is no
-`Placeholder`/`Options`/`Editor`/`EditorConfig` (those were never implemented):
+The `ConfigSchema` in `NodeMetadata` is `registry.Schema`: a map of
+`registry.Property` plus the list of required property *names*. Since
+schema v2 (docs/NEXT_LEVEL_PLAN.md, Phase 3) every property also carries
+editor hints; the field reference lives in `docs/PROTOCOL.md`, section
+"Node schemas", and the authoring rules in `docs/NODE_DEVELOPMENT.md`.
 
 ```go
 ConfigSchema: registry.Schema{
     Properties: map[string]registry.Property{
         "propertyName": {
             Type:        "string|number|boolean|array|object",
-            Default:     interface{}, // Default value
-            Description: string,      // Tooltip text
-            Enum:        []string,    // For select/dropdown
-            Min:         *float64,    // Minimum value (for numbers)
-            Max:         *float64,    // Maximum value (for numbers)
-            Pattern:     string,      // Regex pattern (for strings)
+            Default:     interface{},          // value used when the config omits the property
+            Description: "help text under the field",
+            Label:       "Caption",
+            Order:       1,                    // sort position, required for every property
+            Widget:      registry.WidgetText,  // see internal/registry/schema.go
+            Group:       "Section",            // optional section heading
+            Placeholder: "example",
+            Enum:        []string{"a", "b"},   // or Options with labels, for WidgetSelect
+            Min: floatPtr(0), Max: floatPtr(100), Pattern: "^[a-z]+$",
+            VisibleWhen: &registry.Condition{Property: "other", Values: []string{"x"}},
         },
     },
-    Required: []string{"propertyName"}, // names of required properties
+    Required: []string{"propertyName"},
 }
 ```
 
-### Property Types
+Widgets and the value shape they store:
 
-| Type | Description | Example |
-|------|-------------|---------|
-| `string` | Text input | `"hello"` |
-| `number` | Numeric input | `42` |
-| `boolean` | Checkbox | `true` |
-| `array` | List of values | `[1, 2, 3]` |
-| `object` | Key-value pairs | `{"key": "value"}` |
+| Widget | Type | Stored value |
+|---|---|---|
+| `text`, `textarea`, `credential` | string | string |
+| `number` | number | number (`Min`/`Max`) |
+| `duration` | number | number in `Unit` (`ms` or `s`) |
+| `boolean` | boolean | bool |
+| `select` | string | one of `Enum`/`Options` |
+| `typedInput` | object | `{type, path}` for msg/flow/global, `{type, value}` otherwise (`internal/typedvalue`) |
+| `code` | string | string; `Language` is javascript, json, mustache or text |
+| `json` | object/array | the parsed JSON |
+| `list` | array | objects described by `Items` (a nested `registry.Schema`) |
+| `stringList` | array | `[]string` |
+| `keyValue` | object | `map[string]string` |
+| `nodeSelect` | string | ID of a node of `NodeTypes` in the same flow (array with `Multiple`) |
 
-### Editor Types
+Metadata-level: `Help` (Markdown, required for built-in nodes),
+`OutputsFrom` (one output port per element of an array property, e.g.
+Switch rules), `Color`, `DefaultName`.
 
-| Editor | Usage | Config |
-|--------|-------|--------|
-| `text` | Single line text | - |
-| `textarea` | Multi-line text | `rows: 5` |
-| `number` | Numeric input | `min: 0, max: 100, step: 1` |
-| `checkbox` | Boolean toggle | - |
-| `select` | Dropdown | `options: ["a", "b", "c"]` |
-| `code` | Code editor | `language: "javascript"` |
-| `password` | Hidden input | - |
-| `json` | JSON editor | - |
-
----
+`schema_test.go` in this directory checks every registered node with
+`NodeMetadata.Check` and requires a label, order, widget and help text.
+Nodes that change their schema must keep that test green.
 
 ## Metadata Best Practices
 

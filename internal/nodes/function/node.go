@@ -208,11 +208,27 @@ func init() {
 		},
 		ConfigSchema: registry.Schema{
 			Properties: map[string]registry.Property{
-				"code":   {Type: "string", Description: "JavaScript code to execute", Default: "return input;"},
-				"useMsg": {Type: "boolean", Description: "Use msg object instead of input", Default: false},
+				"code": {
+					Type:        "string",
+					Description: "JavaScript code to execute",
+					Default:     "return input;",
+					Label:       "Function",
+					Order:       1,
+					Widget:      "code",
+					Language:    "javascript",
+				},
+				"useMsg": {
+					Type:        "boolean",
+					Description: "Use msg object instead of input",
+					Default:     false,
+					Label:       "Expose the message as msg",
+					Order:       2,
+					Widget:      "boolean",
+				},
 			},
 			Required: []string{"code"},
 		},
+		Help: "**Runs JavaScript** for every message.\n\nWith *Expose the message as msg* on, the code sees the whole message as `msg` and returns it (`msg.payload = 1; return msg;`). Otherwise it receives the payload as `input` and returns the new payload. Return `null` to drop the message. `flow.get/set` and `global.get/set` reach the context stores.",
 		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#2196F3"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>`,
 		Tags: []string{"function", "javascript", "script", "process"},
 	})

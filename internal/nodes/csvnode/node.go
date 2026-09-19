@@ -214,11 +214,34 @@ func init() {
 		},
 		ConfigSchema: registry.Schema{
 			Properties: map[string]registry.Property{
-				"hasHeaderRow": {Type: "boolean", Description: "First row is field names (parse) / write a header row (serialize)", Default: false},
-				"columns":      {Type: "array", Description: "Explicit column names/order; overrides the first row when parsing", Default: []interface{}{}},
-				"delimiter":    {Type: "string", Description: "Field delimiter character", Default: ","},
+				"delimiter": {
+					Type:        "string",
+					Description: "Field delimiter character",
+					Default:     ",",
+					Label:       "Delimiter",
+					Order:       1,
+					Widget:      "text",
+				},
+				"hasHeaderRow": {
+					Type:        "boolean",
+					Description: "First row is field names (parse) / write a header row (serialize)",
+					Default:     false,
+					Label:       "First row is the header",
+					Order:       2,
+					Widget:      "boolean",
+				},
+				"columns": {
+					Type:        "array",
+					Description: "Explicit column names/order; overrides the first row when parsing",
+					Default:     []interface{}{},
+					Label:       "Column names",
+					Placeholder: "name",
+					Order:       3,
+					Widget:      "stringList",
+				},
 			},
 		},
+		Help: "**Converts between CSV text and objects.** A CSV string becomes an array of objects; an array of objects becomes CSV text.",
 		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M3 3h18v2H3zm0 8h18v2H3zm0 8h18v2H3zM3 3v18h2V3zm7 0v18h2V3zm7 0v18h2V3z"/></svg>`,
 		Tags: []string{"parser", "csv"},
 	})

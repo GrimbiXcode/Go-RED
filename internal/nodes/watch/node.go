@@ -188,11 +188,27 @@ func init() {
 		},
 		ConfigSchema: registry.Schema{
 			Properties: map[string]registry.Property{
-				"files":     {Type: "string", Description: "Comma-separated list of files/directories to watch", Default: ""},
-				"recursive": {Type: "boolean", Description: "Also watch subdirectories that exist when the node starts", Default: false},
+				"files": {
+					Type:        "string",
+					Description: "Comma-separated list of files/directories to watch",
+					Default:     "",
+					Label:       "Files or directories",
+					Placeholder: "/var/log/app, /etc/app.conf",
+					Order:       1,
+					Widget:      "text",
+				},
+				"recursive": {
+					Type:        "boolean",
+					Description: "Also watch subdirectories that exist when the node starts",
+					Default:     false,
+					Label:       "Include subdirectories",
+					Order:       2,
+					Widget:      "boolean",
+				},
 			},
 			Required: []string{"files"},
 		},
+		Help: "**Watches files or directories** and emits a message for every change, with `msg.payload` set to the changed path and `msg.event` to the kind of change.",
 		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M12 4.5C7 4.5 2.7 7.6 1 12c1.7 4.4 6 7.5 11 7.5s9.3-3.1 11-7.5c-1.7-4.4-6-7.5-11-7.5zM12 17a5 5 0 110-10 5 5 0 010 10z"/></svg>`,
 		Tags: []string{"storage", "watch", "file", "inotify"},
 	})

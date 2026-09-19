@@ -115,9 +115,20 @@ func init() {
 		},
 		ConfigSchema: registry.Schema{
 			Properties: map[string]registry.Property{
-				"statusCode": {Type: "number", Description: "Fixed status code; 0 uses msg.statusCode, defaulting to 200", Default: float64(0), Min: floatPtr(0), Max: floatPtr(599)},
+				"statusCode": {
+					Type:        "number",
+					Description: "Fixed status code; 0 uses msg.statusCode, defaulting to 200",
+					Default:     float64(0),
+					Min:         floatPtr(0),
+					Max:         floatPtr(599),
+					Label:       "Status code",
+					Placeholder: "200",
+					Order:       1,
+					Widget:      "number",
+				},
 			},
 		},
+		Help: "**Answers a request** received by an `http in` node. `msg.payload` is the body, `msg.headers` are added to the response; the status code can also come from `msg.statusCode`.",
 		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v16H4zM8 10h8M8 14h5"/></svg>`,
 		Tags: []string{"network", "http", "server", "response"},
 	})

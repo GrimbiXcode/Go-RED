@@ -163,6 +163,7 @@ func init() {
 			{ID: "output", Name: "Output", Description: "The reassembled message, once every part has arrived", Required: true},
 		},
 		ConfigSchema: registry.Schema{},
+		Help:         "**Joins a sequence of messages** produced by a `split` node back into one message, using the `msg.parts` information the split node adds.",
 		Icon:         `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z" opacity=".4"/><path d="M11 11h2v2h-2z"/></svg>`,
 		Tags:         []string{"flow-control", "join", "sequence"},
 	})

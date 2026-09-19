@@ -125,9 +125,18 @@ func init() {
 		},
 		ConfigSchema: registry.Schema{
 			Properties: map[string]registry.Property{
-				"scope": {Type: "array", Description: "Node IDs to watch; empty watches every node in this flow", Default: []interface{}{}},
+				"scope": {
+					Type:        "array",
+					Description: "Node IDs to watch; empty watches every node in this flow",
+					Default:     []interface{}{},
+					Label:       "Scope",
+					Order:       1,
+					Widget:      "nodeSelect",
+					Multiple:    true,
+				},
 			},
 		},
+		Help: "**Reports status changes** of other nodes as messages (`msg.status`). Leave the scope empty to watch every node.",
 		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#4CAF50"><circle cx="12" cy="12" r="8"/></svg>`,
 		Tags: []string{"flow-control", "status"},
 	})
