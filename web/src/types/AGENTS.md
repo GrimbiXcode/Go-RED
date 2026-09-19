@@ -287,13 +287,15 @@ export interface Message {
 }
 ```
 
-The real hand-written `MessageLogEntry` (`message.ts`, UI-only, no Go
-equivalent) is `{ id, flowId, nodeId, message: Message, timestamp, level:
-'debug'|'info'|'warn'|'error' }` — **not** the `{sourceNode?, success,
-error?} extends Message` shape shown in earlier versions of this file,
-which was never implemented. `MessageBatch`/`NodeMessage`/`FlowMessage` in
-`message.ts` are similarly hand-written UI conveniences layered on top of
-the wire `Message`, not generated.
+There is no hand-written message-log type any more: the debug sidebar
+consumes `DebugMessage` (generated from `internal/dto.DebugMessage`), and
+node status is `NodeStatus {fill?, shape?, text?, timestamp?}` (generated,
+Node-RED style) delivered by `node:status` events and `flow:snapshot`, not a
+field on `Node`. `FlowStatusEvent`, `NodeStatusEvent`, `FlowMetricsEvent`,
+`NodeMetrics`, `FlowSnapshot` and `SubscribeRequest` are generated too; the
+wire contract is `docs/PROTOCOL.md`. `MessageBatch`/`NodeMessage`/
+`FlowMessage` in `message.ts` are hand-written UI conveniences layered on
+top of the wire `Message`, not generated.
 
 ### API Types (`api.ts`)
 
@@ -312,8 +314,8 @@ not hand-describe them here (in particular, `FlowCreateRequest` has no
 `nodes`/`connections`/`config` fields; the real Go handler only reads
 `id`/`name`/`description` from it). `PaginatedResponse`, `Pagination`,
 `DeployResponse`/`DeployRequest`, `UndeployRequest`, `HealthCheckResponse`,
-`StatsResponse`, `MessageLogRequest`/`MessageLogResponse`, and
-`FlowExportRequest`/`FlowImportRequest` remain hand-written in `api.ts`
+`StatsResponse`, and `FlowExportRequest`/`FlowImportRequest` remain
+hand-written in `api.ts`
 (no corresponding Go DTO exists yet for most of them).
 
 ---
@@ -788,8 +790,8 @@ Every type should have JSDoc documentation explaining:
  *   name: 'My Flow',
  *   description: '',
  *   nodes: {
- *     'input': { id: 'input', type: 'inject', position: { x: 0, y: 0 }, config: {}, status: { state: 'idle' }, disabled: false },
- *     'output': { id: 'output', type: 'debug', position: { x: 100, y: 0 }, config: {}, status: { state: 'idle' }, disabled: false },
+ *     'input': { id: 'input', type: 'inject', position: { x: 0, y: 0 }, config: {}, disabled: false },
+ *     'output': { id: 'output', type: 'debug', position: { x: 100, y: 0 }, config: {}, disabled: false },
  *   },
  *   connections: [
  *     { id: 'conn-1', sourceNode: 'input', targetNode: 'output' },

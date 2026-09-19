@@ -86,7 +86,7 @@ context for application state.
 |---|---|---|
 | `flowStore` | flow list, node types, the open flow's **working copy**, undo/redo history, autosave state | the only place that edits a flow |
 | `editorStore` | selection, open config tray, sidebar tab, dialogs | UI-only, never persisted |
-| `runtimeStore` | node status and the message log pushed by the server | server-owned, read-only for the UI |
+| `runtimeStore` | node status, per-node counters and the debug feed the server pushes for the subscribed flow | server-owned, read-only for the UI; filled by `flow:snapshot` and runtime events (`store/bindServerEvents.ts`) |
 | `notificationStore` | toasts | raised from stores and components alike |
 
 ### One write path
@@ -103,10 +103,31 @@ the definition. Consequently:
 - the Deploy button lights up when the draft differs from what is running
   (`updatedAt > deployedAt`, or a local edit since the last deploy);
 - the WebSocket carries no mutations. It is an event and query channel:
-  `flow:status`, `flow:list`, `flow:delete`, `node:status` are pushed after
-  every REST mutation (the REST handlers notify the hub), `message:log` and
-  `message:send` are the runtime query/action, `flow:get`/`state:sync` are
-  read-only queries. Exactly one connection per browser tab (`lib/wsClient.ts`).
+  `flow:status`, `flow:list` and `flow:delete` go to every client after REST
+  mutations and runtime changes; the client `subscribe`s to the open flow,
+  receives a `flow:snapshot` (node status, counters, debug history) and from
+  then on `node:status`, `debug:message` and `flow:metrics` for that flow;
+  `message:send` is the inject action, `flow:get`/`state:sync` are read-only
+  queries. Exactly one connection per browser tab (`lib/wsClient.ts`); after
+  a reconnect the client subscribes again and the snapshot catches it up.
+  Every message is listed in `docs/PROTOCOL.md`.
+
+### Runtime feedback
+
+The engine publishes typed events (`internal/engine/events.go`): flow
+status, node status, debug entries and per-node counters. Publishing is
+non-blocking (bounded queue, one dispatcher goroutine, drops are counted),
+so a slow client can never slow a flow down. The engine also keeps what a
+late client needs to catch up: the last 200 debug entries per flow, the
+latest status per node and the counters since deploy; the WebSocket handler
+turns that into the `flow:snapshot` answer to `subscribe` and forwards live
+events only to subscribed clients. Nodes report status through
+`NodeRuntime.ReportStatus` (Node-RED style `fill/shape/text`) and the Debug
+node writes to the sidebar through `NodeRuntime.Debug` instead of stderr;
+node execution errors become error entries in the same feed. In the UI the
+canvas shows the status under the node, the Info tab shows status and
+counters of the selected node, and the Debug tab is the live feed with
+filter and clear.
 
 ### Canvas
 

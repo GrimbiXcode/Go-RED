@@ -1,6 +1,6 @@
 # Go-RED: Plan für das nächste Level
 
-Stand: 2026-09-18, Branch `claude/projekt-analyse-verbesserung-znm6c6`, Basis `main` (0c19b3a).
+Stand: 2026-09-19, Branch `claude/projekt-analyse-verbesserung-znm6c6`, Basis `main` (0c19b3a).
 
 Dieses Dokument ist das Ergebnis einer vollständigen Analyse des Projekts (Backend, Frontend,
 Build/CI, Doku) inklusive eines echten Durchlaufs des ausgelieferten UI im Browser
@@ -297,6 +297,23 @@ Architecture".
 - **Protokoll-Datei** `docs/PROTOCOL.md` als einzige Quelle: alle Nachrichtentypen, Richtung,
   Payload; `cmd/gentypes` erweitert auf Event-Payloads.
 
+**Status: umgesetzt.** Abweichung vom ursprünglichen Text: statt den `EventBus` aus `registry`
+zu verallgemeinern, hat die Engine einen eigenen Event-Hub (`internal/engine/events.go`):
+nicht-blockierender Publisher mit begrenzter Queue (unter Last werden Ereignisse verworfen und
+gezählt, die Engine blockiert nie), Ringpuffer mit den letzten 200 Debug-Einträgen pro Flow,
+letzter Status pro Node, Zähler pro Node (Nachrichten, Fehler) einmal pro Sekunde. Der Hub
+leitet `flow:status`/`flow:list` an alle Clients, `node:status`/`debug:message`/`flow:metrics`
+nur an Clients, die den Flow abonniert haben (`subscribe {flowId}` → `flow:snapshot` zum
+Aufholen, auch nach jedem Reconnect). Der Debug-Node schreibt in die Sidebar (Konfiguration
+`output: payload | full`, optional `console`), Node-Fehler erscheinen dort als Fehlereinträge.
+Node-Status wie in Node-RED (`fill/shape/text`) über `NodeRuntime.ReportStatus`; `mqtt in`,
+`http in` und `tcp in` melden ihren Zustand, der Canvas zeigt ihn unter dem Node, die
+Info-Sidebar zusätzlich die Zähler. `message:log` und das Polling des Nachrichtenprotokolls sind
+aus dem Frontend verschwunden (`GET /api/messages` bleibt für Skripte). Alles steht in
+`docs/PROTOCOL.md`; `cmd/gentypes` erzeugt die Event-Payloads. Abnahme: Playwright-Test mit
+werfendem Function-Node und `http in` (Fehlereintrag live, Status „listening" am Node, Zähler in
+der Sidebar, Debug-Historie nach Reload aus dem Snapshot).
+
 ### Phase 3 — Node-Editor-Modell (ca. 2 Wochen, Backend + Frontend)
 
 - **Schema v2** in `internal/registry`:
@@ -424,7 +441,7 @@ Weitere Punkte der Phase:
 |---|---|---|---|
 | 0 | Stabilisieren, CI hart — **erledigt** | 1 Woche | – |
 | 1 | Store, ein Schreibpfad, xyflow 12, Tests, i18n — **erledigt** | 1–2 Wochen | 0 |
-| 2 | Engine-Events, Live-Debug, Node-Status | 1 Woche | 0 |
+| 2 | Engine-Events, Live-Debug, Node-Status — **erledigt** | 1 Woche | 0 |
 | 3 | Schema v2, Edit-Tray v2, Widgets, dynamische Ports | 2 Wochen | 1, 2 |
 | 4 | Visuelles Redesign, Tokens v2, Icons, Dark Mode | 2 Wochen | 1, 3 |
 | 5 | Editor-Ergonomie, Node-RED-Import | 1–2 Wochen | 1, 4 |

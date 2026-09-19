@@ -7,6 +7,10 @@
 > `@xyflow/react` 12 (nicht `reactflow`). Jede Änderung an einem Flow geht durch `flowStore`
 > und wird per debounced `PUT /api/flows/{id}` als Entwurf gespeichert; der WebSocket
 > (`src/lib/wsClient.ts`, eine Verbindung pro Tab) trägt nur Server-Events und Abfragen.
+> Seit Phase 2 abonniert der Client den offenen Flow (`subscribe` → `flow:snapshot`) und
+> bekommt `node:status`, `debug:message` und `flow:metrics` in den `runtimeStore`; die
+> Debug-Sidebar ist `DebugPanel.tsx` (kein `MessageLogPanel`, kein `message:log`). Alle
+> Nachrichten stehen in `docs/PROTOCOL.md`.
 > UI-Texte kommen aus `src/i18n/` (`t('…')`), nie als Literale in Komponenten. Tests:
 > `src/test/*.test.ts(x)` (Vitest) und `e2e/*.spec.ts` (Playwright gegen den echten Server).
 > Die Architektur ist in `docs/ARCHITECTURE.md`, Abschnitt "Frontend Architecture", beschrieben.
