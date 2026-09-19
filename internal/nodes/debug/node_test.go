@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Enable debug logging for tests
@@ -27,7 +29,8 @@ func TestDebugNode_Initialization(t *testing.T) {
 		// Verify default configuration
 		assert.NotNil(t, node)
 		assert.True(t, node.config.Enabled)
-		assert.True(t, node.config.OutputToConsole)
+		assert.False(t, node.config.OutputToConsole, "the sidebar is the default target; stderr is opt-in")
+		assert.Equal(t, OutputPayload, node.config.Output)
 		assert.Equal(t, 100, node.config.MaxBufferSize)
 		assert.Equal(t, "", node.config.Prefix)
 		assert.True(t, node.config.ShowTimestamp)
@@ -679,5 +682,40 @@ func TestDebugNode_PayloadTypes(t *testing.T) {
 		}
 
 		log.Printf("[DEBUG] DebugNode various payload types test passed")
+	})
+}
+
+func TestDebugNode_SidebarOutput(t *testing.T) {
+	t.Run("sends msg.payload to the sidebar by default and the full message on request", func(t *testing.T) {
+		node := NewDebugNode()
+		node.config.OutputToConsole = false
+
+		var got []registry.DebugOutput
+		rt := registry.NewNodeRuntime("f1", "debug-1", "debug", nil, nil, nil, nil, nil)
+		rt.SetDebugSink(func(out registry.DebugOutput) { got = append(got, out) })
+		ctx := registry.WithRuntime(context.Background(), rt)
+
+		_, err := node.Execute(ctx, map[string]interface{}{"payload": "hello", "topic": "t1"})
+		assert.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, "hello", got[0].Payload)
+		assert.Equal(t, "t1", got[0].Topic)
+
+		// A message without a payload shows the whole message.
+		_, err = node.Execute(ctx, map[string]interface{}{"count": float64(3)})
+		assert.NoError(t, err)
+		require.Len(t, got, 2)
+		assert.Equal(t, map[string]interface{}{"count": float64(3)}, got[1].Payload)
+
+		require.NoError(t, node.SetConfig(map[string]interface{}{"output": "full"}))
+		_, err = node.Execute(ctx, map[string]interface{}{"payload": "hello"})
+		assert.NoError(t, err)
+		require.Len(t, got, 3)
+		assert.Equal(t, map[string]interface{}{"payload": "hello"}, got[2].Payload)
+	})
+
+	t.Run("rejects an unknown output mode", func(t *testing.T) {
+		node := NewDebugNode()
+		assert.Error(t, node.SetConfig(map[string]interface{}{"output": "sideways"}))
 	})
 }

@@ -68,6 +68,10 @@ func (n *Node) Start(ctx context.Context, emit func(payload map[string]interface
 	r := sharedRouter.add(n.Method, n.Path, n.handle)
 	defer sharedRouter.remove(r)
 
+	if rt, ok := registry.RuntimeFromContext(ctx); ok {
+		rt.ReportStatus("listening", n.Method+" "+n.Path+" on "+SharedAddr())
+	}
+
 	<-ctx.Done()
 	return nil
 }

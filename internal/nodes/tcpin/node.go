@@ -63,6 +63,10 @@ func (n *Node) runServer(ctx context.Context, emit func(map[string]interface{}))
 	n.listener = ln
 	n.mu.Unlock()
 
+	if rt, ok := registry.RuntimeFromContext(ctx); ok {
+		rt.ReportStatus("listening", ln.Addr().String())
+	}
+
 	go func() {
 		for {
 			conn, err := ln.Accept()

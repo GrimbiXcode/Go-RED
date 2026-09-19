@@ -38,7 +38,9 @@ func (n *Node) Start(ctx context.Context, emit func(payload map[string]interface
 		return fmt.Errorf("mqtt in: node %q is not an mqtt-broker", n.Broker)
 	}
 
+	rt.ReportStatus("connecting", "")
 	broker.OnConnect(func(client mqtt.Client) {
+		rt.ReportStatus("connected", n.Topic)
 		token := client.Subscribe(n.Topic, n.QoS, func(_ mqtt.Client, msg mqtt.Message) {
 			emit(map[string]interface{}{
 				"topic":   msg.Topic(),

@@ -1,9 +1,13 @@
 // Package debug provides the Debug node implementation.
+//
+// A Debug node shows the messages it receives in the editor's debug
+// sidebar (through registry.NodeRuntime.Debug) and passes them on
+// unchanged. Optionally it also prints them to the server's stderr.
 package debug
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"os"
 	"sync"
 	"time"
@@ -11,7 +15,16 @@ import (
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
-// DebugNode implements a node that outputs messages to the debug console.
+// Output selects what part of the message the sidebar shows.
+const (
+	// OutputPayload shows msg.payload when the message has one, else the
+	// whole message.
+	OutputPayload = "payload"
+	// OutputFull always shows the whole message.
+	OutputFull = "full"
+)
+
+// DebugNode implements a node that outputs messages to the debug sidebar.
 type DebugNode struct {
 	config        DebugConfig
 	mu            sync.Mutex
@@ -21,7 +34,10 @@ type DebugNode struct {
 
 // DebugConfig contains the configuration for a Debug node.
 type DebugConfig struct {
-	Enabled         bool   `json:"enabled"`
+	Enabled bool `json:"enabled"`
+	// Output is OutputPayload or OutputFull.
+	Output string `json:"output"`
+	// OutputToConsole additionally prints every message to stderr.
 	OutputToConsole bool   `json:"outputToConsole"`
 	MaxBufferSize   int    `json:"maxBufferSize"`
 	Prefix          string `json:"prefix"`
@@ -33,7 +49,8 @@ func NewDebugNode() *DebugNode {
 	return &DebugNode{
 		config: DebugConfig{
 			Enabled:         true,
-			OutputToConsole: true,
+			Output:          OutputPayload,
+			OutputToConsole: false,
 			MaxBufferSize:   100,
 			Prefix:          "",
 			ShowTimestamp:   true,
@@ -49,10 +66,18 @@ func (n *DebugNode) Execute(ctx interface{}, input map[string]interface{}) (map[
 		return input, nil
 	}
 
+	if goCtx, ok := ctx.(context.Context); ok {
+		if rt, ok := registry.RuntimeFromContext(goCtx); ok {
+			rt.Debug(registry.DebugOutput{
+				Payload: n.sidebarPayload(input),
+				Topic:   topicOf(input),
+			})
+		}
+	}
+
 	message := n.formatMessage(input)
 
 	if n.config.OutputToConsole {
-		log.Println(message)
 		fmt.Fprintln(os.Stderr, message)
 	}
 
@@ -64,6 +89,26 @@ func (n *DebugNode) Execute(ctx interface{}, input map[string]interface{}) (map[
 	n.mu.Unlock()
 
 	return input, nil
+}
+
+// sidebarPayload picks what the sidebar entry shows for input.
+func (n *DebugNode) sidebarPayload(input map[string]interface{}) interface{} {
+	if input == nil {
+		return nil
+	}
+	if n.config.Output != OutputFull {
+		if payload, ok := input["payload"]; ok {
+			return payload
+		}
+	}
+	return input
+}
+
+func topicOf(input map[string]interface{}) string {
+	if topic, ok := input["topic"].(string); ok {
+		return topic
+	}
+	return ""
 }
 
 func (n *DebugNode) formatMessage(input map[string]interface{}) string {
@@ -105,12 +150,16 @@ func (n *DebugNode) Validate() error {
 	if n.config.MaxBufferSize < 0 {
 		return fmt.Errorf("maxBufferSize cannot be negative")
 	}
+	if n.config.Output != OutputPayload && n.config.Output != OutputFull {
+		return fmt.Errorf("output must be %q or %q", OutputPayload, OutputFull)
+	}
 	return nil
 }
 
 func (n *DebugNode) GetConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"enabled":         n.config.Enabled,
+		"output":          n.config.Output,
 		"outputToConsole": n.config.OutputToConsole,
 		"maxBufferSize":   n.config.MaxBufferSize,
 		"prefix":          n.config.Prefix,
@@ -122,6 +171,9 @@ func (n *DebugNode) GetConfig() map[string]interface{} {
 func (n *DebugNode) SetConfig(config map[string]interface{}) error {
 	if enabled, ok := config["enabled"].(bool); ok {
 		n.config.Enabled = enabled
+	}
+	if output, ok := config["output"].(string); ok && output != "" {
+		n.config.Output = output
 	}
 	if outputToConsole, ok := config["outputToConsole"].(bool); ok {
 		n.config.OutputToConsole = outputToConsole
@@ -150,7 +202,7 @@ func init() {
 		ID:          "debug",
 		Type:        "debug",
 		Name:        "Debug",
-		Description: "Outputs messages to the debug console",
+		Description: "Shows messages in the debug sidebar",
 		Category:    "output",
 		Inputs: []registry.Port{
 			{ID: "input", Name: "Input", Description: "Message to debug", Required: true},
@@ -161,11 +213,12 @@ func init() {
 		ConfigSchema: registry.Schema{
 			Properties: map[string]registry.Property{
 				"enabled":         {Type: "boolean", Description: "Whether debug output is enabled", Default: true},
-				"outputToConsole": {Type: "boolean", Description: "Output to console", Default: true},
+				"output":          {Type: "string", Description: "What to show: msg.payload or the full message", Default: OutputPayload, Enum: []string{OutputPayload, OutputFull}},
+				"outputToConsole": {Type: "boolean", Description: "Also print to the server console", Default: false},
 				"maxBufferSize":   {Type: "number", Description: "Maximum number of messages to keep in buffer", Default: 100, Min: floatPtr(0)},
-				"prefix":          {Type: "string", Description: "Prefix for debug messages", Default: ""},
-				"showTimestamp":   {Type: "boolean", Description: "Show timestamps in debug output", Default: true},
-				"showPath":        {Type: "boolean", Description: "Show message path in debug output", Default: true},
+				"prefix":          {Type: "string", Description: "Prefix for console output", Default: ""},
+				"showTimestamp":   {Type: "boolean", Description: "Show timestamps in console output", Default: true},
+				"showPath":        {Type: "boolean", Description: "Show message path in console output", Default: true},
 			},
 		},
 		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#FF5722"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>`,
