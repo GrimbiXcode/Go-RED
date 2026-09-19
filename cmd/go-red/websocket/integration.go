@@ -15,22 +15,60 @@ import (
 // node registry.
 //
 // The WebSocket is an event and query channel, not a write path: flows are
-// created, edited, deployed and deleted over the REST API (cmd/go-red), and
-// the REST handlers call FlowChanged/FlowDeleted so every connected client
-// learns about the result. Clients may query (flow:list, flow:get,
-// message:log, state:sync) and trigger runtime actions (message:send).
+// created, edited, deployed and deleted over the REST API (cmd/go-red).
+// Definition changes reach clients through FlowChanged/FlowDeleted (called
+// by the REST handlers); runtime changes (deploy/undeploy, node status,
+// debug output, metrics) arrive as engine events that this handler forwards.
+// Runtime events are only delivered to clients that subscribed to the flow.
 type WebSocketHandler struct {
 	hub          *Hub
 	flowEngine   *engine.FlowEngine
 	nodeRegistry *registry.NodeRegistry
+	unsubscribe  func()
 }
 
-// NewWebSocketHandler creates a new WebSocketHandler
+// NewWebSocketHandler creates a WebSocketHandler and starts forwarding the
+// engine's runtime events to clients.
 func NewWebSocketHandler(hub *Hub, flowEngine *engine.FlowEngine, nodeRegistry *registry.NodeRegistry) *WebSocketHandler {
-	return &WebSocketHandler{
+	h := &WebSocketHandler{
 		hub:          hub,
 		flowEngine:   flowEngine,
 		nodeRegistry: nodeRegistry,
+	}
+	if flowEngine != nil {
+		h.unsubscribe = flowEngine.SubscribeEvents(h.onEngineEvent)
+	}
+	return h
+}
+
+// Close stops forwarding engine events.
+func (h *WebSocketHandler) Close() {
+	if h.unsubscribe != nil {
+		h.unsubscribe()
+		h.unsubscribe = nil
+	}
+}
+
+// onEngineEvent translates a runtime event into WebSocket messages.
+func (h *WebSocketHandler) onEngineEvent(ev engine.Event) {
+	switch ev := ev.(type) {
+	case engine.FlowStatusEvent:
+		h.hub.Broadcast(MessageTypeFlowStatus, dto.FlowStatusEventToWire(ev))
+		h.broadcastFlowList()
+	case engine.NodeStatusEvent:
+		h.hub.BroadcastToFlow(ev.FlowID, MessageTypeNodeStatus, dto.NodeStatusEvent{
+			FlowID: ev.FlowID,
+			NodeID: ev.NodeID,
+			Status: dto.NodeStatusToWire(ev.Status),
+		})
+	case engine.DebugEvent:
+		h.hub.BroadcastToFlow(ev.FlowID, MessageTypeDebugMessage, dto.DebugToWire(ev))
+	case engine.FlowMetricsEvent:
+		h.hub.BroadcastToFlow(ev.FlowID, MessageTypeFlowMetrics, dto.FlowMetricsEvent{
+			FlowID:    ev.FlowID,
+			Nodes:     dto.MetricsToWire(ev.Nodes),
+			Timestamp: ev.Timestamp.UTC().Format("2006-01-02T15:04:05.000Z07:00"),
+		})
 	}
 }
 
@@ -38,11 +76,6 @@ func NewWebSocketHandler(hub *Hub, flowEngine *engine.FlowEngine, nodeRegistry *
 
 type flowIDPayload struct {
 	FlowID string `json:"flowId"`
-}
-
-type messageLogPayload struct {
-	FlowID string `json:"flowId"`
-	Limit  int    `json:"limit"`
 }
 
 type messageSendPayload struct {
@@ -103,15 +136,20 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
 		if decode(&p) {
 			h.handleFlowGet(client, p.FlowID)
 		}
+	case MessageTypeSubscribe:
+		var p dto.SubscribeRequest
+		if decode(&p) {
+			h.handleSubscribe(client, p.FlowID)
+		}
+	case MessageTypeUnsubscribe:
+		var p dto.SubscribeRequest
+		if decode(&p) {
+			client.Unsubscribe(p.FlowID)
+		}
 	case MessageTypePing:
 		h.BroadcastToClient(client, MessageTypePong, map[string]string{"message": "pong"})
 	case MessageTypeStateSync:
 		h.handleStateSync(client)
-	case MessageTypeMessageLog:
-		var p messageLogPayload
-		if decode(&p) {
-			h.handleMessageLog(client, p.FlowID, p.Limit)
-		}
 	case MessageTypeMessageSend:
 		var p messageSendPayload
 		if decode(&p) {
@@ -123,8 +161,8 @@ func (h *WebSocketHandler) HandleMessage(client *Client, message WebSocketMessag
 	}
 }
 
-// FlowChanged tells every client that a flow was created, edited, deployed
-// or undeployed. Called by the REST handlers after a successful mutation.
+// FlowChanged tells every client that a flow was created, edited or
+// imported. Called by the REST handlers after a successful mutation.
 func (h *WebSocketHandler) FlowChanged(flowID string) {
 	h.broadcastFlowStatus(flowID)
 	h.broadcastFlowList()
@@ -157,13 +195,12 @@ func (h *WebSocketHandler) broadcastFlowStatus(flowID string) {
 	if err != nil {
 		return
 	}
-	summary := dto.ToWireSummary(flow)
-	h.hub.Broadcast(MessageTypeFlowStatus, map[string]interface{}{
-		"flowId":     flowID,
-		"status":     summary.Status,
-		"updatedAt":  summary.UpdatedAt,
-		"deployedAt": summary.DeployedAt,
-	})
+	h.hub.Broadcast(MessageTypeFlowStatus, dto.FlowStatusEventToWire(engine.FlowStatusEvent{
+		FlowID:     flow.ID,
+		Status:     flow.Status,
+		UpdatedAt:  flow.UpdatedAt,
+		DeployedAt: flow.DeployedAt,
+	}))
 }
 
 func (h *WebSocketHandler) handleFlowList(client *Client) {
@@ -179,6 +216,30 @@ func (h *WebSocketHandler) handleFlowGet(client *Client, flowID string) {
 		return
 	}
 	h.BroadcastToClient(client, MessageTypeFlowGet, dto.ToWire(flow))
+}
+
+// handleSubscribe registers the client for a flow's runtime events and
+// answers with everything it needs to catch up.
+func (h *WebSocketHandler) handleSubscribe(client *Client, flowID string) {
+	flow, err := h.flowEngine.GetFlow(flowID)
+	if err != nil {
+		h.sendError(client, "flow not found", err, map[string]interface{}{"flowId": flowID})
+		return
+	}
+
+	client.Subscribe(flowID)
+	h.BroadcastToClient(client, MessageTypeFlowSnapshot, h.snapshot(flow))
+}
+
+// snapshot builds the catch-up payload for a flow.
+func (h *WebSocketHandler) snapshot(flow *engine.Flow) dto.FlowSnapshot {
+	return dto.FlowSnapshot{
+		FlowID:     flow.ID,
+		Status:     dto.FlowStatusFromEngine(flow.Status),
+		NodeStatus: dto.NodeStatusesToWire(h.flowEngine.GetNodeStatuses(flow.ID)),
+		Metrics:    dto.MetricsToWire(h.flowEngine.GetMetrics(flow.ID)),
+		Debug:      dto.DebugLogToWire(h.flowEngine.GetDebugLog(flow.ID)),
+	}
 }
 
 func (h *WebSocketHandler) handleStateSync(client *Client) {
@@ -204,26 +265,6 @@ func (h *WebSocketHandler) handleMessageSend(client *Client, flowID, nodeID stri
 		"status": "sent",
 		"flowId": flowID,
 		"nodeId": nodeID,
-	})
-}
-
-// handleMessageLog answers a message:log request with the logged messages
-// (optionally filtered by flowId, optionally capped by limit).
-func (h *WebSocketHandler) handleMessageLog(client *Client, flowID string, limit int) {
-	var messages []engine.Message
-	if flowID != "" {
-		messages = h.flowEngine.GetMessageLogForFlow(flowID)
-	} else {
-		messages = h.flowEngine.GetMessageLog()
-	}
-
-	if limit > 0 && len(messages) > limit {
-		messages = messages[len(messages)-limit:]
-	}
-
-	h.BroadcastToClient(client, MessageTypeMessageLog, map[string]interface{}{
-		"flowId":   flowID,
-		"messages": dto.MessagesToWire(messages),
 	})
 }
 

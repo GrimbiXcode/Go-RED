@@ -20,18 +20,26 @@ type MessageType string
 
 const (
 	// Flow queries (client -> server, answered on the same type) and
-	// flow events (server -> client).
+	// flow events (server -> client, to every client).
 	MessageTypeFlowList   MessageType = "flow:list"   // query + broadcast after any change
 	MessageTypeFlowGet    MessageType = "flow:get"    // query
 	MessageTypeFlowDelete MessageType = "flow:delete" // event
-	MessageTypeFlowStatus MessageType = "flow:status" // event: {flowId, status, updatedAt, deployedAt}
+	MessageTypeFlowStatus MessageType = "flow:status" // event: dto.FlowStatusEvent
 
-	// Node runtime events (server -> client).
-	MessageTypeNodeStatus MessageType = "node:status"
+	// Per-flow subscription (client -> server). A client only receives the
+	// runtime events below for flows it subscribed to; subscribing answers
+	// with flow:snapshot.
+	MessageTypeSubscribe    MessageType = "subscribe"     // dto.SubscribeRequest
+	MessageTypeUnsubscribe  MessageType = "unsubscribe"   // dto.SubscribeRequest
+	MessageTypeFlowSnapshot MessageType = "flow:snapshot" // dto.FlowSnapshot
 
-	// Runtime actions and queries.
+	// Runtime events (server -> subscribed clients).
+	MessageTypeNodeStatus   MessageType = "node:status"   // dto.NodeStatusEvent
+	MessageTypeDebugMessage MessageType = "debug:message" // dto.DebugMessage
+	MessageTypeFlowMetrics  MessageType = "flow:metrics"  // dto.FlowMetricsEvent
+
+	// Runtime actions.
 	MessageTypeMessageSend MessageType = "message:send" // inject at a node
-	MessageTypeMessageLog  MessageType = "message:log"  // query the message log
 
 	// System message types
 	MessageTypeError     MessageType = "error"
@@ -51,9 +59,13 @@ var AllMessageTypes = []MessageType{
 	MessageTypeFlowGet,
 	MessageTypeFlowDelete,
 	MessageTypeFlowStatus,
+	MessageTypeSubscribe,
+	MessageTypeUnsubscribe,
+	MessageTypeFlowSnapshot,
 	MessageTypeNodeStatus,
+	MessageTypeDebugMessage,
+	MessageTypeFlowMetrics,
 	MessageTypeMessageSend,
-	MessageTypeMessageLog,
 	MessageTypeError,
 	MessageTypeInfo,
 	MessageTypePing,
@@ -96,6 +108,42 @@ type Client struct {
 	done           chan struct{}
 	closeOnce      sync.Once
 	messageHandler func(*Client, WebSocketMessage)
+
+	// subscriptions are the flow IDs this client wants runtime events for.
+	subMu         sync.Mutex
+	subscriptions map[string]struct{}
+}
+
+// Subscribe adds flowID to the client's runtime event subscriptions.
+func (c *Client) Subscribe(flowID string) {
+	c.subMu.Lock()
+	defer c.subMu.Unlock()
+	if c.subscriptions == nil {
+		c.subscriptions = make(map[string]struct{})
+	}
+	c.subscriptions[flowID] = struct{}{}
+}
+
+// Unsubscribe removes flowID from the client's subscriptions.
+func (c *Client) Unsubscribe(flowID string) {
+	c.subMu.Lock()
+	defer c.subMu.Unlock()
+	delete(c.subscriptions, flowID)
+}
+
+// IsSubscribed reports whether the client receives runtime events of flowID.
+func (c *Client) IsSubscribed(flowID string) bool {
+	c.subMu.Lock()
+	defer c.subMu.Unlock()
+	_, ok := c.subscriptions[flowID]
+	return ok
+}
+
+// outbound is a message on its way to clients, optionally scoped to the
+// subscribers of one flow.
+type outbound struct {
+	message WebSocketMessage
+	flowID  string
 }
 
 // close asks writePump to send a close frame and stop. Safe to call more
@@ -124,7 +172,7 @@ func (c *Client) enqueue(message WebSocketMessage) bool {
 // by removeClient, always under mu.
 type Hub struct {
 	clients    map[*Client]bool
-	broadcast  chan WebSocketMessage
+	broadcast  chan outbound
 	register   chan *Client
 	unregister chan *Client
 	mu         sync.RWMutex
@@ -134,7 +182,7 @@ type Hub struct {
 func NewHub() *Hub {
 	return &Hub{
 		clients:    make(map[*Client]bool),
-		broadcast:  make(chan WebSocketMessage, 256),
+		broadcast:  make(chan outbound, 1024),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 	}
@@ -164,11 +212,14 @@ func (h *Hub) Run() {
 		case client := <-h.unregister:
 			h.removeClient(client)
 
-		case message := <-h.broadcast:
+		case out := <-h.broadcast:
 			h.mu.RLock()
 			for client := range h.clients {
-				if !client.enqueue(message) {
-					slog.Warn("websocket client send buffer full, dropping broadcast", "type", message.Type)
+				if out.flowID != "" && !client.IsSubscribed(out.flowID) {
+					continue
+				}
+				if !client.enqueue(out.message) {
+					slog.Warn("websocket client send buffer full, dropping broadcast", "type", out.message.Type)
 				}
 			}
 			h.mu.RUnlock()
@@ -195,6 +246,15 @@ func (h *Hub) removeClient(client *Client) {
 
 // Broadcast sends a message to all connected clients
 func (h *Hub) Broadcast(messageType MessageType, data interface{}) {
+	h.enqueueBroadcast("", messageType, data)
+}
+
+// BroadcastToFlow sends a message to the clients subscribed to flowID.
+func (h *Hub) BroadcastToFlow(flowID string, messageType MessageType, data interface{}) {
+	h.enqueueBroadcast(flowID, messageType, data)
+}
+
+func (h *Hub) enqueueBroadcast(flowID string, messageType MessageType, data interface{}) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		slog.Error("failed to marshal websocket broadcast", "type", messageType, "err", err)
@@ -202,7 +262,7 @@ func (h *Hub) Broadcast(messageType MessageType, data interface{}) {
 	}
 
 	select {
-	case h.broadcast <- newMessage(messageType, jsonData):
+	case h.broadcast <- outbound{message: newMessage(messageType, jsonData), flowID: flowID}:
 	default:
 		slog.Warn("websocket broadcast channel full, dropping message", "type", messageType)
 	}

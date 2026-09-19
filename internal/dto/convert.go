@@ -35,7 +35,6 @@ func NodeToWire(n *engine.Node) Node {
 		Name:     n.Name,
 		Position: Position{X: n.X, Y: n.Y},
 		Config:   n.Config,
-		Status:   NodeStatus{State: "idle"},
 		Disabled: n.Disabled,
 	}
 }

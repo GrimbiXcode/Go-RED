@@ -443,13 +443,12 @@ func (s *server) handleDeleteFlow(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleDeployFlow(w http.ResponseWriter, r *http.Request) {
 	flowID := r.PathValue("id")
+	// Deploy and undeploy results reach clients as engine runtime events
+	// (flow:status); no REST-side notification needed.
 	if err := s.engine.DeployFlow(flowID); err != nil {
-		// A failed deploy still changes the flow (status error) - tell clients.
-		s.notify.FlowChanged(flowID)
 		writeEngineError(w, err)
 		return
 	}
-	s.notify.FlowChanged(flowID)
 	writeJSON(w, http.StatusOK, s.deployResponse(flowID, dto.FlowStatusRunning))
 }
 
@@ -459,7 +458,6 @@ func (s *server) handleUndeployFlow(w http.ResponseWriter, r *http.Request) {
 		writeEngineError(w, err)
 		return
 	}
-	s.notify.FlowChanged(flowID)
 	writeJSON(w, http.StatusOK, s.deployResponse(flowID, dto.FlowStatusDraft))
 }
 

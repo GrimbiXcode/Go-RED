@@ -188,6 +188,12 @@ func main() {
 	g.ensureStruct(reflect.TypeOf(dto.Message{}))
 	g.ensureStruct(reflect.TypeOf(dto.DeployResponse{}))
 	g.ensureStruct(reflect.TypeOf(dto.ErrorResponse{}))
+	g.ensureStruct(reflect.TypeOf(dto.FlowStatusEvent{}))
+	g.ensureStruct(reflect.TypeOf(dto.NodeStatusEvent{}))
+	g.ensureStruct(reflect.TypeOf(dto.DebugMessage{}))
+	g.ensureStruct(reflect.TypeOf(dto.FlowMetricsEvent{}))
+	g.ensureStruct(reflect.TypeOf(dto.FlowSnapshot{}))
+	g.ensureStruct(reflect.TypeOf(dto.SubscribeRequest{}))
 	g.ensureStruct(reflect.TypeOf(registry.NodeMetadata{}))
 	g.ensureStruct(reflect.TypeOf(websocket.WebSocketMessage{}))
 

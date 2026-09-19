@@ -28,23 +28,28 @@ type Position struct {
 	Y float64 `json:"y"`
 }
 
-// NodeStatus is the runtime status of a node, as shown in the UI.
+// NodeStatus is the small status indicator a node shows in the editor
+// (Node-RED's node.status({fill, shape, text})). It is runtime state,
+// pushed as node:status events and in flow:snapshot; it is not part of the
+// flow definition.
 type NodeStatus struct {
-	State           string `json:"state"`
-	Message         string `json:"message,omitempty"`
-	Timestamp       string `json:"timestamp,omitempty"`
-	ProcessingCount int    `json:"processingCount,omitempty"`
-	ErrorCount      int    `json:"errorCount,omitempty"`
+	// Fill is the indicator color: red, green, yellow, blue or grey.
+	Fill string `json:"fill,omitempty"`
+	// Shape is "dot" or "ring".
+	Shape string `json:"shape,omitempty"`
+	// Text is the short label next to the indicator.
+	Text      string `json:"text,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
 }
 
-// Node is the wire representation of a flow node.
+// Node is the wire representation of a flow node (definition only; runtime
+// status travels separately as NodeStatus events).
 type Node struct {
 	ID       string                 `json:"id"`
 	Type     string                 `json:"type"`
 	Name     string                 `json:"name,omitempty"`
 	Position Position               `json:"position"`
 	Config   map[string]interface{} `json:"config"`
-	Status   NodeStatus             `json:"status"`
 	Disabled bool                   `json:"disabled"`
 }
 

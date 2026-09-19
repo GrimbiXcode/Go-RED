@@ -2,7 +2,7 @@
 // cmd/go-red/websocket. DO NOT EDIT — run `go generate ./internal/dto/...`
 // (or `make generate-types`) to regenerate after changing those packages.
 
-export type MessageType = 'flow:list' | 'flow:get' | 'flow:delete' | 'flow:status' | 'node:status' | 'message:send' | 'message:log' | 'error' | 'info' | 'ping' | 'pong' | 'state:sync' | '*';
+export type MessageType = 'flow:list' | 'flow:get' | 'flow:delete' | 'flow:status' | 'subscribe' | 'unsubscribe' | 'flow:snapshot' | 'node:status' | 'debug:message' | 'flow:metrics' | 'message:send' | 'error' | 'info' | 'ping' | 'pong' | 'state:sync' | '*';
 
 export type FlowStatus = 'draft' | 'running' | 'error' | 'deploying' | 'undeploying';
 
@@ -11,21 +11,12 @@ export interface Position {
   y: number;
 }
 
-export interface NodeStatus {
-  state: string;
-  message?: string;
-  timestamp?: string;
-  processingCount?: number;
-  errorCount?: number;
-}
-
 export interface Node {
   id: string;
   type: string;
   name?: string;
   position: Position;
   config: Record<string, any>;
-  status: NodeStatus;
   disabled: boolean;
 }
 
@@ -109,6 +100,62 @@ export interface DeployResponse {
 
 export interface ErrorResponse {
   error: string;
+}
+
+export interface FlowStatusEvent {
+  flowId: string;
+  status: FlowStatus;
+  updatedAt?: string;
+  deployedAt?: string;
+  error?: string;
+}
+
+export interface NodeStatus {
+  fill?: string;
+  shape?: string;
+  text?: string;
+  timestamp?: string;
+}
+
+export interface NodeStatusEvent {
+  flowId: string;
+  nodeId: string;
+  status: NodeStatus;
+}
+
+export interface DebugMessage {
+  id: string;
+  flowId: string;
+  nodeId: string;
+  nodeName?: string;
+  nodeType?: string;
+  level: string;
+  topic?: string;
+  payload: any;
+  timestamp: string;
+}
+
+export interface NodeMetrics {
+  messages: number;
+  errors: number;
+}
+
+export interface FlowMetricsEvent {
+  flowId: string;
+  nodes: Record<string, NodeMetrics>;
+  timestamp: string;
+}
+
+export interface FlowSnapshot {
+  flowId: string;
+  status: FlowStatus;
+  nodeStatus: Record<string, NodeStatus>;
+  metrics: Record<string, NodeMetrics>;
+  debug: DebugMessage[];
+}
+
+export interface SubscribeRequest {
+  flowId: string;
 }
 
 export interface Port {
