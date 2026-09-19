@@ -58,6 +58,17 @@ export function NodeHandles({ inputPorts, outputPorts }: NodeHandlesProps) {
           style={portStyle(i, outputs.length)}
         />
       ))}
+      {outputs.length > 1 &&
+        outputs.map((port, i) => (
+          <div
+            key={`label-${port.id}`}
+            className="absolute left-full ml-2 text-[9px] leading-none text-gray-500 whitespace-nowrap pointer-events-none max-w-[8rem] truncate"
+            style={{ top: `calc(var(--gr-node-height) * ${(i + 1) / (outputs.length + 1)})`, transform: 'translateY(-50%)' }}
+            data-testid="port-label"
+          >
+            {port.name}
+          </div>
+        ))}
     </>
   );
 }

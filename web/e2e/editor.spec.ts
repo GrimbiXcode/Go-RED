@@ -193,6 +193,93 @@ test.describe('flow editor', () => {
     await expect(page.locator('[data-testid="debug-message"][data-level="error"]').first()).toBeVisible();
   });
 
+  test('switch rules become output ports and wires to removed outputs are pruned', async ({ page, request }) => {
+    await seedFlow(
+      request,
+      {
+        n1: demoNodes.n1,
+        sw: {
+          id: 'sw',
+          type: 'switch',
+          name: 'Route',
+          position: { x: 320, y: 120 },
+          config: { property: { type: 'msg', path: 'payload' }, rules: [{ operator: 'eq', value: { type: 'str', value: 'tick' } }, { operator: 'else' }], checkAll: true },
+          disabled: false,
+        },
+        d1: { id: 'd1', type: 'debug', name: 'Matches', position: { x: 600, y: 60 }, config: {}, disabled: false },
+        d2: { id: 'd2', type: 'debug', name: 'Rest', position: { x: 600, y: 200 }, config: {}, disabled: false },
+      },
+      [
+        { id: 'c1', sourceNode: 'n1', sourcePort: 'output', targetNode: 'sw', targetPort: 'input' },
+        { id: 'c2', sourceNode: 'sw', sourcePort: '0', targetNode: 'd1', targetPort: 'input' },
+        { id: 'c3', sourceNode: 'sw', sourcePort: '1', targetNode: 'd2', targetPort: 'input' },
+      ]
+    );
+    await page.goto(`/flow/${FLOW_ID}`);
+    const switchNode = page.locator('.react-flow__node[data-id="sw"]');
+    await expect(switchNode.locator('.react-flow__handle.source')).toHaveCount(2);
+    await expect(switchNode.getByTestId('port-label')).toHaveText(['== tick', 'otherwise']);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+
+    // Removing the second rule removes its port and the wire on it.
+    await switchNode.dblclick();
+    const tray = page.getByTestId('node-config');
+    await expect(tray.getByTestId('list-item-rules-1')).toBeVisible();
+    await tray.getByTestId('list-item-rules-1').getByRole('button', { name: 'Remove' }).click();
+    await tray.getByTestId('config-done').click();
+    await expect(page.getByText('1 connection to a removed output was deleted')).toBeVisible();
+    await expect(switchNode.locator('.react-flow__handle.source')).toHaveCount(1);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+    await waitForSaved(page);
+    const saved = await flowFromServer(request);
+    expect(saved.connections.map((c: { id: string }) => c.id).sort()).toEqual(['c1', 'c2']);
+    expect(saved.nodes.sw.config.rules).toHaveLength(1);
+
+    // One undo step brings the rule and its wire back.
+    await deselectAll(page);
+    await page.keyboard.press('Control+z');
+    await expect(switchNode.locator('.react-flow__handle.source')).toHaveCount(2);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+  });
+
+  test('required fields block Done and the function node is edited in a code editor', async ({ page, request }) => {
+    await seedFlow(
+      request,
+      {
+        h1: { id: 'h1', type: 'http in', name: 'Hook', position: { x: 80, y: 120 }, config: { method: 'POST', path: '' }, disabled: false },
+        fn: { id: 'fn', type: 'function', name: 'Transform', position: { x: 320, y: 120 }, config: { code: 'return input;' }, disabled: false },
+      },
+      [{ id: 'c1', sourceNode: 'h1', sourcePort: 'output', targetNode: 'fn', targetPort: 'input' }]
+    );
+    await page.goto(`/flow/${FLOW_ID}`);
+
+    await page.locator('.react-flow__node[data-id="h1"]').dblclick();
+    const tray = page.getByTestId('node-config');
+    await expect(tray.getByTestId('config-done')).toBeDisabled();
+    await expect(tray.getByTestId('field-error')).toHaveText('Required');
+    await tray.getByPlaceholder('/hook').fill('/e2e-hook');
+    await expect(tray.getByTestId('config-done')).toBeEnabled();
+    await tray.getByTestId('config-done').click();
+    await waitForSaved(page);
+    expect((await flowFromServer(request)).nodes.h1.config.path).toBe('/e2e-hook');
+
+    await page.locator('.react-flow__node[data-id="fn"]').dblclick();
+    const editor = page.getByTestId('node-config').locator('.cm-content');
+    await expect(editor).toContainText('return input;');
+    await editor.click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.type('msg.payload = 42; return msg;');
+    await page.getByTestId('config-tab-appearance').click();
+    await page.getByLabel('Enabled').uncheck();
+    await page.getByTestId('config-done').click();
+    await waitForSaved(page);
+    const fn = (await flowFromServer(request)).nodes.fn;
+    expect(fn.config.code).toBe('msg.payload = 42; return msg;');
+    expect(fn.disabled).toBe(true);
+    await page.locator('.react-flow__node[data-id="fn"]').click();
+    await expect(page.getByTestId('node-disabled')).toBeVisible();
+  });
+
   test('node configuration is edited in the tray and persisted', async ({ page, request }) => {
     await page.goto(`/flow/${FLOW_ID}`);
     await page.locator('.react-flow__node[data-id="n2"]').dblclick();

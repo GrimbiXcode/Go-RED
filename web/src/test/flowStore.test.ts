@@ -177,6 +177,28 @@ describe('flowStore document editing', () => {
     store().undo();
     expect(store().flow!.nodes[a].name).toBe('');
   });
+  it('updateNode can drop connections in the same undo step and keeps the description', async () => {
+    await openFlow();
+    const sw = store().addNode('switch', { x: 0, y: 0 })!;
+    const a = store().addNode('debug', { x: 100, y: 0 })!;
+    const b = store().addNode('debug', { x: 100, y: 100 })!;
+    store().addConnection({ sourceNode: sw, targetNode: a, sourcePort: '0', targetPort: 'input' });
+    store().addConnection({ sourceNode: sw, targetNode: b, sourcePort: '1', targetPort: 'input' });
+    const stale = store().flow!.connections.find((c) => c.sourcePort === '1')!;
+
+    store().updateNode(sw, { config: { rules: [{ operator: 'else' }] }, description: 'Only one rule now' }, { removeConnections: [stale.id] });
+    expect(store().flow!.connections.map((c) => c.sourcePort)).toEqual(['0']);
+    expect(store().flow!.nodes[sw].description).toBe('Only one rule now');
+
+    store().undo();
+    expect(store().flow!.connections).toHaveLength(2);
+    expect(store().flow!.nodes[sw].description).toBeUndefined();
+
+    // An empty description is not stored.
+    store().redo();
+    store().updateNode(sw, { description: '' });
+    expect('description' in store().flow!.nodes[sw]).toBe(false);
+  });
 });
 
 describe('flowStore save and deploy', () => {

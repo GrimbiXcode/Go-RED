@@ -11,7 +11,7 @@ import type { CanvasNode } from './canvasTypes';
 
 export function InjectNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const { t } = useTranslation();
-  const { label, node, metadata, flowId } = data;
+  const { label, node, metadata, outputs, flowId } = data;
   const [isInjecting, setIsInjecting] = useState(false);
   const [lastInjectionTime, setLastInjectionTime] = useState<string | null>(null);
 
@@ -44,6 +44,7 @@ export function InjectNode({ id, data, selected }: NodeProps<CanvasNode>) {
       icon={<NodeIcon icon={metadata?.icon} category={category} className="w-4 h-4 shrink-0" />}
       selected={selected}
       status={status}
+      color={metadata?.color}
       title={metadata?.description || `Inject Node: ${metadata?.name || node.type}`}
       action={
         <button
@@ -65,7 +66,7 @@ export function InjectNode({ id, data, selected }: NodeProps<CanvasNode>) {
         </button>
       }
     >
-      <NodeHandles inputPorts={metadata?.inputs || []} outputPorts={metadata?.outputs || []} />
+      <NodeHandles inputPorts={metadata?.inputs || []} outputPorts={outputs} />
     </NodeShell>
   );
 }

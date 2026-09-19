@@ -24,6 +24,7 @@ import { NodeComponent } from './NodeComponent';
 import { InjectNode } from './InjectNode';
 import { DebugNode } from './DebugNode';
 import type { CanvasNode } from './canvasTypes';
+import { outputPortsFor } from '../schema/ports';
 
 const nodeTypeComponents: NodeTypes = {
   default: NodeComponent,
@@ -44,6 +45,7 @@ export function flowNodeToCanvasNode(flowNode: FlowNode, nodeTypes: NodeRegistry
       label: flowNode.name || metadata?.name || flowNode.type,
       node: flowNode,
       metadata,
+      outputs: outputPortsFor(metadata, flowNode.config),
       flowId,
     },
   };

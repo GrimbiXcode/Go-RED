@@ -7,6 +7,6 @@ export * from './Header';
 export * from './FlowTabs';
 export * from './SidebarTabs';
 export * from './StatusBar';
-export * from './NodeConfigModal';
+export * from './NodeEditTray';
 export * from './ToastNotification';
 export * from './DebugPanel';

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { renderMarkdown } from '../utils/markdown';
+import { outputPortsFor } from '../schema/ports';
 import { useFlowStore } from '../store/flowStore';
 import { useEditorStore } from '../store/editorStore';
 import { useRuntimeStore, selectNodeStatus, selectNodeMetrics } from '../store/runtimeStore';
@@ -55,6 +57,25 @@ function NodeDetails({ flow, node }: { flow: Flow; node: FlowNode }) {
         <Field label={t('sidebar.id')}>
           <Value mono>{node.id}</Value>
         </Field>
+        {node.disabled && (
+          <div className="text-xs text-amber-700 bg-amber-50 rounded p-2" data-testid="node-disabled">
+            {t('sidebar.disabled')}
+          </div>
+        )}
+        {node.description && (
+          <Field label={t('sidebar.description')}>
+            <div className="markdown text-xs text-gray-800 bg-gray-50 p-2 rounded" data-testid="node-description" dangerouslySetInnerHTML={{ __html: renderMarkdown(node.description) }} />
+          </Field>
+        )}
+        {metadata?.outputsFrom && (
+          <Field label={t('sidebar.outputs')}>
+            <Value>
+              {outputPortsFor(metadata, node.config)
+                .map((port) => port.name)
+                .join(', ') || '–'}
+            </Value>
+          </Field>
+        )}
         <Field label={t('sidebar.position')}>
           <Value>
             X: {(node.position?.x ?? 0).toFixed(0)}, Y: {(node.position?.y ?? 0).toFixed(0)}
@@ -62,9 +83,16 @@ function NodeDetails({ flow, node }: { flow: Flow; node: FlowNode }) {
         </Field>
 
         {node.config && Object.keys(node.config).length > 0 && (
-          <Field label={t('sidebar.configuration')}>
-            <pre className="text-xs text-gray-700 bg-gray-50 p-2 rounded overflow-auto">{JSON.stringify(node.config, null, 2)}</pre>
-          </Field>
+          <details className="text-xs">
+            <summary className="cursor-pointer text-sm font-medium text-gray-600">{t('sidebar.configuration')}</summary>
+            <pre className="mt-1 text-xs text-gray-700 bg-gray-50 p-2 rounded overflow-auto">{JSON.stringify(node.config, null, 2)}</pre>
+          </details>
+        )}
+        {metadata?.help && (
+          <details className="text-xs" data-testid="node-help">
+            <summary className="cursor-pointer text-sm font-medium text-gray-600">{t('sidebar.about')}</summary>
+            <div className="markdown mt-1 text-xs text-gray-700 bg-gray-50 p-2 rounded" dangerouslySetInnerHTML={{ __html: renderMarkdown(metadata.help) }} />
+          </details>
         )}
 
         {hasVisibleStatus(status) && (

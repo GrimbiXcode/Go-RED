@@ -6,7 +6,7 @@ import { useRuntimeStore, selectNodeStatus } from '../store/runtimeStore';
 import type { CanvasNode } from './canvasTypes';
 
 export function DebugNode({ id, data, selected }: NodeProps<CanvasNode>) {
-  const { label, node, metadata, flowId } = data;
+  const { label, node, metadata, outputs, flowId } = data;
   const category = metadata?.category || 'output';
   const status = useRuntimeStore(selectNodeStatus(flowId, id));
 
@@ -17,9 +17,10 @@ export function DebugNode({ id, data, selected }: NodeProps<CanvasNode>) {
       icon={<NodeIcon icon={metadata?.icon} category={category} className="w-4 h-4 shrink-0" />}
       selected={selected}
       status={status}
+      color={metadata?.color}
       title={metadata?.description || `Debug Node: ${metadata?.name || node.type}`}
     >
-      <NodeHandles inputPorts={metadata?.inputs || []} outputPorts={metadata?.outputs || []} />
+      <NodeHandles inputPorts={metadata?.inputs || []} outputPorts={outputs} />
     </NodeShell>
   );
 }

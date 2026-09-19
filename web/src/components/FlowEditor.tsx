@@ -7,13 +7,14 @@ import { NodePalette } from './NodePalette';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { FlowTabs } from './FlowTabs';
-import { NodeConfigModal } from './NodeConfigModal';
+import { NodeEditTray } from './NodeEditTray';
 import { DebugPanel } from './DebugPanel';
 import { SidebarTabs, InfoTabIcon, DebugTabIcon } from './SidebarTabs';
 import { StatusBar } from './StatusBar';
 import { ExportModal } from './ExportModal';
 import { ImportModal } from './ImportModal';
-import { useFlowStore, selectCanDeploy, selectCanRedo, selectCanUndeploy, selectCanUndo, hasUndeployedChanges } from '../store/flowStore';
+import { useFlowStore, selectCanDeploy, selectCanRedo, selectCanUndeploy, selectCanUndo, hasUndeployedChanges, type NodePatch } from '../store/flowStore';
+import { connectionsOnMissingPorts, outputPortIds } from '../schema/ports';
 import { useEditorStore, type SidebarTab } from '../store/editorStore';
 import { notify } from '../store/notificationStore';
 import { useEditorShortcuts } from '../hooks/useEditorShortcuts';
@@ -51,6 +52,7 @@ export function FlowEditor() {
   const redo = useFlowStore((state) => state.redo);
   const flushSave = useFlowStore((state) => state.flushSave);
   const updateNode = useFlowStore((state) => state.updateNode);
+  const nodeTypes = useFlowStore((state) => state.nodeTypes);
   const removeNodes = useFlowStore((state) => state.removeNodes);
 
   const sidebarTab = useEditorStore((state) => state.sidebarTab);
@@ -164,11 +166,18 @@ export function FlowEditor() {
   const configNode = configNodeId && flow ? flow.nodes[configNodeId] : null;
 
   const handleSaveNodeConfig = useCallback(
-    (config: Record<string, any>, name: string) => {
-      if (configNodeId) updateNode(configNodeId, { config, name });
+    (patch: NodePatch) => {
+      if (configNodeId && flow) {
+        const metadata = nodeTypes.find((nt) => nt.type === flow.nodes[configNodeId]?.type);
+        // Outputs can depend on the config (Switch rules): connections on
+        // ports that no longer exist go away in the same undo step.
+        const dangling = metadata ? connectionsOnMissingPorts(flow.connections, configNodeId, outputPortIds(metadata, patch.config)) : [];
+        updateNode(configNodeId, patch, { removeConnections: dangling.map((c) => c.id) });
+        if (dangling.length > 0) notify('info', t('toast.connectionsRemoved', { count: dangling.length }));
+      }
       closeConfig();
     },
-    [configNodeId, updateNode, closeConfig]
+    [configNodeId, flow, nodeTypes, updateNode, closeConfig, t]
   );
 
   const handleDeleteConfiguredNode = useCallback(() => {
@@ -253,7 +262,7 @@ export function FlowEditor() {
       <StatusBar flow={flow} saveState={saveState} saveError={saveError} />
 
       {configNode && (
-        <NodeConfigModal
+        <NodeEditTray
           key={configNode.id}
           node={configNode}
           onClose={closeConfig}

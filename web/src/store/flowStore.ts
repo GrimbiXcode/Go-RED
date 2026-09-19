@@ -40,7 +40,12 @@ export interface NodeMove {
   position: { x: number; y: number };
 }
 
-export type NodePatch = Partial<Pick<FlowNode, 'name' | 'config' | 'disabled'>>;
+export type NodePatch = Partial<Pick<FlowNode, 'name' | 'config' | 'disabled' | 'description'>>;
+
+/** Side effects an edit may carry: connections that no longer have a port. */
+export interface UpdateNodeOptions {
+  removeConnections?: string[];
+}
 
 interface FlowState {
   flows: FlowSummary[];
@@ -79,7 +84,7 @@ interface FlowState {
   addNode: (type: string, position: { x: number; y: number }, name?: string) => string | null;
   removeNodes: (ids: string[]) => void;
   moveNodes: (moves: NodeMove[]) => void;
-  updateNode: (id: string, patch: NodePatch) => void;
+  updateNode: (id: string, patch: NodePatch, options?: UpdateNodeOptions) => void;
   addConnection: (connection: Omit<NodeConnection, 'id'>) => void;
   removeConnections: (ids: string[]) => void;
   undo: () => void;
@@ -413,19 +418,24 @@ export const useFlowStore = create<FlowState>((set, get) => {
       });
     },
 
-    updateNode: (id, patch) => {
+    updateNode: (id, patch, options) => {
       commit((doc) => {
         const node = doc.nodes[id];
         if (!node) return null;
         const next: FlowNode = { ...node, ...patch };
+        if (!next.description) delete next.description;
+        const remove = new Set(options?.removeConnections || []);
+        const connections = remove.size > 0 ? doc.connections.filter((c) => !remove.has(c.id)) : doc.connections;
         if (
           next.name === node.name &&
           next.disabled === node.disabled &&
-          JSON.stringify(next.config) === JSON.stringify(node.config)
+          (next.description || '') === (node.description || '') &&
+          JSON.stringify(next.config) === JSON.stringify(node.config) &&
+          connections === doc.connections
         ) {
           return null;
         }
-        return { nodes: { ...doc.nodes, [id]: next }, connections: doc.connections };
+        return { nodes: { ...doc.nodes, [id]: next }, connections };
       });
     },
 

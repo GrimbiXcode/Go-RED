@@ -15,7 +15,15 @@
     "e2e:full": "npm run build && playwright test"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.5",
+    "@codemirror/view": "^6.43.12",
     "@xyflow/react": "^12.11.6",
+    "codemirror": "^6.0.2",
     "dompurify": "^3.4.11",
     "i18next": "^25.10.10",
     "react": "^18.2.0",

@@ -16,6 +16,8 @@ export interface NodeShellProps {
   icon: ReactNode;
   selected?: boolean;
   status?: NodeStatus;
+  /** CSS color overriding the category color (NodeMetadata.color). */
+  color?: string;
   /** Optional small control rendered at the right of the row (e.g. Inject's trigger button). */
   action?: ReactNode;
   title?: string;
@@ -38,7 +40,7 @@ export function hasVisibleStatus(status?: NodeStatus): status is NodeStatus {
   return !!status && (!!status.text || !!status.fill);
 }
 
-export function NodeShell({ category, label, icon, selected, status, action, title, children }: NodeShellProps) {
+export function NodeShell({ category, label, icon, selected, status, color: colorOverride, action, title, children }: NodeShellProps) {
   const color = getCategoryColor(category);
   const showStatus = hasVisibleStatus(status);
   const fill = fillClass[status?.fill || ''] || fillClass.grey;
@@ -47,10 +49,10 @@ export function NodeShell({ category, label, icon, selected, status, action, tit
   return (
     <div style={{ minWidth: 'var(--gr-node-min-width)' }} title={title}>
       <div
-        className={`flex items-center gap-2 px-2 text-white rounded-gr-node ${color.swatch} ${
+        className={`flex items-center gap-2 px-2 text-white rounded-gr-node ${colorOverride ? '' : color.swatch} ${
           selected ? 'outline outline-2 outline-dashed outline-gr-blue-500 outline-offset-2' : ''
         }`}
-        style={{ height: 'var(--gr-node-height)' }}
+        style={{ height: 'var(--gr-node-height)', backgroundColor: colorOverride || undefined }}
       >
         {icon}
         <span className="text-sm font-medium truncate flex-1">{label}</span>
