@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -153,6 +154,17 @@ type FlowEngine struct {
 	// globalStore is the "global" context (flow.get/set's global-scoped
 	// counterpart), shared by every flow deployed on this engine.
 	globalStore *registry.ContextStore
+
+	// events fans runtime events out to subscribers (see events.go).
+	events *eventHub
+
+	// debugLogs keeps the recent debug sidebar entries per flow.
+	debugMu   sync.Mutex
+	debugLogs map[string][]DebugEvent
+
+	// nodeStatus keeps the latest reported status per flow and node.
+	statusMu   sync.RWMutex
+	nodeStatus map[string]map[string]NodeStatus
 }
 
 // ActiveFlow is the runtime of a deployed flow.
@@ -184,6 +196,12 @@ type ActiveFlow struct {
 	// consumed by Catch/Status/Complete-style nodes
 	// (docs/NODE_PALETTE_PLAN.md, Phase 1).
 	EventBus *registry.EventBus
+
+	// counters holds per-node message/error counters (see events.go).
+	counters map[string]*nodeCounter
+	// lastMetrics is the last published counter snapshot; only the
+	// metrics loop touches it.
+	lastMetrics map[string]NodeMetrics
 }
 
 // NewFlowEngine creates a new FlowEngine with the given configuration and registry.
@@ -211,6 +229,9 @@ func NewFlowEngine(config EngineConfig, nodeRegistry *registry.NodeRegistry) *Fl
 		messageLog:    make([]Message, 0),
 		maxMessageLog: 1000, // Store last 1000 messages
 		globalStore:   registry.NewContextStore(),
+		events:        newEventHub(),
+		debugLogs:     make(map[string][]DebugEvent),
+		nodeStatus:    make(map[string]map[string]NodeStatus),
 	}
 }
 
@@ -230,12 +251,19 @@ func (e *FlowEngine) GetStateManager() StateManager {
 	return e.stateManager
 }
 
-// Start starts the FlowEngine's worker pool.
+// Start starts the FlowEngine's worker pool, the runtime event dispatcher
+// and the metrics loop.
 func (e *FlowEngine) Start() error {
 	for i := 0; i < e.config.WorkerPoolSize; i++ {
 		e.wg.Add(1)
 		go e.worker()
 	}
+	e.wg.Add(2)
+	go func() {
+		defer e.wg.Done()
+		e.events.dispatch(e.ctx)
+	}()
+	go e.metricsLoop()
 	slog.Info("flow engine started", "workers", e.config.WorkerPoolSize)
 	return nil
 }
@@ -333,6 +361,8 @@ func (e *FlowEngine) processMessage(msg Message) {
 // original behavior of a single implicit output followed by every outgoing
 // connection regardless of port.
 func (e *FlowEngine) executeNode(activeFlow *ActiveFlow, nodeID, nodeType string, exec registry.NodeExecutor, nodeCtx context.Context, msg Message) {
+	activeFlow.countMessage(nodeID)
+
 	if multi, ok := exec.(registry.MultiOutputExecutor); ok {
 		outputs, err := multi.ExecuteMulti(nodeCtx, msg.Payload)
 		if err != nil {
@@ -394,6 +424,16 @@ func (e *FlowEngine) handleNodeComplete(activeFlow *ActiveFlow, nodeID, nodeType
 // Phase 1) can react to it.
 func (e *FlowEngine) handleNodeError(activeFlow *ActiveFlow, nodeID, nodeType string, msg Message, err error) {
 	slog.Warn("node execution failed", "flow", msg.FlowID, "node", nodeID, "type", nodeType, "err", err)
+
+	activeFlow.countError(nodeID)
+	e.recordDebug(DebugEvent{
+		FlowID:   msg.FlowID,
+		NodeID:   nodeID,
+		NodeName: activeFlow.nodeName(nodeID),
+		NodeType: nodeType,
+		Level:    DebugLevelError,
+		Payload:  err.Error(),
+	})
 
 	if activeFlow.EventBus == nil {
 		return
@@ -543,8 +583,26 @@ func (e *FlowEngine) deployLocked(def *Flow) error {
 		nodeExecutors: make(map[string]registry.NodeExecutor),
 		ContextStore:  registry.NewContextStore(),
 		EventBus:      registry.NewEventBus(),
+		counters:      make(map[string]*nodeCounter, len(snapshot.Nodes)),
 	}
 	activeFlow.ctx, activeFlow.cancel = context.WithCancel(e.ctx)
+	for nodeID := range snapshot.Nodes {
+		activeFlow.counters[nodeID] = &nodeCounter{}
+	}
+
+	// Statuses nodes report through NodeRuntime.ReportStatus become editor
+	// events (and are remembered for clients that connect later).
+	activeFlow.EventBus.OnStatus(func(evt registry.NodeStatusEvent) {
+		e.setNodeStatus(evt.FlowID, evt.NodeID, evt.NodeType, NodeStatus{
+			Fill:      fillForStatus(evt.Status),
+			Shape:     "dot",
+			Text:      strings.TrimSpace(evt.Status + " " + evt.Detail),
+			Timestamp: evt.Timestamp,
+		})
+	})
+
+	// A fresh runtime starts without statuses from the previous one.
+	e.clearNodeStatus(def.ID)
 
 	for nodeID, node := range snapshot.Nodes {
 		executor, err := e.registry.InitializeNode(node.Type, node.Config)
@@ -556,8 +614,18 @@ func (e *FlowEngine) deployLocked(def *Flow) error {
 			activeFlow.cancel()
 			def.Status = FlowStatusError
 			e.persistLocked(def)
+			deployErr := fmt.Errorf("%w %s: %v", ErrNodeInit, nodeID, err)
+			e.publishFlowStatus(def, deployErr.Error())
+			e.recordDebug(DebugEvent{
+				FlowID:   def.ID,
+				NodeID:   nodeID,
+				NodeName: node.Name,
+				NodeType: node.Type,
+				Level:    DebugLevelError,
+				Payload:  deployErr.Error(),
+			})
 			slog.Warn("flow deploy failed", "flow", def.ID, "node", nodeID, "type", node.Type, "err", err)
-			return fmt.Errorf("%w %s: %v", ErrNodeInit, nodeID, err)
+			return deployErr
 		}
 		activeFlow.nodeExecutors[nodeID] = executor
 	}
@@ -575,6 +643,7 @@ func (e *FlowEngine) deployLocked(def *Flow) error {
 	snapshot.Status = FlowStatusActive
 	snapshot.DeployedAt = def.DeployedAt
 	e.persistLocked(def)
+	e.publishFlowStatus(def, "")
 
 	slog.Info("flow deployed", "flow", def.ID, "nodes", len(activeFlow.nodeExecutors), "connections", len(snapshot.Connections))
 	return nil
@@ -677,7 +746,7 @@ func (e *FlowEngine) startEmittingNodes(activeFlow *ActiveFlow) {
 // flow/global context, error/status/complete event reporting and
 // subscription, and same-flow message delivery for Link nodes.
 func (e *FlowEngine) newNodeRuntime(activeFlow *ActiveFlow, nodeID, nodeType string) *registry.NodeRuntime {
-	return registry.NewNodeRuntime(
+	rt := registry.NewNodeRuntime(
 		activeFlow.Flow.ID,
 		nodeID,
 		nodeType,
@@ -692,6 +761,26 @@ func (e *FlowEngine) newNodeRuntime(activeFlow *ActiveFlow, nodeID, nodeType str
 			return executor, ok
 		},
 	)
+	rt.SetDebugSink(func(out registry.DebugOutput) {
+		e.recordDebug(DebugEvent{
+			FlowID:   activeFlow.Flow.ID,
+			NodeID:   nodeID,
+			NodeName: activeFlow.nodeName(nodeID),
+			NodeType: nodeType,
+			Level:    DebugLevel(out.Level),
+			Topic:    out.Topic,
+			Payload:  out.Payload,
+		})
+	})
+	return rt
+}
+
+// nodeName returns the display name of a node in the running snapshot.
+func (af *ActiveFlow) nodeName(nodeID string) string {
+	if node, ok := af.Flow.Nodes[nodeID]; ok {
+		return node.Name
+	}
+	return ""
 }
 
 // submitToFlowNode delivers payload directly to targetNodeID's output within
@@ -755,11 +844,13 @@ func (e *FlowEngine) Undeploy(flowID string) error {
 
 	if running {
 		e.stopActiveLocked(activeFlow)
+		e.clearNodeStatus(flowID)
 		slog.Info("flow undeployed", "flow", flowID)
 	}
 	if known {
 		def.Status = FlowStatusInactive
 		e.persistLocked(def)
+		e.publishFlowStatus(def, "")
 	}
 	return nil
 }
@@ -951,6 +1042,8 @@ func (e *FlowEngine) DeleteFlow(flowID string) error {
 		e.stopActiveLocked(activeFlow)
 	}
 	delete(e.flows, flowID)
+	e.clearNodeStatus(flowID)
+	e.ClearDebugLog(flowID)
 
 	if e.stateManager != nil {
 		if err := e.stateManager.DeleteFlow(flowID); err != nil && !errors.Is(err, ErrFlowNotFound) {
@@ -996,6 +1089,7 @@ func (e *FlowEngine) LoadAllFlows() error {
 			slog.Error("failed to deploy persisted flow", "flow", flow.ID, "err", err)
 			flow.Status = FlowStatusError
 			e.persistLocked(flow)
+			e.publishFlowStatus(flow, err.Error())
 			continue
 		}
 		deployed++

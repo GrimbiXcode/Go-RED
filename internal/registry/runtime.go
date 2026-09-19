@@ -23,6 +23,17 @@ type NodeRuntime struct {
 	events  *EventBus
 	submit  func(nodeID string, payload map[string]interface{})
 	getNode func(nodeID string) (NodeExecutor, bool)
+	debug   func(DebugOutput)
+}
+
+// DebugOutput is what a node hands to the editor's debug sidebar via
+// NodeRuntime.Debug. Payload must be JSON-serializable.
+type DebugOutput struct {
+	Payload interface{}
+	// Topic is an optional label shown with the entry (e.g. msg.topic).
+	Topic string
+	// Level is "debug" (default), "warn" or "error".
+	Level string
 }
 
 // NewNodeRuntime constructs a NodeRuntime. events, submit, and getNode may
@@ -39,6 +50,23 @@ func NewNodeRuntime(flowID, nodeID, nodeType string, flowContext, globalContext 
 		submit:        submit,
 		getNode:       getNode,
 	}
+}
+
+// SetDebugSink installs the function Debug forwards to. The engine calls
+// this when it builds the runtime; tests may install a collector.
+func (r *NodeRuntime) SetDebugSink(sink func(DebugOutput)) {
+	if r != nil {
+		r.debug = sink
+	}
+}
+
+// Debug sends an entry to the editor's debug sidebar. A no-op if there is
+// no backing engine.
+func (r *NodeRuntime) Debug(out DebugOutput) {
+	if r == nil || r.debug == nil {
+		return
+	}
+	r.debug(out)
 }
 
 // ReportStatus publishes a NodeStatusEvent on behalf of this node. Safe to
