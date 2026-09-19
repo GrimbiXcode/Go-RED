@@ -1,5 +1,18 @@
 # Go-RED Web UI Source Guidelines
 
+> **Stand nach Phase 1 (docs/NEXT_LEVEL_PLAN.md) — gilt vor allem, was unten steht:**
+> Der Anwendungszustand liegt in Zustand-Stores unter `src/store/` (`flowStore`,
+> `editorStore`, `runtimeStore`, `notificationStore`). `FlowProvider`, `useFlows` und
+> `useMessageLog` existieren nicht mehr; `Toolbar.tsx` heißt `Header.tsx`. Der Canvas nutzt
+> `@xyflow/react` 12 (nicht `reactflow`). Jede Änderung an einem Flow geht durch `flowStore`
+> und wird per debounced `PUT /api/flows/{id}` als Entwurf gespeichert; der WebSocket
+> (`src/lib/wsClient.ts`, eine Verbindung pro Tab) trägt nur Server-Events und Abfragen.
+> UI-Texte kommen aus `src/i18n/` (`t('…')`), nie als Literale in Komponenten. Tests:
+> `src/test/*.test.ts(x)` (Vitest) und `e2e/*.spec.ts` (Playwright gegen den echten Server).
+> Die Architektur ist in `docs/ARCHITECTURE.md`, Abschnitt "Frontend Architecture", beschrieben.
+> Abschnitte weiter unten, die `useFlows`, `FlowProvider`, `Toolbar` oder `reactflow`
+> beschreiben, sind veraltet.
+
 This file contains **source-specific** guidelines for the TypeScript/React code in `web/src/`.
 
 ---

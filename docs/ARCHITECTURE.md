@@ -73,3 +73,49 @@ Messages flow through the system as follows:
 - Message batching reduces overhead
 - Node caching improves performance
 - Object pooling reduces GC pressure
+
+---
+
+## Frontend Architecture (Web UI)
+
+The editor in `web/` is a React 18 + TypeScript app built with Vite. Its
+state lives in Zustand stores under `web/src/store/`; there is no React
+context for application state.
+
+| Store | Holds | Notes |
+|---|---|---|
+| `flowStore` | flow list, node types, the open flow's **working copy**, undo/redo history, autosave state | the only place that edits a flow |
+| `editorStore` | selection, open config tray, sidebar tab, dialogs | UI-only, never persisted |
+| `runtimeStore` | node status and the message log pushed by the server | server-owned, read-only for the UI |
+| `notificationStore` | toasts | raised from stores and components alike |
+
+### One write path
+
+Every edit (add/move/remove node, connect, configure, rename) mutates the
+working copy in `flowStore` and is recorded in the undo history. A debounced
+`PUT /api/flows/{id}` (600 ms after the last edit, flushed before deploy,
+on flow switch and on page unload) saves the working copy as the flow's
+**draft definition**. The running instance is only replaced on
+`POST /api/flows/{id}/deploy`, which the engine serves from a snapshot of
+the definition. Consequently:
+
+- nothing is ever lost to a reload: the draft is what the server holds;
+- the Deploy button lights up when the draft differs from what is running
+  (`updatedAt > deployedAt`, or a local edit since the last deploy);
+- the WebSocket carries no mutations. It is an event and query channel:
+  `flow:status`, `flow:list`, `flow:delete`, `node:status` are pushed after
+  every REST mutation (the REST handlers notify the hub), `message:log` and
+  `message:send` are the runtime query/action, `flow:get`/`state:sync` are
+  read-only queries. Exactly one connection per browser tab (`lib/wsClient.ts`).
+
+### Canvas
+
+`@xyflow/react` (v12) renders the working copy. Node positions are written
+back to the store once per drag; store updates that arrive mid-drag keep the
+dragged node's on-screen position and the current selection.
+
+### Routing and language
+
+`/flow/:id` is the URL of an open flow; a reload restores it (the server
+falls back to `index.html` for client routes). UI strings come from
+`web/src/i18n/` (English default, German), selectable in the main menu.

@@ -271,6 +271,19 @@ bestehen, läuft aber jetzt über `UpdateFlow` unter Lock.
 - **i18n**: `i18next` mit `en.json`/`de.json`; alle Strings raus aus den Komponenten.
 - **Routing**: `/flow/:id` als URL, Reload landet im selben Flow.
 
+**Status: umgesetzt.** Abweichung vom ursprünglichen Text: Änderungen bleiben nicht "lokal bis
+Deploy", sondern werden als **Entwurf automatisch gespeichert** (debounced `PUT` des ganzen
+Flows, geflusht vor Deploy, beim Flow-Wechsel und beim Verlassen der Seite). Das passt zum
+Engine-Modell aus Phase 0 (Definition = Entwurf, laufende Instanz = Snapshot beim Deploy) und
+verliert nichts bei einem Reload. "Dirty" heißt jetzt "Entwurf weicht vom laufenden Stand ab"
+(`updatedAt > deployedAt`, neues Feld im Wire-Format). Der WebSocket transportiert keine
+Mutationen mehr; die REST-Handler benachrichtigen den Hub, der `flow:status`/`flow:list` pusht.
+Umgesetzt außerdem: Zustand-Stores (`flowStore` mit Undo/Redo, `editorStore`, `runtimeStore`,
+`notificationStore`), `@xyflow/react` 12, i18n (EN/DE, Umschalter im Menü), `/flow/:id`,
+Ctrl+Z/Y, Vitest-Tests für Store, WebSocket-Client und Komponenten, Playwright-E2E gegen den
+echten Go-Server als CI-Job. Details in `docs/ARCHITECTURE.md`, Abschnitt "Frontend
+Architecture".
+
 ### Phase 2 — Echtzeit-Protokoll (ca. 1 Woche, Backend + Frontend)
 
 - **Engine-Events**: ein prozessweiter `EventBus`-Kanal (`registry/eventbus.go` verallgemeinern),
@@ -410,7 +423,7 @@ Weitere Punkte der Phase:
 | Phase | Inhalt | Aufwand | Hängt ab von |
 |---|---|---|---|
 | 0 | Stabilisieren, CI hart — **erledigt** | 1 Woche | – |
-| 1 | Store, ein Schreibpfad, xyflow 12, Tests, i18n | 1–2 Wochen | 0 |
+| 1 | Store, ein Schreibpfad, xyflow 12, Tests, i18n — **erledigt** | 1–2 Wochen | 0 |
 | 2 | Engine-Events, Live-Debug, Node-Status | 1 Woche | 0 |
 | 3 | Schema v2, Edit-Tray v2, Widgets, dynamische Ports | 2 Wochen | 1, 2 |
 | 4 | Visuelles Redesign, Tokens v2, Icons, Dark Mode | 2 Wochen | 1, 3 |
