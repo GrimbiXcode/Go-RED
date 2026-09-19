@@ -10,17 +10,22 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "e2e": "playwright test",
+    "e2e:full": "npm run build && playwright test"
   },
   "dependencies": {
+    "@xyflow/react": "^12.11.6",
     "dompurify": "^3.4.11",
+    "i18next": "^25.10.10",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-i18next": "^16.6.6",
     "react-router-dom": "^6.22.3",
-    "reactflow": "^11.10.0",
     "zustand": "^4.4.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@testing-library/jest-dom": "^6.4.2",
     "@testing-library/react": "^14.2.1",
     "@testing-library/user-event": "^14.5.2",

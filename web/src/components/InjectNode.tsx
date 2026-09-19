@@ -1,55 +1,40 @@
 import { useCallback, useState, type MouseEvent } from 'react';
-import { NodeProps } from 'reactflow';
-import type { FlowNode } from '../types/flow';
-import type { NodeMetadata } from '../types/node';
-import { useWebSocket } from '../hooks/useWebSocket';
+import type { NodeProps } from '@xyflow/react';
+import { useTranslation } from 'react-i18next';
 import { NodeShell } from './NodeShell';
 import { NodeHandles } from './NodeHandles';
 import { NodeIcon } from './CategoryIcon';
+import { wsClient } from '../lib/wsClient';
+import { useRuntimeStore, selectNodeStatus } from '../store/runtimeStore';
+import { notify } from '../store/notificationStore';
+import type { CanvasNode } from './canvasTypes';
 
-interface NodeData {
-  label: string;
-  node: FlowNode;
-  metadata: NodeMetadata | null;
-  flowId?: string;
-}
-
-interface InjectNodeProps extends NodeProps {
-  data: NodeData;
-}
-
-export function InjectNode({ data, selected }: InjectNodeProps) {
+export function InjectNode({ id, data, selected }: NodeProps<CanvasNode>) {
+  const { t } = useTranslation();
   const { label, node, metadata, flowId } = data;
-  const { sendMessage } = useWebSocket();
   const [isInjecting, setIsInjecting] = useState(false);
   const [lastInjectionTime, setLastInjectionTime] = useState<string | null>(null);
 
   const category = metadata?.category || 'input';
+  const status = useRuntimeStore(selectNodeStatus(flowId, id)) ?? node.status;
 
   const handleInject = useCallback(
     async (event: MouseEvent) => {
       event.stopPropagation();
-      if (isInjecting) return;
+      if (isInjecting || !flowId) return;
 
       setIsInjecting(true);
       try {
         const payload = node.config?.payload || { timestamp: new Date().toISOString(), source: 'manual-inject' };
-        const effectiveFlowId = flowId || node.id.split('-')[0] || 'default-flow';
-
-        await sendMessage('message:send', {
-          flowId: effectiveFlowId,
-          nodeId: node.id,
-          payload,
-        });
-
+        await wsClient.send('message:send', { flowId, nodeId: id, payload });
         setLastInjectionTime(new Date().toLocaleTimeString());
       } catch (error) {
-        console.error('Failed to inject message:', error);
+        notify('error', error instanceof Error ? error.message : String(error));
       } finally {
-        setTimeout(() => setIsInjecting(false), 500); // Debounce rapid clicks
+        setTimeout(() => setIsInjecting(false), 500);
       }
     },
-    [isInjecting, node.config, node.id, flowId, sendMessage]
+    [isInjecting, node.config, id, flowId]
   );
 
   return (
@@ -58,7 +43,7 @@ export function InjectNode({ data, selected }: InjectNodeProps) {
       label={label}
       icon={<NodeIcon icon={metadata?.icon} category={category} className="w-4 h-4 shrink-0" />}
       selected={selected}
-      status={node.status}
+      status={status}
       title={metadata?.description || `Inject Node: ${metadata?.name || node.type}`}
       action={
         <button
@@ -69,11 +54,12 @@ export function InjectNode({ data, selected }: InjectNodeProps) {
           }`}
           title={
             isInjecting
-              ? 'Injecting...'
+              ? t('canvas.injecting')
               : lastInjectionTime
-                ? `Last: ${lastInjectionTime} — click to inject again`
-                : 'Manually inject message'
+                ? t('canvas.lastInject', { time: lastInjectionTime })
+                : t('canvas.inject')
           }
+          aria-label={t('canvas.inject')}
         >
           {isInjecting ? '●' : '▶'}
         </button>

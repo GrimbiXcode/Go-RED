@@ -1,13 +1,12 @@
 import type { CSSProperties } from 'react';
-import { Handle, Position } from 'reactflow';
+import { Handle, Position } from '@xyflow/react';
 import type { Port } from '../types/node';
 
 /**
- * Shared port rendering for canvas nodes (Phase 3): small square
- * connectors sitting exactly on the node's left/right edge, evenly spaced
- * when a node has multiple ports on one side. Falls back to a single
- * default input/output pair only when a node type defines no ports at all
- * (matches the previous per-component fallback behavior).
+ * Shared port rendering for canvas nodes: small square connectors sitting
+ * exactly on the node's left/right edge, evenly spaced when a node has
+ * multiple ports on one side. Falls back to a single default input/output
+ * pair only when a node type defines no ports at all.
  */
 
 export interface NodeHandlesProps {

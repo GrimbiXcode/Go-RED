@@ -1,18 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useNotificationStore, type Toast, type ToastType } from '../store/notificationStore';
 
-export type ToastType = 'success' | 'error' | 'info' | 'warning';
-
-interface ToastMessage {
-  id: string;
-  type: ToastType;
-  message: string;
-  duration?: number;
-}
-
-interface ToastNotificationProps {
-  message: ToastMessage;
-  onDismiss: (id: string) => void;
-}
+export type { ToastType };
 
 const toastStyles: Record<ToastType, { border: string; icon: string }> = {
   success: { border: 'border-gr-blue-500', icon: 'text-gr-blue-500' },
@@ -67,29 +57,29 @@ function ToastIcon({ type }: { type: ToastType }) {
   }
 }
 
-function ToastNotification({ message, onDismiss }: ToastNotificationProps) {
+function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string) => void }) {
+  const { t } = useTranslation();
+
   useEffect(() => {
-    const timer = setTimeout(() => {
-      onDismiss(message.id);
-    }, message.duration || 3000);
-
+    const timer = setTimeout(() => onDismiss(toast.id), toast.duration);
     return () => clearTimeout(timer);
-  }, [message.id, message.duration, onDismiss]);
+  }, [toast.id, toast.duration, onDismiss]);
 
-  const style = toastStyles[message.type];
+  const style = toastStyles[toast.type];
 
   return (
     <div
+      role={toast.type === 'error' ? 'alert' : 'status'}
       className={`w-80 bg-white rounded shadow-lg border-l-4 ${style.border} px-3 py-2 flex items-start gap-2 animate-slide-in-right`}
     >
       <span className={`mt-0.5 ${style.icon}`}>
-        <ToastIcon type={message.type} />
+        <ToastIcon type={toast.type} />
       </span>
-      <span className="text-xs text-gray-700 flex-1">{message.message}</span>
+      <span className="text-xs text-gray-700 flex-1">{toast.message}</span>
       <button
         className="text-gray-400 hover:text-gray-600 shrink-0"
-        onClick={() => onDismiss(message.id)}
-        aria-label="Schließen"
+        onClick={() => onDismiss(toast.id)}
+        aria-label={t('common.close')}
       >
         ✕
       </button>
@@ -97,53 +87,24 @@ function ToastNotification({ message, onDismiss }: ToastNotificationProps) {
   );
 }
 
-interface ToastProviderProps {
-  children: React.ReactNode;
-}
-
-export interface ToastContextType {
-  showToast: (type: ToastType, message: string, duration?: number) => void;
-}
-
-let toastId = 0;
-
-const ToastContext = React.createContext<ToastContextType | undefined>(undefined);
-
-export function ToastProvider({ children }: ToastProviderProps) {
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
-  const showToast = useCallback((type: ToastType, message: string, duration?: number) => {
-    const id = String(++toastId);
-    setToasts((prev) => [...prev, { id, type, message, duration }]);
-  }, []);
-
-  const dismissToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id));
-  }, []);
+/** Renders the toasts held by the notification store. Mount once, near the root. */
+export function ToastHost() {
+  const toasts = useNotificationStore((state) => state.toasts);
+  const dismiss = useNotificationStore((state) => state.dismiss);
 
   return (
-    <ToastContext.Provider value={{ showToast }}>
-      {children}
-      {/* Bottom-right (above the status bar), not top-right: the header's
-          hamburger menu also opens top-right, and a toast sitting on top
-          of it would block clicks on the menu items underneath. */}
-      <div className="fixed bottom-8 right-4 z-50 flex flex-col-reverse gap-2 items-end">
-        {toasts.map((toast) => (
-          <ToastNotification
-            key={toast.id}
-            message={toast}
-            onDismiss={dismissToast}
-          />
-        ))}
-      </div>
-    </ToastContext.Provider>
+    // Bottom-right (above the status bar), not top-right: the header's
+    // menu also opens top-right and a toast there would cover it.
+    <div className="fixed bottom-8 right-4 z-50 flex flex-col-reverse gap-2 items-end">
+      {toasts.map((toast) => (
+        <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />
+      ))}
+    </div>
   );
 }
 
+/** Convenience hook: `showToast(type, message, duration?)`. */
 export function useToast() {
-  const context = React.useContext(ToastContext);
-  if (context === undefined) {
-    throw new Error('useToast must be used within a ToastProvider');
-  }
-  return context;
+  const showToast = useNotificationStore((state) => state.notify);
+  return { showToast };
 }

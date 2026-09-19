@@ -10,10 +10,16 @@ import type {
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
+export interface RequestOptions {
+  /** Let the request outlive the page (used to flush a save on unload). */
+  keepalive?: boolean;
+}
+
 async function apiRequest<T, U = undefined>(
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH',
   endpoint: string,
-  data?: U
+  data?: U,
+  requestOptions: RequestOptions = {}
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
   const options: RequestInit = {
@@ -21,6 +27,7 @@ async function apiRequest<T, U = undefined>(
     headers: {
       'Content-Type': 'application/json',
     },
+    keepalive: requestOptions.keepalive,
   };
   if (data) {
     options.body = JSON.stringify(data);
@@ -64,12 +71,14 @@ export const createFlow = async (flowData: FlowCreateRequest): Promise<Flow> => 
 
 export const updateFlow = async (
   flowId: string,
-  flowData: FlowUpdateRequest
+  flowData: FlowUpdateRequest,
+  options: RequestOptions = {}
 ): Promise<Flow> => {
   const response = await apiRequest<Flow, FlowUpdateRequest>(
     'PUT',
     `/flows/${flowId}`,
-    flowData
+    flowData,
+    options
   );
   if (!response) {
     throw new Error('Flow not found in response');
