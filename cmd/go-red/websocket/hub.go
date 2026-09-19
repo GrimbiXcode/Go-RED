@@ -13,35 +13,25 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// MessageType defines the type of WebSocket message
-// These match the WebSocketMessageType in the frontend
+// MessageType defines the type of WebSocket message. The WebSocket carries
+// server events and read-only queries; every flow mutation goes through the
+// REST API (see WebSocketHandler).
 type MessageType string
 
 const (
-	// Flow-related message types
-	MessageTypeFlowList     MessageType = "flow:list"
-	MessageTypeFlowGet      MessageType = "flow:get"
-	MessageTypeFlowCreate   MessageType = "flow:create"
-	MessageTypeFlowUpdate   MessageType = "flow:update"
-	MessageTypeFlowDelete   MessageType = "flow:delete"
-	MessageTypeFlowDeploy   MessageType = "flow:deploy"
-	MessageTypeFlowUndeploy MessageType = "flow:undeploy"
-	MessageTypeFlowStatus   MessageType = "flow:status"
+	// Flow queries (client -> server, answered on the same type) and
+	// flow events (server -> client).
+	MessageTypeFlowList   MessageType = "flow:list"   // query + broadcast after any change
+	MessageTypeFlowGet    MessageType = "flow:get"    // query
+	MessageTypeFlowDelete MessageType = "flow:delete" // event
+	MessageTypeFlowStatus MessageType = "flow:status" // event: {flowId, status, updatedAt, deployedAt}
 
-	// Node-related message types
-	MessageTypeNodeAdd    MessageType = "node:add"
-	MessageTypeNodeRemove MessageType = "node:remove"
-	MessageTypeNodeUpdate MessageType = "node:update"
-	MessageTypeNodeConfig MessageType = "node:config"
+	// Node runtime events (server -> client).
 	MessageTypeNodeStatus MessageType = "node:status"
 
-	// Connection-related message types
-	MessageTypeConnectionAdd    MessageType = "connection:add"
-	MessageTypeConnectionRemove MessageType = "connection:remove"
-
-	// Message-related message types
-	MessageTypeMessageSend MessageType = "message:send"
-	MessageTypeMessageLog  MessageType = "message:log"
+	// Runtime actions and queries.
+	MessageTypeMessageSend MessageType = "message:send" // inject at a node
+	MessageTypeMessageLog  MessageType = "message:log"  // query the message log
 
 	// System message types
 	MessageTypeError     MessageType = "error"
@@ -59,19 +49,9 @@ const (
 var AllMessageTypes = []MessageType{
 	MessageTypeFlowList,
 	MessageTypeFlowGet,
-	MessageTypeFlowCreate,
-	MessageTypeFlowUpdate,
 	MessageTypeFlowDelete,
-	MessageTypeFlowDeploy,
-	MessageTypeFlowUndeploy,
 	MessageTypeFlowStatus,
-	MessageTypeNodeAdd,
-	MessageTypeNodeRemove,
-	MessageTypeNodeUpdate,
-	MessageTypeNodeConfig,
 	MessageTypeNodeStatus,
-	MessageTypeConnectionAdd,
-	MessageTypeConnectionRemove,
 	MessageTypeMessageSend,
 	MessageTypeMessageLog,
 	MessageTypeError,

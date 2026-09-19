@@ -2,7 +2,7 @@
 // cmd/go-red/websocket. DO NOT EDIT — run `go generate ./internal/dto/...`
 // (or `make generate-types`) to regenerate after changing those packages.
 
-export type MessageType = 'flow:list' | 'flow:get' | 'flow:create' | 'flow:update' | 'flow:delete' | 'flow:deploy' | 'flow:undeploy' | 'flow:status' | 'node:add' | 'node:remove' | 'node:update' | 'node:config' | 'node:status' | 'connection:add' | 'connection:remove' | 'message:send' | 'message:log' | 'error' | 'info' | 'ping' | 'pong' | 'state:sync' | '*';
+export type MessageType = 'flow:list' | 'flow:get' | 'flow:delete' | 'flow:status' | 'node:status' | 'message:send' | 'message:log' | 'error' | 'info' | 'ping' | 'pong' | 'state:sync' | '*';
 
 export type FlowStatus = 'draft' | 'running' | 'error' | 'deploying' | 'undeploying';
 
@@ -61,6 +61,7 @@ export interface Flow {
   config: FlowConfig;
   createdAt: string;
   updatedAt: string;
+  deployedAt?: string;
   version: string;
 }
 
@@ -72,6 +73,7 @@ export interface FlowSummary {
   nodeCount: number;
   createdAt: string;
   updatedAt: string;
+  deployedAt?: string;
 }
 
 export interface FlowCreateRequest {
@@ -100,6 +102,8 @@ export interface Message {
 export interface DeployResponse {
   flowId: string;
   status: FlowStatus;
+  updatedAt?: string;
+  deployedAt?: string;
   message?: string;
 }
 

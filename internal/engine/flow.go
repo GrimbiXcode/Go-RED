@@ -120,8 +120,13 @@ type Flow struct {
 	// CreatedAt is when the flow was created.
 	CreatedAt time.Time `json:"createdAt"`
 
-	// UpdatedAt is when the flow was last updated.
+	// UpdatedAt is when the flow definition was last edited.
 	UpdatedAt time.Time `json:"updatedAt"`
+
+	// DeployedAt is when the flow was last deployed successfully (zero if
+	// never). UpdatedAt after DeployedAt means the definition has changes
+	// that are not running yet.
+	DeployedAt time.Time `json:"deployedAt,omitzero"`
 
 	// Version is the version of the flow schema.
 	Version string `json:"version"`
@@ -296,6 +301,7 @@ func (f *Flow) Clone() *Flow {
 		Status:      f.Status,
 		CreatedAt:   f.CreatedAt,
 		UpdatedAt:   f.UpdatedAt,
+		DeployedAt:  f.DeployedAt,
 		Version:     f.Version,
 	}
 

@@ -571,7 +571,9 @@ func (e *FlowEngine) deployLocked(def *Flow) error {
 
 	e.active[def.ID] = activeFlow
 	def.Status = FlowStatusActive
+	def.DeployedAt = time.Now().UTC()
 	snapshot.Status = FlowStatusActive
+	snapshot.DeployedAt = def.DeployedAt
 	e.persistLocked(def)
 
 	slog.Info("flow deployed", "flow", def.ID, "nodes", len(activeFlow.nodeExecutors), "connections", len(snapshot.Connections))

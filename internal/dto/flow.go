@@ -90,6 +90,7 @@ type Flow struct {
 	Config      FlowConfig      `json:"config"`
 	CreatedAt   string          `json:"createdAt"`
 	UpdatedAt   string          `json:"updatedAt"`
+	DeployedAt  string          `json:"deployedAt,omitempty"`
 	Version     string          `json:"version"`
 }
 
@@ -103,6 +104,7 @@ type FlowSummary struct {
 	NodeCount   int        `json:"nodeCount"`
 	CreatedAt   string     `json:"createdAt"`
 	UpdatedAt   string     `json:"updatedAt"`
+	DeployedAt  string     `json:"deployedAt,omitempty"`
 }
 
 // FlowCreateRequest is the request body for POST /api/flows and the
@@ -127,9 +129,11 @@ type FlowUpdateRequest struct {
 // DeployResponse is the response body of POST /api/flows/{id}/deploy and
 // POST /api/flows/{id}/undeploy: the flow's status after the operation.
 type DeployResponse struct {
-	FlowID  string     `json:"flowId"`
-	Status  FlowStatus `json:"status"`
-	Message string     `json:"message,omitempty"`
+	FlowID     string     `json:"flowId"`
+	Status     FlowStatus `json:"status"`
+	UpdatedAt  string     `json:"updatedAt,omitempty"`
+	DeployedAt string     `json:"deployedAt,omitempty"`
+	Message    string     `json:"message,omitempty"`
 }
 
 // ErrorResponse is the JSON body every REST error carries.

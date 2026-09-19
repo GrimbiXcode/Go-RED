@@ -108,10 +108,19 @@ func ToWire(f *engine.Flow) Flow {
 			},
 			Environment: f.Config.Environment,
 		},
-		CreatedAt: f.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: f.UpdatedAt.Format(time.RFC3339),
-		Version:   f.Version,
+		CreatedAt:  f.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:  f.UpdatedAt.Format(time.RFC3339),
+		DeployedAt: formatOptionalTime(f.DeployedAt),
+		Version:    f.Version,
 	}
+}
+
+// formatOptionalTime renders a zero time as "" (omitted on the wire).
+func formatOptionalTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }
 
 // ToWireSummary converts an engine Flow to its canonical wire summary
@@ -127,18 +136,16 @@ func ToWireSummary(f *engine.Flow) FlowSummary {
 		NodeCount:   len(f.Nodes),
 		CreatedAt:   f.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   f.UpdatedAt.Format(time.RFC3339),
+		DeployedAt:  formatOptionalTime(f.DeployedAt),
 	}
 }
 
 // ApplyTo applies the request's fields onto an existing engine Flow.
-// Only fields present in the request are applied: nodes are merged
-// (existing nodes not mentioned in the request are left untouched;
-// mentioned nodes are created or updated), connections fully replace the
-// flow's connection list when provided, and config fields are merged into
-// the existing FlowConfig. This mirrors the merge semantics main.go's
-// handleUpdateFlow implemented by hand; it replaces that hand-parsing plus
-// websocket/integration.go's handleFlowUpdate (which previously, and
-// inconsistently, cleared all nodes on every update).
+// Only fields present in the request are applied. Nodes and connections are
+// documents: when present they replace the flow's node map / connection
+// list completely (a node missing from the request is deleted), which is
+// what a PUT of the editor's working copy means. Config fields are merged
+// into the existing FlowConfig.
 func (req *FlowUpdateRequest) ApplyTo(f *engine.Flow) {
 	if req.Name != nil && *req.Name != "" {
 		f.Name = *req.Name
@@ -147,17 +154,11 @@ func (req *FlowUpdateRequest) ApplyTo(f *engine.Flow) {
 		f.Description = *req.Description
 	}
 	if req.Nodes != nil {
+		nodes := make(map[string]*engine.Node, len(req.Nodes))
 		for id, n := range req.Nodes {
-			if existing, ok := f.Nodes[id]; ok {
-				existing.Type = n.Type
-				existing.Config = n.Config
-				existing.X = n.Position.X
-				existing.Y = n.Position.Y
-				existing.Disabled = n.Disabled
-			} else {
-				f.Nodes[id] = NodeFromWire(id, n)
-			}
+			nodes[id] = NodeFromWire(id, n)
 		}
+		f.Nodes = nodes
 	}
 	if req.Connections != nil {
 		conns := make([]engine.NodeConnection, len(req.Connections))

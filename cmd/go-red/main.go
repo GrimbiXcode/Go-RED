@@ -190,11 +190,24 @@ func setupLogging(level string) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})))
 }
 
+// Notifier is how the REST handlers tell connected WebSocket clients about
+// flow changes. The REST API is the only write path; the WebSocket only
+// carries the resulting events.
+type Notifier interface {
+	FlowChanged(flowID string)
+	FlowDeleted(flowID string)
+}
+
+type noopNotifier struct{}
+
+func (noopNotifier) FlowChanged(string) {}
+func (noopNotifier) FlowDeleted(string) {}
+
 // server bundles the dependencies the REST handlers need.
 type server struct {
 	engine    *engine.FlowEngine
 	registry  *registry.NodeRegistry
-	ws        *websocket.WebSocketHandler
+	notify    Notifier
 	webDir    string
 	startedAt time.Time
 }
@@ -202,7 +215,11 @@ type server struct {
 // newRouter wires every REST route, the WebSocket endpoint (when ws is not
 // nil) and the static WebUI with SPA fallback into one handler.
 func newRouter(e *engine.FlowEngine, reg *registry.NodeRegistry, ws *websocket.WebSocketHandler, webDir string) http.Handler {
-	s := &server{engine: e, registry: reg, ws: ws, webDir: webDir, startedAt: time.Now()}
+	var notify Notifier = noopNotifier{}
+	if ws != nil {
+		notify = ws
+	}
+	s := &server{engine: e, registry: reg, notify: notify, webDir: webDir, startedAt: time.Now()}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -369,6 +386,7 @@ func (s *server) handleCreateFlow(w http.ResponseWriter, r *http.Request) {
 		writeEngineError(w, err)
 		return
 	}
+	s.notify.FlowChanged(flow.ID)
 	writeJSON(w, http.StatusCreated, dto.ToWire(flow))
 }
 
@@ -409,6 +427,7 @@ func (s *server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 		writeEngineError(w, err)
 		return
 	}
+	s.notify.FlowChanged(flow.ID)
 	writeJSON(w, http.StatusOK, dto.ToWire(flow))
 }
 
@@ -418,16 +437,20 @@ func (s *server) handleDeleteFlow(w http.ResponseWriter, r *http.Request) {
 		writeEngineError(w, err)
 		return
 	}
+	s.notify.FlowDeleted(flowID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "deleted", "flowId": flowID})
 }
 
 func (s *server) handleDeployFlow(w http.ResponseWriter, r *http.Request) {
 	flowID := r.PathValue("id")
 	if err := s.engine.DeployFlow(flowID); err != nil {
+		// A failed deploy still changes the flow (status error) - tell clients.
+		s.notify.FlowChanged(flowID)
 		writeEngineError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, dto.DeployResponse{FlowID: flowID, Status: dto.FlowStatusRunning})
+	s.notify.FlowChanged(flowID)
+	writeJSON(w, http.StatusOK, s.deployResponse(flowID, dto.FlowStatusRunning))
 }
 
 func (s *server) handleUndeployFlow(w http.ResponseWriter, r *http.Request) {
@@ -436,7 +459,20 @@ func (s *server) handleUndeployFlow(w http.ResponseWriter, r *http.Request) {
 		writeEngineError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, dto.DeployResponse{FlowID: flowID, Status: dto.FlowStatusDraft})
+	s.notify.FlowChanged(flowID)
+	writeJSON(w, http.StatusOK, s.deployResponse(flowID, dto.FlowStatusDraft))
+}
+
+// deployResponse builds the response of deploy/undeploy from the flow's
+// current timestamps.
+func (s *server) deployResponse(flowID string, status dto.FlowStatus) dto.DeployResponse {
+	resp := dto.DeployResponse{FlowID: flowID, Status: status}
+	if flow, err := s.engine.GetFlow(flowID); err == nil {
+		summary := dto.ToWireSummary(flow)
+		resp.UpdatedAt = summary.UpdatedAt
+		resp.DeployedAt = summary.DeployedAt
+	}
+	return resp
 }
 
 func (s *server) handleGetNodes(w http.ResponseWriter, r *http.Request) {
@@ -514,6 +550,7 @@ func (s *server) handleImportFlow(w http.ResponseWriter, r *http.Request) {
 		writeEngineError(w, err)
 		return
 	}
+	s.notify.FlowChanged(flow.ID)
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"status":     "imported",
