@@ -214,7 +214,10 @@ or, for a node with many fields, decode the whole map into a struct with
 way the built-in nodes do; `base.ParseValue`/`base.ValueToConfig` and
 `base.ParsePropertyRef`/`base.PropertyRefToConfig` round-trip typed inputs;
 `base.Context(ctx)` turns the `interface{}` the engine passes into a
-`context.Context`.
+`context.Context`, `base.Runtime(ctx)` returns the `NodeRuntime` the engine
+attached (status, errors, debug, flow/global context) and
+`base.Resolvers(ctx, msg)` builds the typed-value resolvers over the
+message and both contexts.
 
 ## Context cancellation
 
