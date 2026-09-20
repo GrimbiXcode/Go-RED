@@ -1,18 +1,11 @@
 /*
- * Go palette overrides for ReactFlow's own stylesheet (Phase 3 of
- * docs/FRONTEND_NODE_RED_REDESIGN.md — canvas wires/controls). Imported in
- * FlowCanvas.tsx right after 'reactflow/dist/style.css' so these rules load
- * after (and win the cascade over) ReactFlow's defaults regardless of the
- * app's overall CSS bundling order.
+ * Go-RED overrides for @xyflow/react's stylesheet: wires, controls, minimap
+ * and selection on the design tokens (src/styles/tailwind.css). Imported in
+ * FlowCanvas.tsx right after the library stylesheet so these rules win.
  */
 
-/* Node types that fall through to RF's built-in "default"/"input"/"output"
-   node classes (any node.type not explicitly registered in
-   FlowCanvas's nodeTypeComponents) still pick up ReactFlow's own default
-   node chrome (white background + dark border) even though our custom
-   NodeComponent/InjectNode/DebugNode render their own complete visual —
-   without this, that leftover chrome shows as a stray frame around the
-   (now transparent) node wrapper. */
+/* Node types that fall through to the library's built-in node classes
+   keep no chrome: NodeShell draws the complete node. */
 .react-flow__node-default,
 .react-flow__node-input,
 .react-flow__node-output {
@@ -22,36 +15,89 @@
   border-radius: 0;
   text-align: left;
   width: auto;
+  box-shadow: none;
+}
+.react-flow__node-default.selected,
+.react-flow__node-input.selected,
+.react-flow__node-output.selected {
+  box-shadow: none;
 }
 
 .react-flow__edge-path {
-  stroke: #9ca3af; /* gray-400: neutral wire, not brand-colored by default */
-  stroke-width: 1.5;
+  stroke: var(--wire);
+  stroke-width: 2;
+  transition: stroke 120ms ease;
+}
+
+.react-flow__edge-interaction {
+  stroke-width: 14;
 }
 
 .react-flow__edge:hover .react-flow__edge-path,
 .react-flow__edge.selected .react-flow__edge-path {
-  stroke: var(--gr-blue-500);
-  stroke-width: 2;
+  stroke: var(--wire-hover);
+  stroke-width: 2.5;
+}
+
+/* A message just left the source node (flow:metrics): a short dash runs along the wire. */
+.react-flow__edge.gr-pulse .react-flow__edge-path {
+  stroke: var(--accent);
+  stroke-dasharray: 6 10;
+  animation: gr-edge-pulse 0.6s linear;
+}
+
+@keyframes gr-edge-pulse {
+  from {
+    stroke-dashoffset: 48;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 
 .react-flow__connection-path {
-  stroke: var(--gr-blue-500);
+  stroke: var(--accent);
   stroke-width: 2;
 }
 
+.react-flow__handle {
+  transition: transform 100ms ease;
+}
+.react-flow__handle:hover,
+.react-flow__handle.connecting,
+.react-flow__handle.valid {
+  transform: translateY(-50%) scale(1.3);
+}
+
+.react-flow__selection,
+.react-flow__nodesselection-rect {
+  background: var(--selection);
+  border: 1px solid var(--accent);
+}
+
 .react-flow__controls {
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 1px 4px var(--shadow);
+  border-radius: 6px;
+  overflow: hidden;
 }
-
 .react-flow__controls-button {
-  border-bottom-color: #e5e7eb;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-muted);
 }
-
 .react-flow__controls-button:hover {
-  background: var(--gr-blue-50);
+  background: var(--bg-surface);
+}
+.react-flow__controls-button svg {
+  fill: var(--fg-muted);
 }
 
-.react-flow__controls-button svg {
-  fill: var(--gr-blue-700);
+.react-flow__minimap {
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 1px 4px var(--shadow);
+}
+.react-flow__minimap-mask {
+  fill: var(--selection);
 }

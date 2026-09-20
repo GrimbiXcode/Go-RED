@@ -18,6 +18,7 @@ export function NodeComponent({ id, data, selected }: NodeProps<CanvasNode>) {
       selected={selected}
       status={status}
       color={metadata?.color}
+      disabled={node.disabled}
       title={metadata?.description || `Node: ${metadata?.name || node.type}`}
     >
       <NodeHandles inputPorts={metadata?.inputs || []} outputPorts={outputs} />

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
   Controls,
+  MiniMap,
   useNodesState,
   useEdgesState,
   useReactFlow,
@@ -25,6 +26,8 @@ import { InjectNode } from './InjectNode';
 import { DebugNode } from './DebugNode';
 import type { CanvasNode } from './canvasTypes';
 import { outputPortsFor } from '../schema/ports';
+import { useRuntimeStore } from '../store/runtimeStore';
+import { getCategoryColor } from '../utils/nodeCategories';
 
 const nodeTypeComponents: NodeTypes = {
   default: NodeComponent,
@@ -111,7 +114,45 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
     return Object.values(flow.nodes || {}).map((node) => flowNodeToCanvasNode(node, nodeRegistry, flow.id));
   }, [flow, nodeRegistry]);
 
-  const flowEdges = useMemo(() => (flow ? (flow.connections || []).map(connectionToEdge) : []), [flow]);
+  // Wires pulse briefly when flow:metrics reports that their source node
+  // handled new messages.
+  const metrics = useRuntimeStore((state) => (flow ? state.metrics[flow.id] : undefined));
+  const lastCounts = useRef<Record<string, number>>({});
+  const [pulsing, setPulsing] = useState<Record<string, number>>({});
+  useEffect(() => {
+    lastCounts.current = {};
+    setPulsing({});
+  }, [flow?.id]);
+  useEffect(() => {
+    if (!metrics) return;
+    const changed: string[] = [];
+    for (const [nodeId, counters] of Object.entries(metrics)) {
+      const previous = lastCounts.current[nodeId];
+      if (previous !== undefined && counters.messages > previous) changed.push(nodeId);
+      lastCounts.current[nodeId] = counters.messages;
+    }
+    if (changed.length === 0) return;
+    const stamp = Date.now();
+    setPulsing((prev) => {
+      const next = { ...prev };
+      for (const id of changed) next[id] = stamp;
+      return next;
+    });
+    setTimeout(() => {
+      setPulsing((prev) => Object.fromEntries(Object.entries(prev).filter(([, at]) => at > stamp)));
+    }, 700);
+  }, [metrics]);
+
+  const flowEdges = useMemo(
+    () =>
+      flow
+        ? (flow.connections || []).map((connection) => ({
+            ...connectionToEdge(connection),
+            className: pulsing[connection.sourceNode] ? 'gr-pulse' : undefined,
+          }))
+        : [],
+    [flow, pulsing]
+  );
 
   useEffect(() => {
     setNodes((current) => mergeCanvasNodes(current, flowNodes));
@@ -187,14 +228,23 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
 
   if (!flow) {
     return (
-      <div className="flex h-full w-full items-center justify-center bg-gray-100">
-        <div className="text-gray-500">{t('canvas.selectFlow')}</div>
+      <div className="flex h-full w-full items-center justify-center bg-canvas">
+        <div className="text-muted">{t('canvas.selectFlow')}</div>
       </div>
     );
   }
 
+  const isEmpty = Object.keys(flow.nodes || {}).length === 0;
+
   return (
-    <div className="h-full w-full" ref={wrapper} onDrop={onDrop} onDragOver={onDragOver} data-testid="flow-canvas">
+    <div className="relative h-full w-full bg-canvas" ref={wrapper} onDrop={onDrop} onDragOver={onDragOver} data-testid="flow-canvas">
+      {isEmpty && (
+        <div className="pointer-events-none absolute inset-0 z-[4] flex items-center justify-center" data-testid="canvas-empty">
+          <div className="rounded-lg border border-dashed border-line-strong bg-panel/70 px-6 py-4 text-center text-sm text-muted backdrop-blur-sm">
+            {t('canvas.emptyHint')}
+          </div>
+        </div>
+      )}
       <ReactFlow<CanvasNode, Edge>
         nodes={nodes}
         edges={edges}
@@ -214,8 +264,19 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
         defaultEdgeOptions={{ animated: false }}
         proOptions={{ hideAttribution: true }}
       >
-        <Background color="var(--gr-blue-200)" gap={20} size={1.5} />
-        <Controls position="bottom-left" />
+        <Background color="var(--grid-dot)" gap={20} size={1.5} />
+        <Controls position="bottom-left" showInteractive={false} />
+        <MiniMap
+          position="bottom-right"
+          pannable
+          zoomable
+          nodeColor={(node) => {
+            const data = node.data as CanvasNode['data'] | undefined;
+            return data?.metadata?.color || getCategoryColor(data?.metadata?.category || 'custom').fill;
+          }}
+          nodeStrokeWidth={0}
+          maskColor="var(--selection)"
+        />
       </ReactFlow>
     </div>
   );
