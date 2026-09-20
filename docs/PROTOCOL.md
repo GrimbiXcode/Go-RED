@@ -153,6 +153,11 @@ string → text), so older schemas keep working.
 | `nodeTypes`, `multiple` | `nodeSelect` offers nodes of these types from the same flow; with `multiple` the value is an array of IDs |
 | `visibleWhen` | `{property, values}`: shown only while the other property's value, as a string, is one of `values` |
 
+`icon` is the kebab-case name of a Lucide icon (`"timer"`); the editor
+renders it from its own curated set and shows the category icon for
+unknown names. Inline `<svg>` markup is accepted for third-party nodes and
+sanitized.
+
 Metadata-level fields: `outputsFrom {property, label?, min?}` makes the
 number of output ports follow an array property (one port per Switch
 rule; port IDs are the element indexes, `label` is a template such as

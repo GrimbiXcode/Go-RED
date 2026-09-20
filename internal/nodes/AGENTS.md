@@ -542,16 +542,19 @@ wire type via `internal/dto`/`cmd/gentypes`.
 
 ### Icon Naming
 
-Use consistent icon names from a common icon set (e.g., Font Awesome, Material Icons):
+`NodeMetadata.Icon` is the **name of a Lucide icon** in kebab-case
+(`"timer"`, `"radio-tower"`, `"file-input"`); the frontend renders it from
+the curated set in `web/src/components/icons.ts` and falls back to the
+category icon for unknown names. Pick a name that is already in that set,
+or add it there in the same change. Inline `<svg>` markup is still
+accepted for third-party nodes but built-in nodes never ship it.
 
-- `arrow-right` - input nodes
-- `arrow-left` - output nodes
-- `code` - function nodes
-- `project-diagram` - logic nodes
-- `server` - network nodes
-- `database` - storage nodes
-- `clock` - timing nodes
-- `exclamation-triangle` - error handling
+Conventions: `circle-play` inject, `bug` debug, `code` function, `route`
+switch, `replace` change, `timer`/`alarm-clock` timing, `terminal` exec,
+`globe`/`cloud-download`/`reply` HTTP, `radio-tower`/`radio`/`server` MQTT,
+`cable`/`satellite-dish`/`plug` TCP/UDP/WebSocket, `save`/`file-input`/`eye`
+files, `table`/`braces`/`code-xml`/`list-tree` parsers, `lock`/`shield`
+security config.
 
 ---
 

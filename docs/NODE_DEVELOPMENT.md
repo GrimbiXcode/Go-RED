@@ -121,6 +121,7 @@ func init() {
             Required: []string{"url"},
         },
         Help: "**Sends requests** to a URL. Supports a batch mode.",
+        Icon: "globe", // a Lucide icon name, see internal/nodes/AGENTS.md
     })
 }
 ```

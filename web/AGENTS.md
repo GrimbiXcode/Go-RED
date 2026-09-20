@@ -14,6 +14,10 @@
 > Seit Phase 3 wird der Edit-Tray (`NodeEditTray.tsx`, Widgets in `components/config/`) aus dem
 > `configSchema` des Node-Typs erzeugt; `src/schema/` löst Widgets, Reihenfolge, Sichtbarkeit,
 > Validierung und dynamische Ports auf. Es gibt kein `NodeConfigModal` mehr.
+> Seit Phase 4 sind alle Farben Design-Tokens (`src/styles/tailwind.css`, Light/Dark) mit
+> semantischen Utilities (`bg-panel`, `text-muted`, `border-line`, `bg-accent`, `bg-cat-*`); keine
+> rohen `gray-*`-Klassen mehr. Theme in `src/lib/theme.ts`, Icons per Name aus `components/icons.ts`
+> (Lucide), Node-Optik in `NodeShell.tsx` + `.gr-node*`, Styleguide unter `/styleguide`.
 > UI-Texte kommen aus `src/i18n/` (`t('…')`), nie als Literale in Komponenten. Tests:
 > `src/test/*.test.ts(x)` (Vitest) und `e2e/*.spec.ts` (Playwright gegen den echten Server).
 > Die Architektur ist in `docs/ARCHITECTURE.md`, Abschnitt "Frontend Architecture", beschrieben.

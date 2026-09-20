@@ -151,6 +151,24 @@ ports that no longer exist in the same undo step. Node `description`
 (Markdown) and the type's `help` are shown in the Info sidebar; disabled
 nodes are kept in the flow but skipped by the engine.
 
+### Look and theme
+
+All colors are design tokens (`web/src/styles/tailwind.css`): CSS custom
+properties with a light and a dark value each, mapped to Tailwind utilities
+(`bg-panel`, `text-muted`, `border-line`, `bg-accent`, `bg-cat-input`, ...).
+Components never use raw grays, so the theme switch (`lib/theme.ts`: system
+preference by default, user choice in the main menu, persisted) needs no
+per-component work; `index.html` applies the stored theme before the first
+paint. `src/test/tokens.test.ts` parses the stylesheet and fails when a
+text/background pair drops below 4.5:1 or a category fill would not carry
+white text. Node types name a Lucide icon (`NodeMetadata.icon: "timer"`);
+`components/icons.ts` holds the curated set and the per-category fallback.
+Nodes are 36 px cards with an icon well, round ports in the node color,
+accent outline on selection and stripes when disabled (`.gr-node*` rules);
+wires pulse briefly when `flow:metrics` reports traffic on their source.
+`/styleguide` renders tokens, categories, node states, widgets and debug
+entries in both themes from the real components.
+
 ### Routing and language
 
 `/flow/:id` is the URL of an open flow; a reload restores it (the server

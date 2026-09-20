@@ -415,6 +415,29 @@ Weitere Punkte der Phase:
 - **Style-Guide-Seite** ausbauen zum Living-Styleguide (Tokens, Nodes aller Kategorien, Widgets,
   Debug-Einträge, Light/Dark nebeneinander).
 
+**Status: umgesetzt.** Tokens v2 als CSS-Variablen in Light und Dark (`web/src/styles/tailwind.css`),
+über `tailwind.config.js` als semantische Utilities (`bg-panel`, `text-muted`, `border-line`,
+`bg-accent`, `bg-cat-*`); alle Komponenten sind darauf migriert, es gibt keine rohen Grautöne mehr.
+Dark Mode folgt `prefers-color-scheme`, ist im Hauptmenü umschaltbar, wird gespeichert und vor dem
+ersten Paint gesetzt. Die Kategorie-Palette wurde gegen den Kontrast-Validator justiert (`input`
+auf `#0c7f9c`, `flow-control` auf `#9d681b`, alle Flächen ≥ 4,5:1 mit weißem Text); ein Test
+parst das Stylesheet und prüft jedes Text/Hintergrund-Paar beider Themes. Schrift: Inter Variable +
+JetBrains Mono, selbst gehostet, Skala 11/12/13/14/16/20. Icons: das Backend liefert nur noch
+Lucide-Namen (alle 47 Nodes migriert), das Frontend rendert aus einer kuratierten Map mit
+Kategorie-Fallback; SVG-Markup von Fremd-Nodes wird weiterhin sanitisiert. Nodes: 36 px, Radius 6,
+Icon-Well, 13-px-Label, Statuszeile, runde Ports in Node-Farbe, Akzent-Outline + Schatten bei
+Selektion, Aufhellung bei Hover, Streifen bei `disabled`; der Kommentar-Node ist ein gelber
+Notizzettel mit dunklem Text. Kanten 2 px mit breiter Hover-Zone, Akzent bei Hover/Selektion und
+kurzem Puls, wenn `flow:metrics` Verkehr am Quell-Node meldet. Header dunkel mit Wortmarke und
+Mark, Verbindungspunkt, Deploy als Split-Button („dieser Flow" / „alle geänderten Flows"), Theme im
+Menü. Palette: Farbchip pro Kategorie, alle offen, Zustand persistiert, `/` fokussiert die Suche,
+Zeilen als Mini-Nodes. Info-Tab: Typ-Chip, Einstellungen als Tabelle. Debug-Tab: Zeit · Node ·
+Typ, klappbarer JSON-Baum, Node-Filter, Pause, Leeren. Leerzustände für „kein Flow" und „leerer
+Canvas". `/styleguide` ist ein lebender Styleguide aus den echten Komponenten, Light und Dark
+nebeneinander. Abweichungen: die untere Statusleiste bleibt (Speicherstatus, Zähler); Gopher-Mark
+ist ein neutrales Flow-Zeichen statt einer Gopher-Figur; kein Kanten-Hover-Puls pro Nachricht,
+sondern pro Metrik-Intervall (1 s), da die Engine keine Einzelnachrichten pusht.
+
 ### Phase 5 — Editor-Ergonomie (1–2 Wochen)
 
 - Undo/Redo (Store-Historie), Copy/Paste/Duplicate (auch zwischen Flows), Multi-Select mit
@@ -463,7 +486,7 @@ Weitere Punkte der Phase:
 | 1 | Store, ein Schreibpfad, xyflow 12, Tests, i18n — **erledigt** | 1–2 Wochen | 0 |
 | 2 | Engine-Events, Live-Debug, Node-Status — **erledigt** | 1 Woche | 0 |
 | 3 | Schema v2, Edit-Tray v2, Widgets, dynamische Ports — **erledigt** | 2 Wochen | 1, 2 |
-| 4 | Visuelles Redesign, Tokens v2, Icons, Dark Mode | 2 Wochen | 1, 3 |
+| 4 | Visuelles Redesign, Tokens v2, Icons, Dark Mode — **erledigt** | 2 Wochen | 1, 3 |
 | 5 | Editor-Ergonomie, Node-RED-Import | 1–2 Wochen | 1, 4 |
 | 6 | Backend-Reife | 2 Wochen | 0 (parallel) |
 | 7 | Auslieferung, Doku | 1 Woche | alle |
