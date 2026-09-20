@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/GrimbiXcode/Go-RED/internal/engine"
 	"github.com/stretchr/testify/assert"
@@ -319,6 +320,94 @@ func TestFileStateManagerFlowPath(t *testing.T) {
 		// Verify the file exists at the expected path
 		expectedPath := filepath.Join(tmpDir, "flows", "path-test.json")
 		_, err = os.Stat(expectedPath)
+		assert.NoError(t, err)
+	})
+}
+
+func TestFileStateManagerQuarantine(t *testing.T) {
+	newManager := func(t *testing.T) *FileStateManager {
+		t.Helper()
+		manager, err := NewFileStateManager(t.TempDir())
+		require.NoError(t, err)
+		manager.now = func() time.Time { return time.Date(2026, 9, 20, 10, 15, 0, 0, time.UTC) }
+		return manager
+	}
+
+	t.Run("LoadAllFlows should move unparseable files to quarantine and keep the rest", func(t *testing.T) {
+		manager := newManager(t)
+		require.NoError(t, manager.SaveFlow(engine.NewFlow("good", "Good")))
+		badContent := `{"id": "bad", "name": "Broken`
+		badPath := writeRawFlowFile(t, manager.basePath, "bad", badContent)
+		arrayPath := writeRawFlowFile(t, manager.basePath, "array", `[1, 2, 3]`)
+		nullPath := writeRawFlowFile(t, manager.basePath, "null", `null`)
+
+		flows, err := manager.LoadAllFlows()
+		require.NoError(t, err)
+		require.Len(t, flows, 1)
+		assert.Equal(t, "good", flows[0].ID)
+
+		for _, path := range []string{badPath, arrayPath, nullPath} {
+			_, err := os.Stat(path)
+			assert.True(t, os.IsNotExist(err), "%s should have been moved", path)
+		}
+
+		quarantineDir := filepath.Join(manager.basePath, "quarantine")
+		quarantined, err := os.ReadFile(filepath.Join(quarantineDir, "bad.20260920T101500Z.json"))
+		require.NoError(t, err)
+		assert.Equal(t, badContent, string(quarantined), "the file is moved verbatim, not rewritten")
+		_, err = os.Stat(filepath.Join(quarantineDir, "array.20260920T101500Z.json"))
+		assert.NoError(t, err)
+		_, err = os.Stat(filepath.Join(quarantineDir, "null.20260920T101500Z.json"))
+		assert.NoError(t, err)
+
+		// A second load no longer sees the bad files at all.
+		flows, err = manager.LoadAllFlows()
+		require.NoError(t, err)
+		assert.Len(t, flows, 1)
+		entries, err := os.ReadDir(quarantineDir)
+		require.NoError(t, err)
+		assert.Len(t, entries, 3)
+	})
+
+	t.Run("LoadFlow should report a corrupt file and leave it in place", func(t *testing.T) {
+		manager := newManager(t)
+		path := writeRawFlowFile(t, manager.basePath, "bad", `{not json`)
+
+		_, err := manager.LoadFlow("bad")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrCorruptFlowFile)
+
+		_, err = os.Stat(path)
+		assert.NoError(t, err, "LoadFlow must not move the file")
+		_, err = os.Stat(filepath.Join(manager.basePath, "quarantine"))
+		assert.True(t, os.IsNotExist(err), "LoadFlow must not create the quarantine directory")
+	})
+
+	t.Run("LoadAllFlows should skip but not quarantine an object that does not fit the flow shape", func(t *testing.T) {
+		manager := newManager(t)
+		path := writeRawFlowFile(t, manager.basePath, "shape", `{"id": "shape", "nodes": 5}`)
+
+		_, err := manager.LoadFlow("shape")
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrCorruptFlowFile)
+
+		flows, err := manager.LoadAllFlows()
+		require.NoError(t, err)
+		assert.Empty(t, flows)
+		_, err = os.Stat(path)
+		assert.NoError(t, err, "a syntactically valid object is not corrupt and stays put")
+		_, err = os.Stat(filepath.Join(manager.basePath, "quarantine"))
+		assert.True(t, os.IsNotExist(err))
+	})
+
+	t.Run("LoadAllFlows should treat trailing garbage as corrupt", func(t *testing.T) {
+		manager := newManager(t)
+		writeRawFlowFile(t, manager.basePath, "trailing", `{"id": "trailing"} extra`)
+
+		flows, err := manager.LoadAllFlows()
+		require.NoError(t, err)
+		assert.Empty(t, flows)
+		_, err = os.Stat(filepath.Join(manager.basePath, "quarantine", "trailing.20260920T101500Z.json"))
 		assert.NoError(t, err)
 	})
 }

@@ -6,6 +6,13 @@ This file contains **state-specific** guidelines for flow persistence in the `in
 
 ## Package Overview
 
+> **Stand nach Phase 6:** eine Datei pro Flow unter `flows/<id>.json` mit `schemaVersion`
+> (aktuell 2; `migrate.go` führt ältere Dateien beim Laden durch die Migrationskette, v1→v2 setzt
+> den nie erzwungenen Platzhalter `maxConcurrency: 100` auf 0), atomares Schreiben, Backups in
+> `backups/<id>.<stamp>.json` (`Options{BackupKeep, BackupMinInterval}`, Standard 5 / 10 min),
+> nicht parsbare Dateien wandern beim Start nach `quarantine/`. `NewFileStateManagerWithOptions`
+> ist der Konstruktor mit Optionen, `Backups(flowID)` listet die Sicherungen.
+
 The `state/` package provides **persistence abstraction** for Go-RED flows. It enables:
 
 1. **Flow Storage**: Save, load, and delete flows
