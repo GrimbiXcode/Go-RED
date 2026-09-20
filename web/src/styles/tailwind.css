@@ -1,62 +1,167 @@
+@import '@fontsource-variable/inter';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /*
- * Go-RED design tokens (see docs/FRONTEND_NODE_RED_REDESIGN.md).
- * CSS custom properties mirror the tailwind.config.js `gr-*` scales, for
- * places that need a raw color value (inline styles, non-Tailwind CSS)
- * instead of a utility class. Keep both in sync when a value changes.
+ * Go-RED design tokens v2 (docs/NEXT_LEVEL_PLAN.md, Phase 4).
+ *
+ * Every color the UI uses is one of these variables; tailwind.config.js
+ * maps them to utilities (bg-panel, text-muted, border-line, bg-accent,
+ * bg-cat-input, ...). Light values live on :root, dark values on
+ * [data-theme="dark"], which src/lib/theme.ts sets on <html> (system
+ * preference by default). src/test/tokens.test.ts checks that every text
+ * on background pair below reaches 4.5:1.
  */
-:root {
-  /* Gopher Blue scale (verified base: 500 = #00add8) */
-  --gr-blue-50: hsl(192, 100%, 96%);
-  --gr-blue-100: hsl(192, 95%, 91%);
-  --gr-blue-200: hsl(192, 95%, 83%);
-  --gr-blue-300: hsl(192, 95%, 70%);
-  --gr-blue-400: hsl(192, 95%, 55%);
-  --gr-blue-500: #00add8;
-  --gr-blue-600: hsl(192, 100%, 36%);
-  --gr-blue-700: hsl(192, 100%, 29%);
-  --gr-blue-800: hsl(192, 100%, 23%);
-  --gr-blue-900: hsl(192, 100%, 17%);
+:root,
+[data-theme='light'] {
+  --bg-app: #f5f6f8;
+  --bg-panel: #ffffff;
+  --bg-surface: #f3f4f6;
+  --bg-sunken: #e9ebef;
+  --bg-header: #1c2230;
+  --bg-canvas: #fbfbfc;
+  --grid-dot: #d6dbe3;
+  --fg: #1d2433;
+  --fg-muted: #5f6b7a;
+  --fg-faint: #9aa3b2;
+  --fg-on-header: #ffffff;
+  --line: #e2e5ea;
+  --line-strong: #cbd1da;
+  --accent: #00add8;
+  --accent-fg: #0b1116;
+  --accent-strong: #33c3e6;
+  --accent-soft: #e6f7fb;
+  --accent-text: #006c86;
+  --danger: #ce3262;
+  --danger-fg: #ffffff;
+  --danger-strong: #b0264f;
+  --danger-soft: #fbe9ef;
+  --danger-text: #b0264f;
+  --warn: #d97706;
+  --warn-soft: #fef3c7;
+  --warn-text: #92400e;
+  --ok: #2e8157;
+  --ok-soft: #e6f4ec;
+  --ok-text: #276749;
+  --wire: #9aa3b2;
+  --wire-hover: #00add8;
+  --shadow: rgba(16, 24, 40, 0.14);
+  --selection: rgba(0, 173, 216, 0.25);
 
-  /* Light Blue scale (verified base: 400 = #5dc9e2) */
-  --gr-skyblue-50: hsl(191, 70%, 97%);
-  --gr-skyblue-100: hsl(191, 70%, 93%);
-  --gr-skyblue-200: hsl(191, 70%, 85%);
-  --gr-skyblue-300: hsl(191, 70%, 74%);
-  --gr-skyblue-400: #5dc9e2;
-  --gr-skyblue-500: hsl(191, 75%, 54%);
-  --gr-skyblue-600: hsl(191, 80%, 45%);
-  --gr-skyblue-700: hsl(191, 85%, 37%);
-  --gr-skyblue-800: hsl(191, 90%, 29%);
-  --gr-skyblue-900: hsl(191, 95%, 21%);
+  /* Node category fills (white label text, all >= 4.5:1). */
+  --cat-input: #0c7f9c;
+  --cat-output: #2e8157;
+  --cat-function: #5b4fcf;
+  --cat-flow-control: #9d681b;
+  --cat-social: #b83280;
+  --cat-storage: #4a5568;
+  --cat-network: #7c3aed;
+  --cat-protocol: #0f766e;
+  --cat-parser: #c05621;
+  --cat-config: #6b7280;
+  --cat-dashboard: #0369a1;
+  --cat-custom: #64748b;
+  --cat-input-soft: color-mix(in srgb, var(--cat-input) 12%, var(--bg-panel));
+  --cat-input-text: color-mix(in srgb, var(--cat-input) 82%, #000);
+  --cat-output-soft: color-mix(in srgb, var(--cat-output) 12%, var(--bg-panel));
+  --cat-output-text: color-mix(in srgb, var(--cat-output) 82%, #000);
+  --cat-function-soft: color-mix(in srgb, var(--cat-function) 12%, var(--bg-panel));
+  --cat-function-text: color-mix(in srgb, var(--cat-function) 82%, #000);
+  --cat-flow-control-soft: color-mix(in srgb, var(--cat-flow-control) 12%, var(--bg-panel));
+  --cat-flow-control-text: color-mix(in srgb, var(--cat-flow-control) 82%, #000);
+  --cat-social-soft: color-mix(in srgb, var(--cat-social) 12%, var(--bg-panel));
+  --cat-social-text: color-mix(in srgb, var(--cat-social) 82%, #000);
+  --cat-storage-soft: color-mix(in srgb, var(--cat-storage) 12%, var(--bg-panel));
+  --cat-storage-text: color-mix(in srgb, var(--cat-storage) 82%, #000);
+  --cat-network-soft: color-mix(in srgb, var(--cat-network) 12%, var(--bg-panel));
+  --cat-network-text: color-mix(in srgb, var(--cat-network) 82%, #000);
+  --cat-protocol-soft: color-mix(in srgb, var(--cat-protocol) 12%, var(--bg-panel));
+  --cat-protocol-text: color-mix(in srgb, var(--cat-protocol) 82%, #000);
+  --cat-parser-soft: color-mix(in srgb, var(--cat-parser) 12%, var(--bg-panel));
+  --cat-parser-text: color-mix(in srgb, var(--cat-parser) 82%, #000);
+  --cat-config-soft: color-mix(in srgb, var(--cat-config) 12%, var(--bg-panel));
+  --cat-config-text: color-mix(in srgb, var(--cat-config) 82%, #000);
+  --cat-dashboard-soft: color-mix(in srgb, var(--cat-dashboard) 12%, var(--bg-panel));
+  --cat-dashboard-text: color-mix(in srgb, var(--cat-dashboard) 82%, #000);
+  --cat-custom-soft: color-mix(in srgb, var(--cat-custom) 12%, var(--bg-panel));
+  --cat-custom-text: color-mix(in srgb, var(--cat-custom) 82%, #000);
 
-  /* Fuchsia scale (verified base: 500 = #ce3262) */
-  --gr-fuchsia-50: hsl(342, 65%, 97%);
-  --gr-fuchsia-100: hsl(342, 65%, 93%);
-  --gr-fuchsia-200: hsl(342, 63%, 85%);
-  --gr-fuchsia-300: hsl(342, 62%, 71%);
-  --gr-fuchsia-400: hsl(342, 61%, 60%);
-  --gr-fuchsia-500: #ce3262;
-  --gr-fuchsia-600: hsl(342, 63%, 43%);
-  --gr-fuchsia-700: hsl(342, 65%, 35%);
-  --gr-fuchsia-800: hsl(342, 68%, 27%);
-  --gr-fuchsia-900: hsl(342, 70%, 20%);
-
-  /* Semantic aliases used by app-shell/canvas/status in later phases */
-  --gr-header-bg: var(--gr-blue-500);
-  --gr-accent: var(--gr-blue-500);
-  --gr-danger: var(--gr-fuchsia-500);
-
-  /* Node-RED-derived geometry (see borderRadius/spacing note in
-     tailwind.config.js — approximated from documented NR defaults) */
-  --gr-node-radius: 4px;
-  --gr-node-height: 30px;
-  --gr-node-min-width: 100px;
-  --gr-port-size: 10px;
+  /* Node geometry */
+  --gr-node-radius: 6px;
+  --gr-node-height: 36px;
+  --gr-node-min-width: 120px;
+  --gr-node-well: 28px;
+  --gr-port-size: 8px;
   --gr-grid-size: 20px;
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --bg-app: #111318;
+  --bg-panel: #1a1d24;
+  --bg-surface: #20242c;
+  --bg-sunken: #262b34;
+  --bg-header: #0c0f14;
+  --bg-canvas: #14171d;
+  --grid-dot: #2a2f3a;
+  --fg: #e6e8ec;
+  --fg-muted: #9aa3b2;
+  --fg-faint: #6b7280;
+  --fg-on-header: #e6e8ec;
+  --line: #2d333d;
+  --line-strong: #3b4250;
+  --accent: #33c3e6;
+  --accent-fg: #0b1116;
+  --accent-strong: #5dd0ec;
+  --accent-soft: #10323b;
+  --accent-text: #7fdcf2;
+  --danger: #e05a85;
+  --danger-fg: #14060a;
+  --danger-strong: #ea7ea1;
+  --danger-soft: #3a1622;
+  --danger-text: #f08bb0;
+  --warn: #f59e0b;
+  --warn-soft: #3b2a08;
+  --warn-text: #fbbf24;
+  --ok: #34d399;
+  --ok-soft: #0f2f22;
+  --ok-text: #6ee7b7;
+  --wire: #4b5563;
+  --wire-hover: #33c3e6;
+  --shadow: rgba(0, 0, 0, 0.55);
+  --selection: rgba(51, 195, 230, 0.3);
+
+  --cat-input-soft: color-mix(in srgb, var(--cat-input) 22%, var(--bg-panel));
+  --cat-input-text: color-mix(in srgb, var(--cat-input) 55%, #fff);
+  --cat-output-soft: color-mix(in srgb, var(--cat-output) 22%, var(--bg-panel));
+  --cat-output-text: color-mix(in srgb, var(--cat-output) 55%, #fff);
+  --cat-function-soft: color-mix(in srgb, var(--cat-function) 22%, var(--bg-panel));
+  --cat-function-text: color-mix(in srgb, var(--cat-function) 55%, #fff);
+  --cat-flow-control-soft: color-mix(in srgb, var(--cat-flow-control) 22%, var(--bg-panel));
+  --cat-flow-control-text: color-mix(in srgb, var(--cat-flow-control) 55%, #fff);
+  --cat-social-soft: color-mix(in srgb, var(--cat-social) 22%, var(--bg-panel));
+  --cat-social-text: color-mix(in srgb, var(--cat-social) 55%, #fff);
+  --cat-storage-soft: color-mix(in srgb, var(--cat-storage) 22%, var(--bg-panel));
+  --cat-storage-text: color-mix(in srgb, var(--cat-storage) 55%, #fff);
+  --cat-network-soft: color-mix(in srgb, var(--cat-network) 22%, var(--bg-panel));
+  --cat-network-text: color-mix(in srgb, var(--cat-network) 55%, #fff);
+  --cat-protocol-soft: color-mix(in srgb, var(--cat-protocol) 22%, var(--bg-panel));
+  --cat-protocol-text: color-mix(in srgb, var(--cat-protocol) 55%, #fff);
+  --cat-parser-soft: color-mix(in srgb, var(--cat-parser) 22%, var(--bg-panel));
+  --cat-parser-text: color-mix(in srgb, var(--cat-parser) 55%, #fff);
+  --cat-config-soft: color-mix(in srgb, var(--cat-config) 22%, var(--bg-panel));
+  --cat-config-text: color-mix(in srgb, var(--cat-config) 55%, #fff);
+  --cat-dashboard-soft: color-mix(in srgb, var(--cat-dashboard) 22%, var(--bg-panel));
+  --cat-dashboard-text: color-mix(in srgb, var(--cat-dashboard) 55%, #fff);
+  --cat-custom-soft: color-mix(in srgb, var(--cat-custom) 22%, var(--bg-panel));
+  --cat-custom-text: color-mix(in srgb, var(--cat-custom) 55%, #fff);
+
+  color-scheme: dark;
 }
 
 @layer base {
@@ -64,71 +169,106 @@
     @apply antialiased;
   }
   body {
-    @apply bg-gray-50 text-gray-800 font-sans text-[13px];
+    @apply bg-app text-fg font-sans text-sm;
   }
+  ::selection {
+    background: var(--selection);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+}
+
+@layer components {
+  /* Canvas node (see components/NodeShell.tsx). --node-color is set inline. */
+  .gr-node {
+    height: var(--gr-node-height);
+    min-width: var(--gr-node-min-width);
+    border-radius: var(--gr-node-radius);
+    background: var(--node-color);
+    color: var(--node-fg, #fff);
+    display: flex;
+    align-items: center;
+    box-shadow: 0 1px 2px var(--shadow);
+    transition: filter 120ms ease, box-shadow 120ms ease;
+  }
+  .gr-node:hover {
+    filter: brightness(1.06);
+  }
+  .gr-node--selected {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 5px var(--selection), 0 6px 16px var(--shadow);
+  }
+  .gr-node--disabled {
+    opacity: 0.55;
+    background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgba(0, 0, 0, 0.22) 6px 9px);
+  }
+  .gr-node__well {
+    width: var(--gr-node-well);
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--node-color) 88%, #000);
+    border-radius: var(--gr-node-radius) 0 0 var(--gr-node-radius);
+    flex-shrink: 0;
+  }
+  .gr-node__well--button {
+    cursor: pointer;
+    transition: filter 100ms ease;
+  }
+  .gr-node__well--button:hover:not(:disabled) {
+    filter: brightness(1.2);
+  }
+  .gr-node__well--button:disabled {
+    cursor: default;
+  }
+  .gr-node__label {
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+    padding: 0 10px;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .gr-node__status {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 14px;
+    color: var(--fg-muted);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+
+  .markdown p { @apply mb-2 last:mb-0; }
+  .markdown ul { @apply list-disc pl-4 mb-2; }
+  .markdown h4, .markdown h5, .markdown h6 { @apply font-semibold text-fg mb-1 mt-2 first:mt-0; }
+  .markdown code { @apply font-mono text-2xs bg-sunken rounded px-1; }
+  .markdown pre { @apply bg-sunken rounded p-2 mb-2 overflow-x-auto; }
+  .markdown pre code { @apply bg-transparent px-0; }
+  .markdown a { @apply text-accent-text underline; }
 }
 
 @layer utilities {
   .animate-slide-in-right {
-    animation: slideInRight 0.3s ease-out;
+    animation: slideInRight 0.25s ease-out;
   }
-
-  .animate-slide-out-right {
-    animation: slideOutRight 0.3s ease-in;
+  .animate-fade-in {
+    animation: fadeIn 0.2s ease-out;
   }
-
   @keyframes slideInRight {
-    from {
-      transform: translateX(100%);
-      opacity: 0;
-    }
-    to {
-      transform: translateX(0);
-      opacity: 1;
-    }
+    from { transform: translateX(24px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
   }
-
-  @keyframes slideOutRight {
-    from {
-      transform: translateX(0);
-      opacity: 1;
-    }
-    to {
-      transform: translateX(100%);
-      opacity: 0;
-    }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
-}
-
-@layer components {
-  .btn {
-    @apply px-3 py-2 rounded font-medium text-sm;
-  }
-  .btn-primary {
-    @apply bg-blue-500 text-white hover:bg-blue-600;
-  }
-  .btn-secondary {
-    @apply bg-gray-200 text-gray-700 hover:bg-gray-300;
-  }
-  .btn-success {
-    @apply bg-green-500 text-white hover:bg-green-600;
-  }
-  .btn-danger {
-    @apply bg-red-500 text-white hover:bg-red-600;
-  }
-  .input {
-    @apply w-full p-2 border border-gray-300 rounded text-sm;
-  }
-  .card {
-    @apply bg-white rounded shadow-sm border border-gray-200;
-  }
-}
-@layer components {
-  .markdown p { @apply mb-2 last:mb-0; }
-  .markdown ul { @apply list-disc pl-4 mb-2; }
-  .markdown h4, .markdown h5, .markdown h6 { @apply font-semibold text-gray-800 mb-1 mt-2 first:mt-0; }
-  .markdown code { @apply font-mono text-[11px] bg-gray-100 rounded px-1; }
-  .markdown pre { @apply bg-gray-100 rounded p-2 mb-2 overflow-x-auto; }
-  .markdown pre code { @apply bg-transparent px-0; }
-  .markdown a { @apply text-gr-blue-600 underline; }
 }

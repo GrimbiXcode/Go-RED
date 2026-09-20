@@ -9,11 +9,11 @@ function App() {
   useEffect(() => bindServerEvents(), []);
 
   return (
-    <div className="h-screen w-full bg-gray-50">
+    <div className="h-screen w-full bg-app text-fg">
       <Routes>
         <Route path="/flow/:flowId" element={<FlowEditor />} />
         <Route path="/" element={<FlowEditor />} />
-        {import.meta.env.DEV && <Route path="/styleguide" element={<StyleGuide />} />}
+        <Route path="/styleguide" element={<StyleGuide />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <ToastHost />

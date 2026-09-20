@@ -1,25 +1,100 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  // Dark mode is a data attribute set by src/lib/theme.ts (system
+  // preference by default, user override persisted), not a media query,
+  // so a page can show both themes side by side (style guide).
+  darkMode: ['selector', '[data-theme="dark"]'],
   theme: {
+    // Type scale 11 / 12 / 13 / 14 / 16 / 20 (docs/NEXT_LEVEL_PLAN.md, Phase 4).
+    fontSize: {
+      '2xs': ['11px', '14px'],
+      xs: ['12px', '16px'],
+      sm: ['13px', '18px'],
+      base: ['14px', '20px'],
+      lg: ['16px', '22px'],
+      xl: ['20px', '28px'],
+      '2xl': ['24px', '32px'],
+    },
     extend: {
-      // Go-RED design tokens (see docs/FRONTEND_NODE_RED_REDESIGN.md).
-      // gr-blue/gr-skyblue/gr-fuchsia are tint/shade scales derived from the
-      // three verified Go brand colors (Gopher Blue #00ADD8, Light Blue
-      // #5DC9E2, Fuchsia #CE3262 — golang/go#29695, golang/go#25136). Each
-      // scale keeps the brand hue constant and varies lightness/saturation;
-      // the verified base hex lands exactly on the marked step.
+      // Semantic colors resolve to the CSS variables in src/styles/tailwind.css,
+      // which carry a light and a dark value each. Components use these
+      // (bg-panel, text-muted, border-line, ...) and never raw grays, so a
+      // theme switch needs no per-component work.
       colors: {
+        app: 'var(--bg-app)',
+        panel: 'var(--bg-panel)',
+        surface: 'var(--bg-surface)',
+        sunken: 'var(--bg-sunken)',
+        header: 'var(--bg-header)',
+        canvas: 'var(--bg-canvas)',
+        fg: 'var(--fg)',
+        muted: 'var(--fg-muted)',
+        faint: 'var(--fg-faint)',
+        line: { DEFAULT: 'var(--line)', strong: 'var(--line-strong)' },
+        accent: {
+          DEFAULT: 'var(--accent)',
+          fg: 'var(--accent-fg)',
+          strong: 'var(--accent-strong)',
+          soft: 'var(--accent-soft)',
+          text: 'var(--accent-text)',
+        },
+        danger: {
+          DEFAULT: 'var(--danger)',
+          fg: 'var(--danger-fg)',
+          strong: 'var(--danger-strong)',
+          soft: 'var(--danger-soft)',
+          text: 'var(--danger-text)',
+        },
+        warn: { DEFAULT: 'var(--warn)', soft: 'var(--warn-soft)', text: 'var(--warn-text)' },
+        ok: { DEFAULT: 'var(--ok)', soft: 'var(--ok-soft)', text: 'var(--ok-text)' },
+        // Node category palette (src/utils/nodeCategories.ts is the source of the values).
+        cat: {
+          'input': 'var(--cat-input)',
+          'input-soft': 'var(--cat-input-soft)',
+          'input-text': 'var(--cat-input-text)',
+          'output': 'var(--cat-output)',
+          'output-soft': 'var(--cat-output-soft)',
+          'output-text': 'var(--cat-output-text)',
+          'function': 'var(--cat-function)',
+          'function-soft': 'var(--cat-function-soft)',
+          'function-text': 'var(--cat-function-text)',
+          'flow-control': 'var(--cat-flow-control)',
+          'flow-control-soft': 'var(--cat-flow-control-soft)',
+          'flow-control-text': 'var(--cat-flow-control-text)',
+          'social': 'var(--cat-social)',
+          'social-soft': 'var(--cat-social-soft)',
+          'social-text': 'var(--cat-social-text)',
+          'storage': 'var(--cat-storage)',
+          'storage-soft': 'var(--cat-storage-soft)',
+          'storage-text': 'var(--cat-storage-text)',
+          'network': 'var(--cat-network)',
+          'network-soft': 'var(--cat-network-soft)',
+          'network-text': 'var(--cat-network-text)',
+          'protocol': 'var(--cat-protocol)',
+          'protocol-soft': 'var(--cat-protocol-soft)',
+          'protocol-text': 'var(--cat-protocol-text)',
+          'parser': 'var(--cat-parser)',
+          'parser-soft': 'var(--cat-parser-soft)',
+          'parser-text': 'var(--cat-parser-text)',
+          'config': 'var(--cat-config)',
+          'config-soft': 'var(--cat-config-soft)',
+          'config-text': 'var(--cat-config-text)',
+          'dashboard': 'var(--cat-dashboard)',
+          'dashboard-soft': 'var(--cat-dashboard-soft)',
+          'dashboard-text': 'var(--cat-dashboard-text)',
+          'custom': 'var(--cat-custom)',
+          'custom-soft': 'var(--cat-custom-soft)',
+          'custom-text': 'var(--cat-custom-text)',
+        },
+        // Go brand scales, kept for the style guide and accents.
         'gr-blue': {
           50: 'hsl(192, 100%, 96%)',
           100: 'hsl(192, 95%, 91%)',
           200: 'hsl(192, 95%, 83%)',
           300: 'hsl(192, 95%, 70%)',
           400: 'hsl(192, 95%, 55%)',
-          500: '#00add8', // verified Gopher Blue
+          500: '#00add8',
           600: 'hsl(192, 100%, 36%)',
           700: 'hsl(192, 100%, 29%)',
           800: 'hsl(192, 100%, 23%)',
@@ -30,7 +105,7 @@ export default {
           100: 'hsl(191, 70%, 93%)',
           200: 'hsl(191, 70%, 85%)',
           300: 'hsl(191, 70%, 74%)',
-          400: '#5dc9e2', // verified Light Blue
+          400: '#5dc9e2',
           500: 'hsl(191, 75%, 54%)',
           600: 'hsl(191, 80%, 45%)',
           700: 'hsl(191, 85%, 37%)',
@@ -43,76 +118,31 @@ export default {
           200: 'hsl(342, 63%, 85%)',
           300: 'hsl(342, 62%, 71%)',
           400: 'hsl(342, 61%, 60%)',
-          500: '#ce3262', // verified Fuchsia
+          500: '#ce3262',
           600: 'hsl(342, 63%, 43%)',
           700: 'hsl(342, 65%, 35%)',
           800: 'hsl(342, 68%, 27%)',
           900: 'hsl(342, 70%, 20%)',
         },
-        primary: {
-          50: '#f0fdf4',
-          100: '#dcfce7',
-          200: '#bbf7d0',
-          300: '#86efac',
-          400: '#4ade80',
-          500: '#22c55e',
-          600: '#16a34a',
-          700: '#15803d',
-          800: '#166534',
-          900: '#14532d',
-        },
-        secondary: {
-          50: '#f8fafc',
-          100: '#f1f5f9',
-          200: '#e2e8f0',
-          300: '#cbd5e1',
-          400: '#94a3b8',
-          500: '#64748b',
-          600: '#475569',
-          700: '#334155',
-          800: '#1e293b',
-          900: '#0f172a',
-        },
-        dark: {
-          50: '#f7fafc',
-          100: '#edf2f7',
-          200: '#e2e8f0',
-          300: '#cbd5e1',
-          400: '#94a3b8',
-          500: '#64748b',
-          600: '#475569',
-          700: '#334155',
-          800: '#1e293b',
-          900: '#111827',
-          1000: '#0f172a',
-        },
       },
-      // Compact, Node-RED-like UI font stack (system sans, not a webfont).
       fontFamily: {
-        sans: [
-          '-apple-system',
-          'BlinkMacSystemFont',
-          '"Segoe UI"',
-          'Roboto',
-          'Helvetica',
-          'Arial',
-          'sans-serif',
-        ],
+        sans: ['"Inter Variable"', 'Inter', 'system-ui', '-apple-system', '"Segoe UI"', 'Roboto', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
-      // Node geometry tokens, approximated from commonly documented
-      // Node-RED editor defaults (grid size, node height, port size).
-      // Not yet cross-checked against a live NR instance/theme CSS — see
-      // "Offene Fragen" in docs/FRONTEND_NODE_RED_REDESIGN.md.
       borderRadius: {
-        'gr-node': '4px',
+        'gr-node': '6px',
       },
       spacing: {
         'gr-grid': '20px',
-        'gr-node-h': '30px',
-        'gr-node-min-w': '100px',
-        'gr-port': '10px',
+        'gr-node-h': '36px',
+        'gr-node-min-w': '120px',
+        'gr-port': '8px',
+      },
+      boxShadow: {
+        panel: '0 1px 2px var(--shadow)',
+        float: '0 8px 24px var(--shadow)',
       },
     },
   },
   plugins: [],
-}
+};
