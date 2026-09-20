@@ -9,15 +9,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/nodes/mqttbroker"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 // publishTimeout bounds how long Execute waits for the broker to
 // acknowledge a publish (or, if not yet connected, to become connected -
 // see the mqttbroker package doc: the client is created eagerly in the
 // broker's own SetConfig, but the initial network handshake still happens
-// in the background).
+// in the background). The per-message context can cut this short.
 const publishTimeout = 10 * time.Second
 
 // Node holds an MQTT-out node's configuration.
@@ -70,15 +72,32 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 	if client == nil {
 		return nil, fmt.Errorf("mqtt out: broker %q has no client yet", n.Broker)
 	}
-	token := client.Publish(topic, n.QoS, n.Retain, payload)
-	if !token.WaitTimeout(publishTimeout) {
-		return nil, fmt.Errorf("mqtt out: publish to %q timed out after %s", topic, publishTimeout)
+	if err := c.Err(); err != nil {
+		return nil, fmt.Errorf("mqtt out: %w", err)
 	}
-	if err := token.Error(); err != nil {
+	token := client.Publish(topic, n.QoS, n.Retain, payload)
+	if err := awaitToken(c, token, publishTimeout); err != nil {
 		return nil, fmt.Errorf("mqtt out: publish to %q: %w", topic, err)
 	}
 
 	return input, nil
+}
+
+// awaitToken waits for token to complete, giving up when ctx ends or
+// after timeout, whichever comes first (paho's own token.WaitTimeout
+// cannot be interrupted by a context). A token that completes with an
+// error returns that error.
+func awaitToken(ctx context.Context, token mqtt.Token, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-token.Done():
+		return token.Error()
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return fmt.Errorf("timed out after %s", timeout)
+	}
 }
 
 func toPayloadBytes(payload interface{}) ([]byte, error) {
@@ -175,8 +194,8 @@ func init() {
 					Type:        "number",
 					Description: "MQTT QoS (0, 1, or 2)",
 					Default:     float64(0),
-					Min:         floatPtr(0),
-					Max:         floatPtr(2),
+					Min:         base.FloatPtr(0),
+					Max:         base.FloatPtr(2),
 					Label:       "QoS",
 					Order:       3,
 					Widget:      "number",
@@ -200,5 +219,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

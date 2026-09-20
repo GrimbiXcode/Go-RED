@@ -6,13 +6,14 @@
 package tcprequest
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -33,9 +34,14 @@ type Node struct {
 
 // Execute connects to Host:Port, writes input's payload, half-closes the
 // connection, and reads the reply until the peer closes its side, the
-// reply exceeds maxReplyBytes, or TimeoutMs elapses.
+// reply exceeds maxReplyBytes, TimeoutMs elapses, or the per-message
+// context ends (its deadline, if earlier than TimeoutMs, is the effective
+// one; its cancellation closes the connection so the blocking read
+// returns).
 func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
-	data, err := toBytes(input["payload"])
+	c := base.Context(ctx)
+
+	data, err := base.ToBytes(input["payload"])
 	if err != nil {
 		return nil, fmt.Errorf("tcp request: %w", err)
 	}
@@ -44,17 +50,24 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
+	deadline := time.Now().Add(timeout)
+	if d, ok := c.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
 
 	addr := net.JoinHostPort(n.Host, strconv.Itoa(n.Port))
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	dialer := &net.Dialer{Deadline: deadline}
+	conn, err := dialer.DialContext(c, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("tcp request: %w", err)
+		return nil, fmt.Errorf("tcp request: %w", wrapCtxErr(c, err))
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(timeout))
+	_ = conn.SetDeadline(deadline)
+	stop := context.AfterFunc(c, func() { conn.Close() })
+	defer stop()
 
 	if _, err := conn.Write(data); err != nil {
-		return nil, fmt.Errorf("tcp request: %w", err)
+		return nil, fmt.Errorf("tcp request: %w", wrapCtxErr(c, err))
 	}
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		tcpConn.CloseWrite()
@@ -62,10 +75,10 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 
 	reply, err := io.ReadAll(io.LimitReader(conn, maxReplyBytes))
 	if err != nil {
-		return nil, fmt.Errorf("tcp request: reading reply: %w", err)
+		return nil, fmt.Errorf("tcp request: reading reply: %w", wrapCtxErr(c, err))
 	}
 
-	out := cloneMap(input)
+	out := base.CloneMap(input)
 	if n.Datatype == "utf8" {
 		out["payload"] = string(reply)
 	} else {
@@ -74,31 +87,14 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 	return out, nil
 }
 
-func toBytes(payload interface{}) ([]byte, error) {
-	switch v := payload.(type) {
-	case []byte:
-		return v, nil
-	case string:
-		return []byte(v), nil
-	case nil:
-		return []byte{}, nil
-	case bool, float64:
-		return []byte(fmt.Sprint(v)), nil
-	default:
-		encoded, err := json.Marshal(v)
-		if err != nil {
-			return nil, fmt.Errorf("payload cannot be encoded: %w", err)
-		}
-		return encoded, nil
+// wrapCtxErr attaches the context's own error (context.Canceled or
+// context.DeadlineExceeded) to a network error that was caused by that
+// context ending, so callers can errors.Is against the context error.
+func wrapCtxErr(ctx context.Context, err error) error {
+	if cerr := ctx.Err(); cerr != nil {
+		return fmt.Errorf("%w: %w", cerr, err)
 	}
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
+	return err
 }
 
 func (n *Node) Validate() error {
@@ -172,8 +168,8 @@ func init() {
 					Type:        "number",
 					Description: "Remote port",
 					Default:     float64(0),
-					Min:         floatPtr(1),
-					Max:         floatPtr(65535),
+					Min:         base.FloatPtr(1),
+					Max:         base.FloatPtr(65535),
 					Label:       "Port",
 					Order:       2,
 					Widget:      "number",
@@ -191,7 +187,7 @@ func init() {
 					Type:        "number",
 					Description: "Overall timeout in milliseconds",
 					Default:     float64(30000),
-					Min:         floatPtr(0),
+					Min:         base.FloatPtr(0),
 					Label:       "Timeout",
 					Order:       4,
 					Widget:      "duration",
@@ -208,5 +204,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

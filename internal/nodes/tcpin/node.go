@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -67,13 +68,18 @@ func (n *Node) runServer(ctx context.Context, emit func(map[string]interface{}))
 		rt.ReportStatus("listening", ln.Addr().String())
 	}
 
+	// Closing the listener (closeAll, below) makes Accept return, which
+	// ends this goroutine.
 	go func() {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			n.trackConn(conn)
+			if !n.trackConn(conn) {
+				conn.Close()
+				return
+			}
 			go n.readConn(conn, emit)
 		}
 	}()
@@ -84,11 +90,15 @@ func (n *Node) runServer(ctx context.Context, emit func(map[string]interface{}))
 }
 
 func (n *Node) runClient(ctx context.Context, emit func(map[string]interface{})) error {
-	conn, err := net.Dial("tcp", net.JoinHostPort(n.Host, strconv.Itoa(n.Port)))
+	dialer := &net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(n.Host, strconv.Itoa(n.Port)))
 	if err != nil {
 		return fmt.Errorf("tcp in: %w", err)
 	}
-	n.trackConn(conn)
+	if !n.trackConn(conn) {
+		conn.Close()
+		return nil
+	}
 
 	done := make(chan struct{})
 	go func() {
@@ -104,10 +114,17 @@ func (n *Node) runClient(ctx context.Context, emit func(map[string]interface{}))
 	return nil
 }
 
-func (n *Node) trackConn(conn net.Conn) {
+// trackConn records conn so closeAll can close it. It reports false once
+// closeAll has run (a connection accepted in the window between the
+// context ending and the listener closing must not be kept).
+func (n *Node) trackConn(conn net.Conn) bool {
 	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.conns == nil {
+		return false
+	}
 	n.conns[conn] = struct{}{}
-	n.mu.Unlock()
+	return true
 }
 
 func (n *Node) closeAll() {
@@ -248,8 +265,8 @@ func init() {
 					Type:        "number",
 					Description: "Port to listen on (server mode) or connect to (client mode)",
 					Default:     float64(0),
-					Min:         floatPtr(1),
-					Max:         floatPtr(65535),
+					Min:         base.FloatPtr(1),
+					Max:         base.FloatPtr(65535),
 					Label:       "Port",
 					Order:       3,
 					Widget:      "number",
@@ -283,5 +300,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

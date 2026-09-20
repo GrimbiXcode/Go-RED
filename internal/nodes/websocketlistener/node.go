@@ -14,6 +14,7 @@
 package websocketlistener
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sync"
@@ -29,34 +30,67 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
+// client is one connected WebSocket peer. writeMu serializes writers on
+// it: gorilla/websocket allows only one concurrent writer per connection,
+// and several websocket-out Executes may broadcast at once.
+type client struct {
+	conn    *websocket.Conn
+	writeMu sync.Mutex
+}
+
 // Node holds a WebSocket-listener node's configuration and connected
 // clients.
 type Node struct {
 	Path string
 
 	mu         sync.Mutex
-	conns      map[*websocket.Conn]struct{}
+	conns      map[*websocket.Conn]*client
 	onMessage  []func(data []byte, isText bool)
 	unregister func()
+	closed     bool
 }
 
-// Send broadcasts data to every currently connected client.
+// Send broadcasts data to every currently connected client, with no bound
+// on how long each write may block; SendContext is what websocket-out
+// uses.
 func (n *Node) Send(data []byte, isText bool) error {
+	return n.SendContext(context.Background(), data, isText)
+}
+
+// SendContext broadcasts data to every currently connected client. The
+// writes are bounded by ctx: an already-ended ctx fails immediately, and
+// ctx's deadline (if any) becomes each write's deadline. The first write
+// error is returned after every client has been attempted.
+func (n *Node) SendContext(ctx context.Context, data []byte, isText bool) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("websocket-listener: %w", err)
+	}
 	msgType := websocket.BinaryMessage
 	if isText {
 		msgType = websocket.TextMessage
 	}
 
 	n.mu.Lock()
-	conns := make([]*websocket.Conn, 0, len(n.conns))
-	for c := range n.conns {
-		conns = append(conns, c)
+	clients := make([]*client, 0, len(n.conns))
+	for _, c := range n.conns {
+		clients = append(clients, c)
 	}
 	n.mu.Unlock()
 
+	deadline, _ := ctx.Deadline() // zero time clears any earlier deadline
 	var firstErr error
-	for _, c := range conns {
-		if err := c.WriteMessage(msgType, data); err != nil && firstErr == nil {
+	for _, c := range clients {
+		if ctx.Err() != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("websocket-listener: %w", ctx.Err())
+			}
+			break
+		}
+		c.writeMu.Lock()
+		_ = c.conn.SetWriteDeadline(deadline)
+		err := c.conn.WriteMessage(msgType, data)
+		c.writeMu.Unlock()
+		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -86,7 +120,15 @@ func (n *Node) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n.mu.Lock()
-	n.conns[conn] = struct{}{}
+	if n.closed {
+		// Close raced with this upgrade (the route is unmounted just
+		// after the closed flag is set): don't track a connection Close
+		// will never see.
+		n.mu.Unlock()
+		conn.Close()
+		return
+	}
+	n.conns[conn] = &client{conn: conn}
 	n.mu.Unlock()
 	defer func() {
 		n.mu.Lock()
@@ -95,6 +137,8 @@ func (n *Node) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 	}()
 
+	// Close closes conn, which makes this ReadMessage return - that is
+	// what ends the handler goroutine on undeploy.
 	for {
 		msgType, data, err := conn.ReadMessage()
 		if err != nil {
@@ -104,9 +148,11 @@ func (n *Node) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Close unmounts the upgrade handler and closes every connected client.
+// Close unmounts the upgrade handler and closes every connected client,
+// which unblocks their read loops.
 func (n *Node) Close() error {
 	n.mu.Lock()
+	n.closed = true
 	unregister := n.unregister
 	conns := n.conns
 	n.conns = nil
@@ -146,7 +192,10 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 	if err := n.Validate(); err != nil {
 		return err
 	}
-	n.conns = make(map[*websocket.Conn]struct{})
+	n.mu.Lock()
+	n.conns = make(map[*websocket.Conn]*client)
+	n.closed = false
+	n.mu.Unlock()
 	unregister, err := httpin.RegisterHandler(n.Path, http.HandlerFunc(n.handleUpgrade))
 	if err != nil {
 		return fmt.Errorf("websocket-listener: %w", err)

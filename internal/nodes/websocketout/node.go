@@ -17,6 +17,14 @@ type Provider interface {
 	Send(data []byte, isText bool) error
 }
 
+// ContextProvider is the context-aware variant both config nodes also
+// implement: the send is bounded by ctx (its deadline becomes the write
+// deadline; an already-ended ctx fails at once). Execute prefers it over
+// Provider.Send whenever the provider offers it.
+type ContextProvider interface {
+	SendContext(ctx context.Context, data []byte, isText bool) error
+}
+
 // Node holds a WebSocket-out node's configuration.
 type Node struct {
 	// Server is a websocket-listener or websocket-client config node's ID.
@@ -48,7 +56,15 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 	if err != nil {
 		return nil, fmt.Errorf("websocket out: %w", err)
 	}
-	if err := provider.Send(data, isText); err != nil {
+	if err := c.Err(); err != nil {
+		return nil, fmt.Errorf("websocket out: %w", err)
+	}
+	if cp, ok := provider.(ContextProvider); ok {
+		err = cp.SendContext(c, data, isText)
+	} else {
+		err = provider.Send(data, isText)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("websocket out: %w", err)
 	}
 	return input, nil

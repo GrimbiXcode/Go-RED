@@ -46,6 +46,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/nodes/httpproxy"
 	"github.com/GrimbiXcode/Go-RED/internal/nodes/tlsconfig"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
@@ -85,10 +86,7 @@ type Node struct {
 // 0), and returns a copy of input with payload/statusCode/headers set from
 // the response.
 func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
-	c, ok := ctx.(context.Context)
-	if !ok {
-		c = context.Background()
-	}
+	c := base.Context(ctx)
 	rt, _ := registry.RuntimeFromContext(c)
 
 	valueResolver := typedvalue.Resolver{Message: input}
@@ -142,6 +140,10 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 	if err != nil {
 		return nil, fmt.Errorf("http request: %w", err)
 	}
+	// buildClient makes a fresh Transport per call; without this its
+	// keep-alive connection (and the two goroutines behind it) would
+	// outlive the message until the server hangs up.
+	defer client.CloseIdleConnections()
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -154,7 +156,7 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 		return nil, fmt.Errorf("http request: reading response: %w", err)
 	}
 
-	out := cloneMap(input)
+	out := base.CloneMap(input)
 	out["statusCode"] = float64(resp.StatusCode)
 	out["headers"] = headerToMap(resp.Header)
 	if isJSON(resp.Header.Get("Content-Type")) {
@@ -258,14 +260,6 @@ func headerToMap(h http.Header) map[string]interface{} {
 	return out
 }
 
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
 func (n *Node) Validate() error {
 	switch n.Url.Type {
 	case "":
@@ -286,7 +280,7 @@ func (n *Node) GetConfig() map[string]interface{} {
 		headers[k] = v
 	}
 	return map[string]interface{}{
-		"url":                valueToConfig(n.Url),
+		"url":                base.ValueToConfig(n.Url),
 		"method":             n.Method,
 		"headers":            headers,
 		"timeoutMs":          n.TimeoutMs,
@@ -298,7 +292,7 @@ func (n *Node) GetConfig() map[string]interface{} {
 }
 
 func (n *Node) SetConfig(config map[string]interface{}) error {
-	n.Url = parseValue(config["url"])
+	n.Url = base.ParseValue(config["url"])
 	n.Method = "GET"
 	if v, ok := config["method"].(string); ok && v != "" {
 		n.Method = strings.ToUpper(v)
@@ -328,20 +322,6 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 		n.InsecureSkipVerify = v
 	}
 	return n.Validate()
-}
-
-func parseValue(raw interface{}) typedvalue.Value {
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return typedvalue.Value{}
-	}
-	t, _ := m["type"].(string)
-	v, _ := m["value"].(string)
-	return typedvalue.Value{Type: typedvalue.Type(t), Value: v}
-}
-
-func valueToConfig(v typedvalue.Value) map[string]interface{} {
-	return map[string]interface{}{"type": string(v.Type), "value": v.Value}
 }
 
 func init() {
@@ -395,7 +375,7 @@ func init() {
 					Type:        "number",
 					Description: "Request timeout in milliseconds",
 					Default:     float64(30000),
-					Min:         floatPtr(0),
+					Min:         base.FloatPtr(0),
 					Label:       "Timeout",
 					Group:       "Connection",
 					Order:       4,
@@ -406,7 +386,7 @@ func init() {
 					Type:        "number",
 					Description: "Maximum redirects to follow",
 					Default:     float64(5),
-					Min:         floatPtr(0),
+					Min:         base.FloatPtr(0),
 					Label:       "Maximum redirects",
 					Group:       "Connection",
 					Order:       5,
@@ -452,5 +432,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

@@ -40,6 +40,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -253,7 +254,7 @@ func init() {
 					Type:        "number",
 					Description: "MQTT keep-alive interval in seconds",
 					Default:     float64(60),
-					Min:         floatPtr(1),
+					Min:         base.FloatPtr(1),
 					Label:       "Keep-alive",
 					Group:       "Connection",
 					Order:       3,
@@ -317,5 +318,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

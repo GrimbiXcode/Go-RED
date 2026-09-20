@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"golang.org/x/net/html"
 )
@@ -64,7 +65,7 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 		}
 	}
 
-	output := cloneMap(input)
+	output := base.CloneMap(input)
 	if len(results) == 1 {
 		output["payload"] = results[0]
 	} else {
@@ -249,14 +250,6 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 		n.Attr = a
 	}
 	return n.Validate()
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
 }
 
 func init() {

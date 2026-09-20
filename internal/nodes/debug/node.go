@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -272,7 +273,7 @@ func init() {
 					Type:        "number",
 					Description: "Maximum number of messages to keep in buffer",
 					Default:     100,
-					Min:         floatPtr(0),
+					Min:         base.FloatPtr(0),
 					Label:       "Buffer size",
 					Group:       "Server console",
 					Order:       7,
@@ -288,8 +289,4 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-}
-
-func floatPtr(f float64) *float64 {
-	return &f
 }

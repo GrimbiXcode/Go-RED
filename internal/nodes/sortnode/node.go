@@ -16,12 +16,11 @@
 package sortnode
 
 import (
-	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"sync"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/typedvalue"
 )
@@ -54,8 +53,8 @@ func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[
 	if id == "" {
 		return nil, fmt.Errorf("sort: parts.id is required")
 	}
-	index := intFrom(info["index"])
-	count := intFrom(info["count"])
+	index, _ := base.ToInt(info["index"])
+	count, _ := base.ToInt(info["count"])
 
 	n.mu.Lock()
 	if n.groups == nil {
@@ -66,7 +65,7 @@ func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[
 		g = &group{count: count, items: make(map[int]map[string]interface{})}
 		n.groups[id] = g
 	}
-	g.items[index] = cloneMap(input)
+	g.items[index] = base.CloneMap(input)
 
 	var ordered []map[string]interface{}
 	if g.count > 0 && len(g.items) >= g.count {
@@ -88,7 +87,7 @@ func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[
 		updatePartsIndex(msg, i)
 	}
 
-	if rt, ok := runtimeFrom(ctx); ok {
+	if rt, ok := base.Runtime(ctx); ok {
 		for _, msg := range ordered[1:] {
 			rt.SubmitToNode(rt.NodeID, msg)
 		}
@@ -138,8 +137,8 @@ func updatePartsIndex(msg map[string]interface{}, index int) {
 // compare returns -1/0/1, comparing numerically if both sides parse as a
 // number, otherwise lexicographically as strings.
 func compare(a, b interface{}) int {
-	if af, aok := toFloat(a); aok {
-		if bf, bok := toFloat(b); bok {
+	if af, aok := base.ParseFloat(a); aok {
+		if bf, bok := base.ParseFloat(b); bok {
 			switch {
 			case af < bf:
 				return -1
@@ -150,7 +149,7 @@ func compare(a, b interface{}) int {
 			}
 		}
 	}
-	as, bs := toStr(a), toStr(b)
+	as, bs := base.ToString(a), base.ToString(b)
 	switch {
 	case as < bs:
 		return -1
@@ -161,56 +160,12 @@ func compare(a, b interface{}) int {
 	}
 }
 
-func toFloat(v interface{}) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case int:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case string:
-		f, err := strconv.ParseFloat(n, 64)
-		return f, err == nil
-	default:
-		return 0, false
-	}
-}
-
-func toStr(v interface{}) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return fmt.Sprintf("%v", v)
-}
-
-func intFrom(v interface{}) int {
-	switch n := v.(type) {
-	case float64:
-		return int(n)
-	case int:
-		return n
-	case int64:
-		return int(n)
-	default:
-		return 0
-	}
-}
-
 func contexts(ctx interface{}) (*registry.ContextStore, *registry.ContextStore) {
-	rt, ok := runtimeFrom(ctx)
+	rt, ok := base.Runtime(ctx)
 	if !ok {
 		return nil, nil
 	}
 	return rt.FlowContext, rt.GlobalContext
-}
-
-func runtimeFrom(ctx interface{}) (*registry.NodeRuntime, bool) {
-	c, ok := ctx.(context.Context)
-	if !ok {
-		return nil, false
-	}
-	return registry.RuntimeFromContext(c)
 }
 
 // Execute exists only to satisfy registry.NodeExecutor (embedded in
@@ -228,42 +183,17 @@ func (n *Node) Validate() error { return nil }
 
 func (n *Node) GetConfig() map[string]interface{} {
 	return map[string]interface{}{
-		"property":   propertyRefToConfig(n.Property),
+		"property":   base.PropertyRefToConfig(n.Property),
 		"descending": n.Descending,
 	}
 }
 
 func (n *Node) SetConfig(config map[string]interface{}) error {
-	n.Property = parsePropertyRef(config["property"], typedvalue.PropertyRef{Type: typedvalue.TypeMsg, Path: "payload"})
+	n.Property = base.ParsePropertyRef(config["property"], typedvalue.PropertyRef{Type: typedvalue.TypeMsg, Path: "payload"})
 	if d, ok := config["descending"].(bool); ok {
 		n.Descending = d
 	}
 	return n.Validate()
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func parsePropertyRef(raw interface{}, def typedvalue.PropertyRef) typedvalue.PropertyRef {
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return def
-	}
-	t, _ := m["type"].(string)
-	p, _ := m["path"].(string)
-	if t == "" {
-		return def
-	}
-	return typedvalue.PropertyRef{Type: typedvalue.Type(t), Path: p}
-}
-
-func propertyRefToConfig(ref typedvalue.PropertyRef) map[string]interface{} {
-	return map[string]interface{}{"type": string(ref.Type), "path": ref.Path}
 }
 
 func init() {

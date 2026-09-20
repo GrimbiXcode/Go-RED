@@ -8,10 +8,10 @@
 package rangenode
 
 import (
-	"context"
 	"fmt"
 	"math"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/typedvalue"
 )
@@ -30,15 +30,15 @@ type Node struct {
 
 // Execute scales Property in a copy of input.
 func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
-	output := cloneMap(input)
-	_, propResolver := resolvers(ctx, output)
+	output := base.CloneMap(input)
+	_, propResolver := base.Resolvers(ctx, output)
 
 	val, exists := n.Property.Get(propResolver)
 	if !exists {
 		return output, nil
 	}
 
-	num, ok := toFloat(val)
+	num, ok := base.ToFloat(val)
 	if !ok {
 		return nil, fmt.Errorf("range: property value %v is not numeric", val)
 	}
@@ -107,7 +107,7 @@ func (n *Node) Validate() error {
 
 func (n *Node) GetConfig() map[string]interface{} {
 	return map[string]interface{}{
-		"property": propertyRefToConfig(n.Property),
+		"property": base.PropertyRefToConfig(n.Property),
 		"minin":    n.MinIn,
 		"maxin":    n.MaxIn,
 		"minout":   n.MinOut,
@@ -118,11 +118,12 @@ func (n *Node) GetConfig() map[string]interface{} {
 }
 
 func (n *Node) SetConfig(config map[string]interface{}) error {
-	n.Property = parsePropertyRef(config["property"], typedvalue.PropertyRef{Type: typedvalue.TypeMsg, Path: "payload"})
-	n.MinIn = getFloat(config["minin"], 0)
-	n.MaxIn = getFloat(config["maxin"], 100)
-	n.MinOut = getFloat(config["minout"], 0)
-	n.MaxOut = getFloat(config["maxout"], 100)
+	n.Property = base.ParsePropertyRef(config["property"], typedvalue.PropertyRef{Type: typedvalue.TypeMsg, Path: "payload"})
+	c := base.Config(config)
+	n.MinIn = c.Float("minin", 0)
+	n.MaxIn = c.Float("maxin", 100)
+	n.MinOut = c.Float("minout", 0)
+	n.MaxOut = c.Float("maxout", 100)
 
 	n.Action = "scale"
 	if a, ok := config["action"].(string); ok && a != "" {
@@ -132,74 +133,6 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 		n.Round = r
 	}
 	return n.Validate()
-}
-
-func resolvers(ctx interface{}, output map[string]interface{}) (typedvalue.Resolver, typedvalue.PropertyResolver) {
-	valueResolver := typedvalue.Resolver{Message: output}
-	propResolver := typedvalue.PropertyResolver{Message: output}
-
-	c, ok := ctx.(context.Context)
-	if !ok {
-		return valueResolver, propResolver
-	}
-	rt, ok := registry.RuntimeFromContext(c)
-	if !ok {
-		return valueResolver, propResolver
-	}
-	if rt.FlowContext != nil {
-		valueResolver.FlowContext = rt.FlowContext
-		propResolver.FlowContext = rt.FlowContext
-	}
-	if rt.GlobalContext != nil {
-		valueResolver.GlobalContext = rt.GlobalContext
-		propResolver.GlobalContext = rt.GlobalContext
-	}
-	return valueResolver, propResolver
-}
-
-func toFloat(v interface{}) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case int:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	default:
-		return 0, false
-	}
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func getFloat(raw interface{}, def float64) float64 {
-	if f, ok := raw.(float64); ok {
-		return f
-	}
-	return def
-}
-
-func parsePropertyRef(raw interface{}, def typedvalue.PropertyRef) typedvalue.PropertyRef {
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return def
-	}
-	t, _ := m["type"].(string)
-	p, _ := m["path"].(string)
-	if t == "" {
-		return def
-	}
-	return typedvalue.PropertyRef{Type: typedvalue.Type(t), Path: p}
-}
-
-func propertyRefToConfig(ref typedvalue.PropertyRef) map[string]interface{} {
-	return map[string]interface{}{"type": string(ref.Type), "path": ref.Path}
 }
 
 func init() {

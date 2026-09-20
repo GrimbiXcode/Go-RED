@@ -7,7 +7,8 @@
 // per group id; there is no timeout to flush an incomplete group (a
 // documented scope cut - see docs/NODE_PALETTE_PLAN.md, Phase 4), so a
 // group whose parts never all arrive stays buffered for the life of the
-// flow.
+// flow - and no longer: Close (registry.Closeable, called on undeploy)
+// drops whatever is still buffered.
 package join
 
 import (
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -45,8 +47,8 @@ func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[
 	if id == "" {
 		return nil, fmt.Errorf("join: parts.id is required")
 	}
-	index := intFrom(info["index"])
-	count := intFrom(info["count"])
+	index, _ := base.ToInt(info["index"])
+	count, _ := base.ToInt(info["count"])
 	partType, _ := info["type"].(string)
 
 	n.mu.Lock()
@@ -81,7 +83,7 @@ func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[
 }
 
 func assemble(g *group, sample map[string]interface{}) map[string]interface{} {
-	out := cloneMap(sample)
+	out := base.CloneMap(sample)
 	delete(out, "parts")
 
 	switch g.partType {
@@ -108,19 +110,6 @@ func assemble(g *group, sample map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-func intFrom(v interface{}) int {
-	switch n := v.(type) {
-	case float64:
-		return int(n)
-	case int:
-		return n
-	case int64:
-		return int(n)
-	default:
-		return 0
-	}
-}
-
 // Execute exists only to satisfy registry.NodeExecutor (embedded in
 // registry.MultiOutputExecutor) - the engine always calls ExecuteMulti for
 // a node implementing it, never this.
@@ -132,19 +121,21 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 	return outputs["output"], nil
 }
 
+// Close drops every in-progress group, so a flow that is undeployed with
+// incomplete sequences buffered does not keep their parts alive
+// (registry.Closeable).
+func (n *Node) Close() error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.groups = nil
+	return nil
+}
+
 func (n *Node) Validate() error { return nil }
 
 func (n *Node) GetConfig() map[string]interface{} { return map[string]interface{}{} }
 
 func (n *Node) SetConfig(config map[string]interface{}) error { return nil }
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
 
 func init() {
 	reg := registry.GetGlobalRegistry()

@@ -9,7 +9,9 @@
 package websocketclient
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -17,7 +19,10 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const reconnectInterval = 5 * time.Second
+const (
+	reconnectInterval = 5 * time.Second
+	handshakeTimeout  = 10 * time.Second
+)
 
 // Node holds a WebSocket-client node's configuration and connection.
 type Node struct {
@@ -26,29 +31,65 @@ type Node struct {
 	mu        sync.Mutex
 	conn      *websocket.Conn
 	onMessage []func(data []byte, isText bool)
-	stopCh    chan struct{}
-	closed    bool
+	// cancel ends the context created in SetConfig that the dial, the
+	// reconnect back-off and the read loop are all bound to; Close calls it.
+	cancel context.CancelFunc
+	// loopDone is closed when connectLoop has returned.
+	loopDone chan struct{}
+	closed   bool
+
+	// writeMu serializes writers: gorilla/websocket allows only one
+	// concurrent writer per connection, and several websocket-out
+	// Executes may run at once.
+	writeMu sync.Mutex
 }
 
-func (n *Node) connectLoop() {
+func (n *Node) connectLoop(ctx context.Context) {
+	defer close(n.loopDone)
+
+	// gorilla's DialContext honors ctx for the TCP dial and turns
+	// HandshakeTimeout into a socket deadline, but a cancel that arrives
+	// while it is waiting for the handshake response is not noticed until
+	// that deadline. Closing the socket from ctx makes the stalled
+	// handshake return at once; the registration is dropped again as soon
+	// as DialContext returns (NetDialContext runs synchronously inside it).
+	var stopCloseOnCancel func() bool
+	dialer := websocket.Dialer{
+		HandshakeTimeout: handshakeTimeout,
+		NetDialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
+			c, err := (&net.Dialer{}).DialContext(dialCtx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			stopCloseOnCancel = context.AfterFunc(ctx, func() { c.Close() })
+			return c, nil
+		},
+	}
 	for {
-		select {
-		case <-n.stopCh:
+		if ctx.Err() != nil {
 			return
-		default:
 		}
 
-		conn, _, err := websocket.DefaultDialer.Dial(n.URL, nil)
+		stopCloseOnCancel = nil
+		conn, _, err := dialer.DialContext(ctx, n.URL, nil)
+		if stopCloseOnCancel != nil {
+			stopCloseOnCancel()
+		}
 		if err != nil {
-			select {
-			case <-n.stopCh:
+			if !sleepCtx(ctx, reconnectInterval) {
 				return
-			case <-time.After(reconnectInterval):
-				continue
 			}
+			continue
 		}
 
 		n.mu.Lock()
+		if n.closed {
+			// Close ran between the dial returning and this store: it
+			// could not see conn, so close it here.
+			n.mu.Unlock()
+			conn.Close()
+			return
+		}
 		n.conn = conn
 		n.mu.Unlock()
 
@@ -59,12 +100,24 @@ func (n *Node) connectLoop() {
 			n.conn = nil
 		}
 		n.mu.Unlock()
+		conn.Close()
 
-		select {
-		case <-n.stopCh:
+		if !sleepCtx(ctx, reconnectInterval) {
 			return
-		case <-time.After(reconnectInterval):
 		}
+	}
+}
+
+// sleepCtx waits for d, returning false early (without leaking the timer)
+// if ctx ends first.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -87,8 +140,19 @@ func (n *Node) dispatch(data []byte, isText bool) {
 	}
 }
 
-// Send writes data to the current connection, if any.
+// Send writes data to the current connection, if any, with no bound on
+// how long the write may block; SendContext is what websocket-out uses.
 func (n *Node) Send(data []byte, isText bool) error {
+	return n.SendContext(context.Background(), data, isText)
+}
+
+// SendContext writes data to the current connection, if any. The write is
+// bounded by ctx: an already-ended ctx fails immediately, and ctx's
+// deadline (if any) becomes the write deadline.
+func (n *Node) SendContext(ctx context.Context, data []byte, isText bool) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("websocket-client: %w", err)
+	}
 	n.mu.Lock()
 	conn := n.conn
 	n.mu.Unlock()
@@ -99,6 +163,11 @@ func (n *Node) Send(data []byte, isText bool) error {
 	if isText {
 		msgType = websocket.TextMessage
 	}
+
+	n.writeMu.Lock()
+	defer n.writeMu.Unlock()
+	deadline, _ := ctx.Deadline() // zero time clears any earlier deadline
+	_ = conn.SetWriteDeadline(deadline)
 	return conn.WriteMessage(msgType, data)
 }
 
@@ -110,7 +179,9 @@ func (n *Node) OnMessage(handler func(data []byte, isText bool)) {
 	n.onMessage = append(n.onMessage, handler)
 }
 
-// Close stops the reconnect loop and closes the current connection, if any.
+// Close stops the reconnect loop (interrupting a dial or back-off wait in
+// progress), closes the current connection, if any, and waits for the loop
+// goroutine to exit.
 func (n *Node) Close() error {
 	n.mu.Lock()
 	if n.closed {
@@ -118,12 +189,19 @@ func (n *Node) Close() error {
 		return nil
 	}
 	n.closed = true
-	close(n.stopCh)
+	cancel := n.cancel
+	loopDone := n.loopDone
 	conn := n.conn
 	n.mu.Unlock()
 
+	if cancel != nil {
+		cancel()
+	}
 	if conn != nil {
 		conn.Close()
+	}
+	if loopDone != nil {
+		<-loopDone
 	}
 	return nil
 }
@@ -153,8 +231,12 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 	if err := n.Validate(); err != nil {
 		return err
 	}
-	n.stopCh = make(chan struct{})
-	go n.connectLoop()
+	ctx, cancel := context.WithCancel(context.Background())
+	n.mu.Lock()
+	n.cancel = cancel
+	n.loopDone = make(chan struct{})
+	n.mu.Unlock()
+	go n.connectLoop(ctx)
 	return nil
 }
 

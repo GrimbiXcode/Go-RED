@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/nodes/httpin"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
@@ -119,8 +120,8 @@ func init() {
 					Type:        "number",
 					Description: "Fixed status code; 0 uses msg.statusCode, defaulting to 200",
 					Default:     float64(0),
-					Min:         floatPtr(0),
-					Max:         floatPtr(599),
+					Min:         base.FloatPtr(0),
+					Max:         base.FloatPtr(599),
 					Label:       "Status code",
 					Placeholder: "200",
 					Order:       1,
@@ -136,5 +137,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

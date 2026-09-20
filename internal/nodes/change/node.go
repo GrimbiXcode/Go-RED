@@ -9,11 +9,11 @@
 package change
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 	"strings"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/typedvalue"
 )
@@ -42,8 +42,8 @@ type Node struct {
 
 // Execute applies Rules in order to a copy of input.
 func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
-	output := cloneMap(input)
-	valueResolver, propResolver := resolvers(ctx, output)
+	output := base.CloneMap(input)
+	valueResolver, propResolver := base.Resolvers(ctx, output)
 
 	for i, rule := range n.Rules {
 		if err := applyRule(rule, valueResolver, propResolver); err != nil {
@@ -111,9 +111,9 @@ func (n *Node) GetConfig() map[string]interface{} {
 	for i, r := range n.Rules {
 		rules[i] = map[string]interface{}{
 			"action":    r.Action,
-			"target":    propertyRefToConfig(r.Target),
-			"value":     valueToConfig(r.Value),
-			"moveTo":    propertyRefToConfig(r.MoveTo),
+			"target":    base.PropertyRefToConfig(r.Target),
+			"value":     base.ValueToConfig(r.Value),
+			"moveTo":    base.PropertyRefToConfig(r.MoveTo),
 			"from":      r.From,
 			"to":        r.To,
 			"fromRegex": r.FromRegex,
@@ -140,81 +140,15 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 
 		n.Rules = append(n.Rules, Rule{
 			Action:    action,
-			Target:    parsePropertyRef(rm["target"], typedvalue.PropertyRef{}),
-			Value:     parseValue(rm["value"]),
-			MoveTo:    parsePropertyRef(rm["moveTo"], typedvalue.PropertyRef{}),
+			Target:    base.ParsePropertyRef(rm["target"], typedvalue.PropertyRef{}),
+			Value:     base.ParseValue(rm["value"]),
+			MoveTo:    base.ParsePropertyRef(rm["moveTo"], typedvalue.PropertyRef{}),
 			From:      from,
 			To:        to,
 			FromRegex: fromRegex,
 		})
 	}
 	return n.Validate()
-}
-
-// resolvers builds the typedvalue Resolver/PropertyResolver pair for this
-// invocation, nil-safe against registry.NodeRuntime's FlowContext/
-// GlobalContext being nil *registry.ContextStore pointers (see
-// switchnode.resolvers for why this can't be a naive field assignment).
-func resolvers(ctx interface{}, output map[string]interface{}) (typedvalue.Resolver, typedvalue.PropertyResolver) {
-	valueResolver := typedvalue.Resolver{Message: output}
-	propResolver := typedvalue.PropertyResolver{Message: output}
-
-	c, ok := ctx.(context.Context)
-	if !ok {
-		return valueResolver, propResolver
-	}
-	rt, ok := registry.RuntimeFromContext(c)
-	if !ok {
-		return valueResolver, propResolver
-	}
-	if rt.FlowContext != nil {
-		valueResolver.FlowContext = rt.FlowContext
-		propResolver.FlowContext = rt.FlowContext
-	}
-	if rt.GlobalContext != nil {
-		valueResolver.GlobalContext = rt.GlobalContext
-		propResolver.GlobalContext = rt.GlobalContext
-	}
-	return valueResolver, propResolver
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func parsePropertyRef(raw interface{}, def typedvalue.PropertyRef) typedvalue.PropertyRef {
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return def
-	}
-	t, _ := m["type"].(string)
-	p, _ := m["path"].(string)
-	if t == "" {
-		return def
-	}
-	return typedvalue.PropertyRef{Type: typedvalue.Type(t), Path: p}
-}
-
-func propertyRefToConfig(ref typedvalue.PropertyRef) map[string]interface{} {
-	return map[string]interface{}{"type": string(ref.Type), "path": ref.Path}
-}
-
-func parseValue(raw interface{}) typedvalue.Value {
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return typedvalue.Value{}
-	}
-	t, _ := m["type"].(string)
-	v, _ := m["value"].(string)
-	return typedvalue.Value{Type: typedvalue.Type(t), Value: v}
-}
-
-func valueToConfig(v typedvalue.Value) map[string]interface{} {
-	return map[string]interface{}{"type": string(v.Type), "value": v.Value}
 }
 
 func init() {

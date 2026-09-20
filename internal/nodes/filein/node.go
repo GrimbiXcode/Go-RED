@@ -22,11 +22,11 @@
 package filein
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/typedvalue"
 	"github.com/google/uuid"
@@ -49,7 +49,7 @@ type Node struct {
 // first line via the normal return with the rest dispatched through
 // SubmitToNode.
 func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[string]map[string]interface{}, error) {
-	valueResolver, _ := resolvers(ctx, input)
+	valueResolver, _ := base.Resolvers(ctx, input)
 	raw, err := n.Filename.Resolve(valueResolver)
 	if err != nil {
 		return nil, fmt.Errorf("filein: %w", err)
@@ -68,12 +68,12 @@ func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[
 	case "lines":
 		return n.executeLines(ctx, input, filename, data)
 	case "utf8":
-		out := cloneMap(input)
+		out := base.CloneMap(input)
 		out["filename"] = filename
 		out["payload"] = string(data)
 		return map[string]map[string]interface{}{"output": out}, nil
 	default:
-		out := cloneMap(input)
+		out := base.CloneMap(input)
 		out["filename"] = filename
 		out["payload"] = data
 		return map[string]map[string]interface{}{"output": out}, nil
@@ -88,7 +88,7 @@ func (n *Node) executeLines(ctx interface{}, input map[string]interface{}, filen
 	for i, line := range lines {
 		var m map[string]interface{}
 		if n.AllProps {
-			m = cloneMap(input)
+			m = base.CloneMap(input)
 		} else {
 			m = map[string]interface{}{}
 			if topic, ok := input["topic"]; ok {
@@ -107,7 +107,7 @@ func (n *Node) executeLines(ctx interface{}, input map[string]interface{}, filen
 		return map[string]map[string]interface{}{}, nil
 	}
 
-	if rt, ok := runtimeFrom(ctx); ok {
+	if rt, ok := base.Runtime(ctx); ok {
 		for _, m := range msgs[1:] {
 			rt.SubmitToNode(rt.NodeID, m)
 		}
@@ -148,14 +148,14 @@ func (n *Node) Validate() error {
 
 func (n *Node) GetConfig() map[string]interface{} {
 	return map[string]interface{}{
-		"filename": valueToConfig(n.Filename),
+		"filename": base.ValueToConfig(n.Filename),
 		"format":   n.Format,
 		"allProps": n.AllProps,
 	}
 }
 
 func (n *Node) SetConfig(config map[string]interface{}) error {
-	n.Filename = parseValue(config["filename"])
+	n.Filename = base.ParseValue(config["filename"])
 	if f, ok := config["format"].(string); ok {
 		n.Format = f
 	}
@@ -163,55 +163,6 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 		n.AllProps = ap
 	}
 	return n.Validate()
-}
-
-func runtimeFrom(ctx interface{}) (*registry.NodeRuntime, bool) {
-	c, ok := ctx.(context.Context)
-	if !ok {
-		return nil, false
-	}
-	return registry.RuntimeFromContext(c)
-}
-
-func resolvers(ctx interface{}, input map[string]interface{}) (typedvalue.Resolver, typedvalue.PropertyResolver) {
-	valueResolver := typedvalue.Resolver{Message: input}
-	propResolver := typedvalue.PropertyResolver{Message: input}
-
-	rt, ok := runtimeFrom(ctx)
-	if !ok {
-		return valueResolver, propResolver
-	}
-	if rt.FlowContext != nil {
-		valueResolver.FlowContext = rt.FlowContext
-		propResolver.FlowContext = rt.FlowContext
-	}
-	if rt.GlobalContext != nil {
-		valueResolver.GlobalContext = rt.GlobalContext
-		propResolver.GlobalContext = rt.GlobalContext
-	}
-	return valueResolver, propResolver
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func parseValue(raw interface{}) typedvalue.Value {
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return typedvalue.Value{}
-	}
-	t, _ := m["type"].(string)
-	v, _ := m["value"].(string)
-	return typedvalue.Value{Type: typedvalue.Type(t), Value: v}
-}
-
-func valueToConfig(v typedvalue.Value) map[string]interface{} {
-	return map[string]interface{}{"type": string(v.Type), "value": v.Value}
 }
 
 func init() {

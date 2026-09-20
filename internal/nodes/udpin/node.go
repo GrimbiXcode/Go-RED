@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -126,8 +127,8 @@ func init() {
 					Type:        "number",
 					Description: "Port to listen on",
 					Default:     float64(0),
-					Min:         floatPtr(1),
-					Max:         floatPtr(65535),
+					Min:         base.FloatPtr(1),
+					Max:         base.FloatPtr(65535),
 					Label:       "Port",
 					Order:       1,
 					Widget:      "number",
@@ -152,5 +153,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

@@ -40,7 +40,13 @@ func (n *Node) Start(ctx context.Context, emit func(payload map[string]interface
 		return fmt.Errorf("websocket in: node %q is not a websocket-listener/websocket-client", n.Server)
 	}
 
+	// The handler stays registered on the (shared, per-flow) config node
+	// for that node's lifetime, so it guards on ctx itself: nothing is
+	// emitted for a flow that has been undeployed.
 	provider.OnMessage(func(data []byte, isText bool) {
+		if ctx.Err() != nil {
+			return
+		}
 		emit(map[string]interface{}{
 			"payload": string(data),
 			"isText":  isText,

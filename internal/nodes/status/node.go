@@ -10,6 +10,7 @@ package status
 import (
 	"context"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -28,11 +29,11 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 func (n *Node) Validate() error { return nil }
 
 func (n *Node) GetConfig() map[string]interface{} {
-	return map[string]interface{}{"scope": scopeToConfig(n.Scope)}
+	return map[string]interface{}{"scope": base.StringsToConfig(n.Scope)}
 }
 
 func (n *Node) SetConfig(config map[string]interface{}) error {
-	n.Scope = scopeFromConfig(config["scope"])
+	n.Scope = base.Config(config).StringSlice("scope")
 	return nil
 }
 
@@ -85,28 +86,6 @@ func (n *Node) Start(ctx context.Context, emit func(map[string]interface{})) err
 	registry.SignalReady(ctx)
 	<-ctx.Done()
 	return nil
-}
-
-func scopeToConfig(scope []string) []interface{} {
-	out := make([]interface{}, len(scope))
-	for i, s := range scope {
-		out[i] = s
-	}
-	return out
-}
-
-func scopeFromConfig(raw interface{}) []string {
-	items, ok := raw.([]interface{})
-	if !ok {
-		return nil
-	}
-	var scope []string
-	for _, v := range items {
-		if s, ok := v.(string); ok {
-			scope = append(scope, s)
-		}
-	}
-	return scope
 }
 
 func init() {

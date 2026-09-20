@@ -37,6 +37,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -46,6 +47,10 @@ const enableEnvVar = "GORED_ENABLE_EXEC"
 
 // maxOutputBytes caps how much of stdout/stderr is captured per run.
 const maxOutputBytes = 1 << 20 // 1 MiB
+
+// waitDelay bounds how long Execute waits for the command's output pipes to
+// close after the process itself has been killed (exec.Cmd.WaitDelay).
+const waitDelay = 5 * time.Second
 
 // Node holds an Exec node's configuration.
 type Node struct {
@@ -97,6 +102,10 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 	// passing, not shell parsing - see the security note in the package
 	// doc for why this matters.
 	cmd := exec.CommandContext(execCtx, n.Command, args...)
+	// After the context kills the process, Run still waits for the
+	// stdout/stderr pipes to close - which a grandchild that inherited them
+	// could hold open forever. WaitDelay bounds that wait.
+	cmd.WaitDelay = waitDelay
 
 	var stdout, stderr limitedBuffer
 	stdout.max = maxOutputBytes
@@ -106,7 +115,12 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 
 	runErr := cmd.Run()
 
-	if runErr != nil && execCtx.Err() == context.DeadlineExceeded {
+	if runErr != nil && execCtx.Err() != nil {
+		if perr := parent.Err(); perr != nil {
+			// The per-message context ended first (undeploy or the
+			// engine's node timeout), not this node's own TimeoutMs.
+			return nil, fmt.Errorf("exec: %w", perr)
+		}
 		return nil, fmt.Errorf("exec: command timed out after %s", timeout)
 	}
 
@@ -120,7 +134,7 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 		}
 	}
 
-	output := cloneMap(input)
+	output := base.CloneMap(input)
 	output["payload"] = stdout.String()
 	output["stderr"] = stderr.String()
 	output["exitCode"] = float64(exitCode)
@@ -221,14 +235,6 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 	return n.Validate()
 }
 
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
 func init() {
 	reg := registry.GetGlobalRegistry()
 	err := reg.RegisterFactory("exec", func() registry.NodeExecutor {
@@ -276,7 +282,7 @@ func init() {
 					Type:        "number",
 					Description: "Maximum run time in milliseconds",
 					Default:     float64(30000),
-					Min:         floatPtr(0),
+					Min:         base.FloatPtr(0),
 					Label:       "Timeout",
 					Order:       4,
 					Widget:      "duration",
@@ -293,5 +299,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

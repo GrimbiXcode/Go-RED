@@ -12,12 +12,13 @@
 package tcpout
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"net"
 	"strconv"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -30,43 +31,45 @@ type Node struct {
 }
 
 // Execute dials Host:Port, writes input's payload, and closes the
-// connection.
+// connection. The dial and the write are both bounded by the per-message
+// context: its deadline becomes the connection's write deadline, and its
+// cancellation closes the connection so a stalled write returns.
 func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
-	data, err := toBytes(input["payload"])
+	c := base.Context(ctx)
+
+	data, err := base.ToBytes(input["payload"])
 	if err != nil {
 		return nil, fmt.Errorf("tcp out: %w", err)
 	}
 
 	addr := net.JoinHostPort(n.Host, strconv.Itoa(n.Port))
-	conn, err := net.DialTimeout("tcp", addr, dialTimeout)
+	dialer := &net.Dialer{Timeout: dialTimeout}
+	conn, err := dialer.DialContext(c, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("tcp out: %w", err)
+		return nil, fmt.Errorf("tcp out: %w", wrapCtxErr(c, err))
 	}
 	defer conn.Close()
 
+	if d, ok := c.Deadline(); ok {
+		_ = conn.SetDeadline(d)
+	}
+	stop := context.AfterFunc(c, func() { conn.Close() })
+	defer stop()
+
 	if _, err := conn.Write(data); err != nil {
-		return nil, fmt.Errorf("tcp out: %w", err)
+		return nil, fmt.Errorf("tcp out: %w", wrapCtxErr(c, err))
 	}
 	return input, nil
 }
 
-func toBytes(payload interface{}) ([]byte, error) {
-	switch v := payload.(type) {
-	case []byte:
-		return v, nil
-	case string:
-		return []byte(v), nil
-	case nil:
-		return []byte{}, nil
-	case bool, float64:
-		return []byte(fmt.Sprint(v)), nil
-	default:
-		encoded, err := json.Marshal(v)
-		if err != nil {
-			return nil, fmt.Errorf("payload cannot be encoded: %w", err)
-		}
-		return encoded, nil
+// wrapCtxErr attaches the context's own error (context.Canceled or
+// context.DeadlineExceeded) to a network error that was caused by that
+// context ending, so callers can errors.Is against the context error.
+func wrapCtxErr(ctx context.Context, err error) error {
+	if cerr := ctx.Err(); cerr != nil {
+		return fmt.Errorf("%w: %w", cerr, err)
 	}
+	return err
 }
 
 func (n *Node) Validate() error {
@@ -123,8 +126,8 @@ func init() {
 					Type:        "number",
 					Description: "Remote port",
 					Default:     float64(0),
-					Min:         floatPtr(1),
-					Max:         floatPtr(65535),
+					Min:         base.FloatPtr(1),
+					Max:         base.FloatPtr(65535),
 					Label:       "Port",
 					Order:       2,
 					Widget:      "number",
@@ -140,5 +143,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

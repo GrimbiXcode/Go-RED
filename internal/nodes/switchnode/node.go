@@ -18,12 +18,12 @@
 package switchnode
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/typedvalue"
 )
@@ -49,7 +49,7 @@ type Node struct {
 // ExecuteMulti evaluates Rules against Property and routes to output port
 // "<rule index>" for each match.
 func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[string]map[string]interface{}, error) {
-	valueResolver, propResolver := resolvers(ctx, input)
+	valueResolver, propResolver := base.Resolvers(ctx, input)
 	testVal, testExists := n.Property.Get(propResolver)
 
 	outputs := make(map[string]map[string]interface{})
@@ -61,7 +61,7 @@ func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[
 		if !matched {
 			continue
 		}
-		outputs[strconv.Itoa(i)] = cloneMap(input)
+		outputs[strconv.Itoa(i)] = base.CloneMap(input)
 		if !n.CheckAll {
 			break
 		}
@@ -84,19 +84,19 @@ func (n *Node) GetConfig() map[string]interface{} {
 	for i, r := range n.Rules {
 		rules[i] = map[string]interface{}{
 			"operator": r.Operator,
-			"value":    valueToConfig(r.Value),
-			"value2":   valueToConfig(r.Value2),
+			"value":    base.ValueToConfig(r.Value),
+			"value2":   base.ValueToConfig(r.Value2),
 		}
 	}
 	return map[string]interface{}{
-		"property": propertyRefToConfig(n.Property),
+		"property": base.PropertyRefToConfig(n.Property),
 		"checkAll": n.CheckAll,
 		"rules":    rules,
 	}
 }
 
 func (n *Node) SetConfig(config map[string]interface{}) error {
-	n.Property = parsePropertyRef(config["property"], typedvalue.PropertyRef{Type: typedvalue.TypeMsg, Path: "payload"})
+	n.Property = base.ParsePropertyRef(config["property"], typedvalue.PropertyRef{Type: typedvalue.TypeMsg, Path: "payload"})
 
 	n.CheckAll = true
 	if checkAll, ok := config["checkAll"].(bool); ok {
@@ -113,43 +113,12 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 			operator, _ := rm["operator"].(string)
 			n.Rules = append(n.Rules, Rule{
 				Operator: operator,
-				Value:    parseValue(rm["value"]),
-				Value2:   parseValue(rm["value2"]),
+				Value:    base.ParseValue(rm["value"]),
+				Value2:   base.ParseValue(rm["value2"]),
 			})
 		}
 	}
 	return n.Validate()
-}
-
-// resolvers builds the typedvalue Resolver/PropertyResolver pair for this
-// invocation. registry.NodeRuntime's FlowContext/GlobalContext are
-// *registry.ContextStore, which can be nil (no runtime, e.g. a direct unit
-// test) - checking that on the concrete pointer, before it is boxed into an
-// interface field, is required: a nil *registry.ContextStore stored in a
-// typedvalue.ContextGetter/ContextAccessor interface value is NOT a nil
-// interface, so a naive "FlowContext: rt.FlowContext" would make
-// PropertyRef/Value's own nil checks useless and panic on first use.
-func resolvers(ctx interface{}, input map[string]interface{}) (typedvalue.Resolver, typedvalue.PropertyResolver) {
-	valueResolver := typedvalue.Resolver{Message: input}
-	propResolver := typedvalue.PropertyResolver{Message: input}
-
-	c, ok := ctx.(context.Context)
-	if !ok {
-		return valueResolver, propResolver
-	}
-	rt, ok := registry.RuntimeFromContext(c)
-	if !ok {
-		return valueResolver, propResolver
-	}
-	if rt.FlowContext != nil {
-		valueResolver.FlowContext = rt.FlowContext
-		propResolver.FlowContext = rt.FlowContext
-	}
-	if rt.GlobalContext != nil {
-		valueResolver.GlobalContext = rt.GlobalContext
-		propResolver.GlobalContext = rt.GlobalContext
-	}
-	return valueResolver, propResolver
 }
 
 func evaluateRule(rule Rule, testVal interface{}, testExists bool, resolver typedvalue.Resolver) (bool, error) {
@@ -203,13 +172,13 @@ func evaluateRule(rule Rule, testVal interface{}, testExists bool, resolver type
 		}
 		return compare(testVal, ruleVal) >= 0 && compare(testVal, val2) <= 0, nil
 	case "cont":
-		return strings.Contains(toStr(testVal), toStr(ruleVal)), nil
+		return strings.Contains(base.ToString(testVal), base.ToString(ruleVal)), nil
 	case "regex":
-		re, err := regexp.Compile(toStr(ruleVal))
+		re, err := regexp.Compile(base.ToString(ruleVal))
 		if err != nil {
-			return false, fmt.Errorf("invalid regex %q: %w", toStr(ruleVal), err)
+			return false, fmt.Errorf("invalid regex %q: %w", base.ToString(ruleVal), err)
 		}
-		return re.MatchString(toStr(testVal)), nil
+		return re.MatchString(base.ToString(testVal)), nil
 	default:
 		return false, fmt.Errorf("unsupported operator %q", rule.Operator)
 	}
@@ -218,8 +187,8 @@ func evaluateRule(rule Rule, testVal interface{}, testExists bool, resolver type
 // compare returns -1/0/1. Both sides are compared numerically if they both
 // parse as a number, otherwise lexicographically as strings.
 func compare(a, b interface{}) int {
-	if af, aok := toFloat(a); aok {
-		if bf, bok := toFloat(b); bok {
+	if af, aok := base.ParseFloat(a); aok {
+		if bf, bok := base.ParseFloat(b); bok {
 			switch {
 			case af < bf:
 				return -1
@@ -230,39 +199,16 @@ func compare(a, b interface{}) int {
 			}
 		}
 	}
-	return strings.Compare(toStr(a), toStr(b))
+	return strings.Compare(base.ToString(a), base.ToString(b))
 }
 
 func looseEqual(a, b interface{}) bool {
-	if af, aok := toFloat(a); aok {
-		if bf, bok := toFloat(b); bok {
+	if af, aok := base.ParseFloat(a); aok {
+		if bf, bok := base.ParseFloat(b); bok {
 			return af == bf
 		}
 	}
-	return toStr(a) == toStr(b)
-}
-
-func toFloat(v interface{}) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case int:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case string:
-		f, err := strconv.ParseFloat(n, 64)
-		return f, err == nil
-	default:
-		return 0, false
-	}
-}
-
-func toStr(v interface{}) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return fmt.Sprintf("%v", v)
+	return base.ToString(a) == base.ToString(b)
 }
 
 func isEmpty(v interface{}) bool {
@@ -278,45 +224,6 @@ func isEmpty(v interface{}) bool {
 	default:
 		return false
 	}
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func parsePropertyRef(raw interface{}, def typedvalue.PropertyRef) typedvalue.PropertyRef {
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return def
-	}
-	t, _ := m["type"].(string)
-	p, _ := m["path"].(string)
-	if t == "" {
-		return def
-	}
-	return typedvalue.PropertyRef{Type: typedvalue.Type(t), Path: p}
-}
-
-func propertyRefToConfig(ref typedvalue.PropertyRef) map[string]interface{} {
-	return map[string]interface{}{"type": string(ref.Type), "path": ref.Path}
-}
-
-func parseValue(raw interface{}) typedvalue.Value {
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return typedvalue.Value{}
-	}
-	t, _ := m["type"].(string)
-	v, _ := m["value"].(string)
-	return typedvalue.Value{Type: typedvalue.Type(t), Value: v}
-}
-
-func valueToConfig(v typedvalue.Value) map[string]interface{} {
-	return map[string]interface{}{"type": string(v.Type), "value": v.Value}
 }
 
 func init() {

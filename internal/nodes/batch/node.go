@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -40,13 +41,13 @@ type Node struct {
 func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[string]map[string]interface{}, error) {
 	if n.Mode == "interval" {
 		n.mu.Lock()
-		n.buffer = append(n.buffer, cloneMap(input))
+		n.buffer = append(n.buffer, base.CloneMap(input))
 		n.mu.Unlock()
 		return map[string]map[string]interface{}{}, nil
 	}
 
 	n.mu.Lock()
-	n.buffer = append(n.buffer, cloneMap(input))
+	n.buffer = append(n.buffer, base.CloneMap(input))
 	var flushed []map[string]interface{}
 	if len(n.buffer) >= n.Count {
 		flushed = n.buffer
@@ -62,8 +63,10 @@ func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[
 
 // Start flushes whatever is buffered every IntervalMs, in "interval" mode
 // only. In "count" mode there's nothing to do on a schedule; Start simply
-// waits for ctx to be cancelled.
+// waits for ctx to be cancelled. Either way, whatever is still buffered
+// when ctx ends is dropped (the flow is being undeployed).
 func (n *Node) Start(ctx context.Context, emit func(map[string]interface{})) error {
+	defer n.clearBuffer()
 	if n.Mode != "interval" {
 		<-ctx.Done()
 		return nil
@@ -88,6 +91,20 @@ func (n *Node) Start(ctx context.Context, emit func(map[string]interface{})) err
 	}
 }
 
+// Close drops any buffered messages (registry.Closeable): the engine calls
+// it after Start has returned, so this only matters for a node that was
+// never started (a failed Deploy).
+func (n *Node) Close() error {
+	n.clearBuffer()
+	return nil
+}
+
+func (n *Node) clearBuffer() {
+	n.mu.Lock()
+	n.buffer = nil
+	n.mu.Unlock()
+}
+
 func assemble(msgs []map[string]interface{}) map[string]interface{} {
 	payloads := make([]interface{}, len(msgs))
 	for i, m := range msgs {
@@ -96,7 +113,7 @@ func assemble(msgs []map[string]interface{}) map[string]interface{} {
 	// The combined message otherwise takes its non-payload fields (topic,
 	// etc.) from the first buffered message, same as Join does for its
 	// reassembled message.
-	out := cloneMap(msgs[0])
+	out := base.CloneMap(msgs[0])
 	out["payload"] = payloads
 	return out
 }
@@ -151,14 +168,6 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 	return n.Validate()
 }
 
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
 func init() {
 	reg := registry.GetGlobalRegistry()
 	err := reg.RegisterFactory("batch", func() registry.NodeExecutor {
@@ -190,7 +199,7 @@ func init() {
 					Type:        "number",
 					Description: "Messages per batch (count mode)",
 					Default:     float64(10),
-					Min:         floatPtr(1),
+					Min:         base.FloatPtr(1),
 					Label:       "Count",
 					Order:       2,
 					Widget:      "number",
@@ -200,7 +209,7 @@ func init() {
 					Type:        "number",
 					Description: "Flush period in milliseconds (interval mode)",
 					Default:     float64(1000),
-					Min:         floatPtr(1),
+					Min:         base.FloatPtr(1),
 					Label:       "Interval",
 					Order:       3,
 					Widget:      "duration",
@@ -217,5 +226,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

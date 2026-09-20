@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/fsnotify/fsnotify"
 )
@@ -61,7 +62,7 @@ func (n *Node) Start(ctx context.Context, emit func(payload map[string]interface
 		}
 	}
 
-	rt, _ := runtimeFrom(ctx)
+	rt, _ := base.Runtime(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -125,14 +126,6 @@ func (n *Node) topic() string {
 		return n.Files[0]
 	}
 	return strings.Join(n.Files, ",")
-}
-
-func runtimeFrom(ctx interface{}) (*registry.NodeRuntime, bool) {
-	c, ok := ctx.(context.Context)
-	if !ok {
-		return nil, false
-	}
-	return registry.RuntimeFromContext(c)
 }
 
 // Execute exists only to satisfy registry.NodeExecutor (embedded in

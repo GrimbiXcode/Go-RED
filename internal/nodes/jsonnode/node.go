@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -22,7 +23,7 @@ type Node struct {
 // Execute parses input["payload"] if it's a string, or marshals it to a
 // JSON string otherwise.
 func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
-	output := cloneMap(input)
+	output := base.CloneMap(input)
 
 	switch payload := input["payload"].(type) {
 	case string:
@@ -60,14 +61,6 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 		n.Pretty = p
 	}
 	return n.Validate()
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
 }
 
 func init() {

@@ -6,10 +6,23 @@ package mqttin
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/nodes/mqttbroker"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+)
+
+const (
+	// subscribeTimeout bounds how long an OnConnect handler waits for the
+	// broker's SUBACK before giving up on that attempt (the flow context
+	// can cut it shorter).
+	subscribeTimeout = 10 * time.Second
+	// unsubscribeTimeout bounds how long Start waits for the UNSUBACK when
+	// the flow is undeployed, so Undeploy cannot hang on a wedged broker.
+	unsubscribeTimeout = time.Second
 )
 
 // Node holds an MQTT-in node's configuration.
@@ -18,12 +31,19 @@ type Node struct {
 	Broker string
 	Topic  string
 	QoS    byte
+
+	mu sync.Mutex
+	// client is the paho client the subscription was last applied on, so
+	// Start can unsubscribe from it when the flow context ends.
+	client mqtt.Client
 }
 
 // Start resolves Broker via registry.NodeRuntime.GetNode, then registers a
 // subscription (through mqttbroker.Broker.OnConnect, so it is (re)applied
 // on every connect) that emits one message per received publish, until ctx
-// is cancelled.
+// is cancelled - at which point the subscription is removed again and no
+// further message is emitted, even if the shared broker connection stays
+// up for other flows.
 func (n *Node) Start(ctx context.Context, emit func(payload map[string]interface{})) error {
 	rt, ok := registry.RuntimeFromContext(ctx)
 	if !ok {
@@ -40,8 +60,14 @@ func (n *Node) Start(ctx context.Context, emit func(payload map[string]interface
 
 	rt.ReportStatus("connecting", "")
 	broker.OnConnect(func(client mqtt.Client) {
+		if ctx.Err() != nil {
+			return // flow already undeployed; a late reconnect must not resubscribe
+		}
 		rt.ReportStatus("connected", n.Topic)
 		token := client.Subscribe(n.Topic, n.QoS, func(_ mqtt.Client, msg mqtt.Message) {
+			if ctx.Err() != nil {
+				return
+			}
 			emit(map[string]interface{}{
 				"topic":   msg.Topic(),
 				"payload": string(msg.Payload()),
@@ -49,11 +75,42 @@ func (n *Node) Start(ctx context.Context, emit func(payload map[string]interface
 				"retain":  msg.Retained(),
 			})
 		})
-		token.Wait()
+		n.mu.Lock()
+		n.client = client
+		n.mu.Unlock()
+		if err := awaitToken(ctx, token, subscribeTimeout); err != nil && ctx.Err() == nil {
+			rt.ReportError(fmt.Errorf("mqtt in: subscribe to %q: %w", n.Topic, err))
+		}
 	})
 
 	<-ctx.Done()
+
+	n.mu.Lock()
+	client := n.client
+	n.client = nil
+	n.mu.Unlock()
+	if client != nil {
+		// Bounded wait only: the broker may be gone, and Undeploy is
+		// waiting on this Start to return.
+		client.Unsubscribe(n.Topic).WaitTimeout(unsubscribeTimeout)
+	}
 	return nil
+}
+
+// awaitToken waits for token to complete, giving up when ctx ends or
+// after timeout, whichever comes first (paho's own token.Wait blocks
+// indefinitely and cannot be interrupted by a context).
+func awaitToken(ctx context.Context, token mqtt.Token, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-token.Done():
+		return token.Error()
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return fmt.Errorf("timed out after %s", timeout)
+	}
 }
 
 // Execute exists only to satisfy registry.NodeExecutor (embedded in
@@ -135,8 +192,8 @@ func init() {
 					Type:        "number",
 					Description: "MQTT QoS (0, 1, or 2)",
 					Default:     float64(0),
-					Min:         floatPtr(0),
-					Max:         floatPtr(2),
+					Min:         base.FloatPtr(0),
+					Max:         base.FloatPtr(2),
 					Label:       "QoS",
 					Order:       3,
 					Widget:      "number",
@@ -152,5 +209,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

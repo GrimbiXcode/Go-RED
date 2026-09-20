@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/typedvalue"
 )
@@ -43,11 +44,18 @@ type Node struct {
 }
 
 // Execute sends FirstPayload immediately and, if configured, schedules
-// SecondPayload for DelayMs later.
+// SecondPayload for DelayMs later. A per-message context that has already
+// ended is honored: nothing is sent or scheduled and its error is
+// returned.
 func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
-	valueResolver := resolver(ctx, input)
+	if c, ok := ctx.(context.Context); ok {
+		if err := c.Err(); err != nil {
+			return nil, fmt.Errorf("trigger: %w", err)
+		}
+	}
+	valueResolver := base.Resolver(ctx, input)
 
-	first := cloneMap(input)
+	first := base.CloneMap(input)
 	if n.FirstPayload.Type != "" {
 		val, err := n.FirstPayload.Resolve(valueResolver)
 		if err != nil {
@@ -57,12 +65,12 @@ func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[strin
 	}
 
 	if n.SecondPayload.Type != "" {
-		if rt, ok := runtimeFrom(ctx); ok {
+		if rt, ok := base.Runtime(ctx); ok {
 			val, err := n.SecondPayload.Resolve(valueResolver)
 			if err != nil {
 				return nil, fmt.Errorf("trigger: second payload: %w", err)
 			}
-			second := cloneMap(input)
+			second := base.CloneMap(input)
 			second["payload"] = val
 			n.scheduleSecond(rt, second)
 		}
@@ -90,6 +98,15 @@ func (n *Node) scheduleSecond(rt *registry.NodeRuntime, payload map[string]inter
 	}
 
 	timer := time.AfterFunc(time.Duration(n.DelayMs)*time.Millisecond, func() {
+		// A timer whose callback had already started when Close called
+		// Stop still runs to here; re-check so nothing is submitted to
+		// a flow that is being undeployed.
+		n.mu.Lock()
+		closed := n.closed
+		n.mu.Unlock()
+		if closed {
+			return
+		}
 		rt.SubmitToNode(rt.NodeID, payload)
 	})
 	n.timers = append(n.timers, timer)
@@ -117,73 +134,24 @@ func (n *Node) Validate() error {
 
 func (n *Node) GetConfig() map[string]interface{} {
 	return map[string]interface{}{
-		"firstPayload":  valueToConfig(n.FirstPayload),
-		"secondPayload": valueToConfig(n.SecondPayload),
+		"firstPayload":  base.ValueToConfig(n.FirstPayload),
+		"secondPayload": base.ValueToConfig(n.SecondPayload),
 		"delayMs":       n.DelayMs,
 	}
 }
 
 func (n *Node) SetConfig(config map[string]interface{}) error {
-	n.FirstPayload = parseValue(config["firstPayload"])
+	n.FirstPayload = base.ParseValue(config["firstPayload"])
 	if n.FirstPayload.Type == "" {
 		n.FirstPayload = typedvalue.Value{Type: typedvalue.TypeMsg, Value: "payload"}
 	}
-	n.SecondPayload = parseValue(config["secondPayload"])
+	n.SecondPayload = base.ParseValue(config["secondPayload"])
 
 	n.DelayMs = 250
 	if d, ok := config["delayMs"].(float64); ok {
 		n.DelayMs = int64(d)
 	}
 	return n.Validate()
-}
-
-func runtimeFrom(ctx interface{}) (*registry.NodeRuntime, bool) {
-	c, ok := ctx.(context.Context)
-	if !ok {
-		return nil, false
-	}
-	return registry.RuntimeFromContext(c)
-}
-
-// resolver builds the typedvalue.Resolver for this invocation, nil-safe
-// against registry.NodeRuntime's FlowContext/GlobalContext being nil
-// *registry.ContextStore pointers (see switchnode.resolvers for why this
-// can't be a naive field assignment).
-func resolver(ctx interface{}, input map[string]interface{}) typedvalue.Resolver {
-	r := typedvalue.Resolver{Message: input}
-	rt, ok := runtimeFrom(ctx)
-	if !ok {
-		return r
-	}
-	if rt.FlowContext != nil {
-		r.FlowContext = rt.FlowContext
-	}
-	if rt.GlobalContext != nil {
-		r.GlobalContext = rt.GlobalContext
-	}
-	return r
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func parseValue(raw interface{}) typedvalue.Value {
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return typedvalue.Value{}
-	}
-	t, _ := m["type"].(string)
-	v, _ := m["value"].(string)
-	return typedvalue.Value{Type: typedvalue.Type(t), Value: v}
-}
-
-func valueToConfig(v typedvalue.Value) map[string]interface{} {
-	return map[string]interface{}{"type": string(v.Type), "value": v.Value}
 }
 
 func init() {
@@ -220,7 +188,7 @@ func init() {
 					Type:        "number",
 					Description: "Delay in milliseconds before the second send",
 					Default:     float64(250),
-					Min:         floatPtr(0),
+					Min:         base.FloatPtr(0),
 					Label:       "then wait",
 					Order:       2,
 					Widget:      "duration",
@@ -245,5 +213,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

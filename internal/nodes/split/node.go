@@ -20,11 +20,11 @@
 package split
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/typedvalue"
 	"github.com/google/uuid"
@@ -44,7 +44,7 @@ type Node struct {
 // ExecuteMulti splits Property and returns the first resulting message on
 // the "output" port, dispatching any remaining ones via SubmitToNode.
 func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[string]map[string]interface{}, error) {
-	_, propResolver := resolvers(ctx, input)
+	_, propResolver := base.Resolvers(ctx, input)
 	val, exists := n.Property.Get(propResolver)
 	if !exists {
 		return nil, fmt.Errorf("split: property not found")
@@ -86,7 +86,7 @@ func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[
 		return map[string]map[string]interface{}{}, nil
 	}
 
-	if rt, ok := runtimeFrom(ctx); ok {
+	if rt, ok := base.Runtime(ctx); ok {
 		for _, p := range parts[1:] {
 			rt.SubmitToNode(rt.NodeID, p)
 		}
@@ -111,7 +111,7 @@ func (n *Node) splitArray(arr []interface{}, input map[string]interface{}) []map
 	groupID := uuid.New().String()
 	result := make([]map[string]interface{}, len(arr))
 	for i, item := range arr {
-		msg := cloneMap(input)
+		msg := base.CloneMap(input)
 		msg["payload"] = item
 		msg["parts"] = map[string]interface{}{
 			"id": groupID, "index": float64(i), "count": float64(len(arr)), "type": "array",
@@ -130,7 +130,7 @@ func (n *Node) splitString(s string, input map[string]interface{}) []map[string]
 	groupID := uuid.New().String()
 	result := make([]map[string]interface{}, len(pieces))
 	for i, p := range pieces {
-		msg := cloneMap(input)
+		msg := base.CloneMap(input)
 		msg["payload"] = p
 		msg["parts"] = map[string]interface{}{
 			"id": groupID, "index": float64(i), "count": float64(len(pieces)), "type": "string", "ch": sep,
@@ -150,7 +150,7 @@ func (n *Node) splitObject(obj map[string]interface{}, input map[string]interfac
 	groupID := uuid.New().String()
 	result := make([]map[string]interface{}, len(keys))
 	for i, k := range keys {
-		msg := cloneMap(input)
+		msg := base.CloneMap(input)
 		msg["payload"] = obj[k]
 		msg["topic"] = k
 		msg["parts"] = map[string]interface{}{
@@ -183,14 +183,14 @@ func (n *Node) Validate() error {
 
 func (n *Node) GetConfig() map[string]interface{} {
 	return map[string]interface{}{
-		"property":  propertyRefToConfig(n.Property),
+		"property":  base.PropertyRefToConfig(n.Property),
 		"mode":      n.Mode,
 		"separator": n.Separator,
 	}
 }
 
 func (n *Node) SetConfig(config map[string]interface{}) error {
-	n.Property = parsePropertyRef(config["property"], typedvalue.PropertyRef{Type: typedvalue.TypeMsg, Path: "payload"})
+	n.Property = base.ParsePropertyRef(config["property"], typedvalue.PropertyRef{Type: typedvalue.TypeMsg, Path: "payload"})
 	if m, ok := config["mode"].(string); ok {
 		n.Mode = m
 	}
@@ -198,58 +198,6 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 		n.Separator = s
 	}
 	return n.Validate()
-}
-
-func runtimeFrom(ctx interface{}) (*registry.NodeRuntime, bool) {
-	c, ok := ctx.(context.Context)
-	if !ok {
-		return nil, false
-	}
-	return registry.RuntimeFromContext(c)
-}
-
-func resolvers(ctx interface{}, input map[string]interface{}) (typedvalue.Resolver, typedvalue.PropertyResolver) {
-	valueResolver := typedvalue.Resolver{Message: input}
-	propResolver := typedvalue.PropertyResolver{Message: input}
-
-	rt, ok := runtimeFrom(ctx)
-	if !ok {
-		return valueResolver, propResolver
-	}
-	if rt.FlowContext != nil {
-		valueResolver.FlowContext = rt.FlowContext
-		propResolver.FlowContext = rt.FlowContext
-	}
-	if rt.GlobalContext != nil {
-		valueResolver.GlobalContext = rt.GlobalContext
-		propResolver.GlobalContext = rt.GlobalContext
-	}
-	return valueResolver, propResolver
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func parsePropertyRef(raw interface{}, def typedvalue.PropertyRef) typedvalue.PropertyRef {
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return def
-	}
-	t, _ := m["type"].(string)
-	p, _ := m["path"].(string)
-	if t == "" {
-		return def
-	}
-	return typedvalue.PropertyRef{Type: typedvalue.Type(t), Path: p}
-}
-
-func propertyRefToConfig(ref typedvalue.PropertyRef) map[string]interface{} {
-	return map[string]interface{}{"type": string(ref.Type), "path": ref.Path}
 }
 
 func init() {

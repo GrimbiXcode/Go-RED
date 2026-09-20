@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -59,30 +60,39 @@ func (n *Node) enqueue(input map[string]interface{}) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.DropIntermediate {
-		n.queue = []map[string]interface{}{cloneMap(input)}
+		n.queue = []map[string]interface{}{base.CloneMap(input)}
 		return
 	}
-	n.queue = append(n.queue, cloneMap(input))
+	n.queue = append(n.queue, base.CloneMap(input))
 }
 
 func (n *Node) executeDelay(ctx interface{}, input map[string]interface{}) (map[string]map[string]interface{}, error) {
 	delay := time.Duration(n.DelayMs) * time.Millisecond
 	if c, ok := ctx.(context.Context); ok {
+		if err := c.Err(); err != nil {
+			return nil, fmt.Errorf("delay: %w", err)
+		}
+		// A stoppable timer rather than time.After, so a cancelled
+		// message does not leave the timer pending for the full delay.
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
 		select {
-		case <-time.After(delay):
+		case <-timer.C:
 		case <-c.Done():
 			return nil, fmt.Errorf("delay: %w", c.Err())
 		}
 	} else {
 		time.Sleep(delay)
 	}
-	return map[string]map[string]interface{}{"output": cloneMap(input)}, nil
+	return map[string]map[string]interface{}{"output": base.CloneMap(input)}, nil
 }
 
 // Start releases queued messages at the configured rate for as long as ctx
-// is not cancelled. In "delay" mode there is nothing to release; Start
-// simply waits for ctx to be cancelled.
+// is not cancelled; whatever is still queued when ctx ends is dropped (the
+// flow is being undeployed). In "delay" mode there is nothing to release;
+// Start simply waits for ctx to be cancelled.
 func (n *Node) Start(ctx context.Context, emit func(map[string]interface{})) error {
+	defer n.clearQueue()
 	if n.Mode != "rate" {
 		<-ctx.Done()
 		return nil
@@ -101,6 +111,20 @@ func (n *Node) Start(ctx context.Context, emit func(map[string]interface{})) err
 			}
 		}
 	}
+}
+
+// Close drops any queued messages (registry.Closeable): the engine calls
+// it after Start has returned, so this only matters for a node that was
+// never started (a failed Deploy).
+func (n *Node) Close() error {
+	n.clearQueue()
+	return nil
+}
+
+func (n *Node) clearQueue() {
+	n.mu.Lock()
+	n.queue = nil
+	n.mu.Unlock()
 }
 
 func (n *Node) dequeue() (map[string]interface{}, bool) {
@@ -168,34 +192,16 @@ func (n *Node) GetConfig() map[string]interface{} {
 }
 
 func (n *Node) SetConfig(config map[string]interface{}) error {
-	n.Mode = "delay"
-	if m, ok := config["mode"].(string); ok && m != "" {
-		n.Mode = m
+	c := base.Config(config)
+	n.Mode = c.String("mode", "delay")
+	if n.Mode == "" {
+		n.Mode = "delay"
 	}
-	n.DelayMs = 5000
-	if d, ok := config["delayMs"].(float64); ok {
-		n.DelayMs = int64(d)
-	}
-	n.RateLimit = 1
-	if r, ok := config["rateLimit"].(float64); ok {
-		n.RateLimit = int(r)
-	}
-	n.RateIntervalMs = 1000
-	if ri, ok := config["rateIntervalMs"].(float64); ok {
-		n.RateIntervalMs = int64(ri)
-	}
-	if di, ok := config["dropIntermediate"].(bool); ok {
-		n.DropIntermediate = di
-	}
+	n.DelayMs = c.Int64("delayMs", 5000)
+	n.RateLimit = c.Int("rateLimit", 1)
+	n.RateIntervalMs = c.Int64("rateIntervalMs", 1000)
+	n.DropIntermediate = c.Bool("dropIntermediate", n.DropIntermediate)
 	return n.Validate()
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
 }
 
 func init() {
@@ -229,7 +235,7 @@ func init() {
 					Type:        "number",
 					Description: "Delay in milliseconds (delay mode)",
 					Default:     float64(5000),
-					Min:         floatPtr(0),
+					Min:         base.FloatPtr(0),
 					Label:       "Delay",
 					Order:       2,
 					Widget:      "duration",
@@ -240,7 +246,7 @@ func init() {
 					Type:        "number",
 					Description: "Messages released per rateIntervalMs (rate mode)",
 					Default:     float64(1),
-					Min:         floatPtr(1),
+					Min:         base.FloatPtr(1),
 					Label:       "Messages",
 					Order:       3,
 					Widget:      "number",
@@ -250,7 +256,7 @@ func init() {
 					Type:        "number",
 					Description: "Interval in milliseconds rateLimit applies to (rate mode)",
 					Default:     float64(1000),
-					Min:         floatPtr(1),
+					Min:         base.FloatPtr(1),
 					Label:       "per",
 					Order:       4,
 					Widget:      "duration",
@@ -276,5 +282,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

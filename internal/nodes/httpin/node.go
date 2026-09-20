@@ -38,6 +38,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -51,11 +52,16 @@ type Node struct {
 
 	mu   sync.Mutex
 	emit func(map[string]interface{})
+	// flowCtx is the Start context: a request still waiting for its
+	// "http response" when the flow is undeployed is completed with a 503
+	// instead of being held open until ResponseTimeoutMs.
+	flowCtx context.Context
 }
 
 // Start registers Method/Path on the shared router and serves matching
 // requests until ctx is cancelled, at which point the route is removed
-// (the shared listener itself keeps running for other nodes/flows).
+// (the shared listener itself keeps running for other nodes/flows) and
+// every request still pending on this node is answered with a 503.
 func (n *Node) Start(ctx context.Context, emit func(payload map[string]interface{})) error {
 	if err := ensureServerStarted(); err != nil {
 		return fmt.Errorf("http in: %w", err)
@@ -63,6 +69,7 @@ func (n *Node) Start(ctx context.Context, emit func(payload map[string]interface
 
 	n.mu.Lock()
 	n.emit = emit
+	n.flowCtx = ctx
 	n.mu.Unlock()
 
 	r := sharedRouter.add(n.Method, n.Path, n.handle)
@@ -79,10 +86,14 @@ func (n *Node) Start(ctx context.Context, emit func(payload map[string]interface
 func (n *Node) handle(w http.ResponseWriter, r *http.Request, params map[string]string) {
 	n.mu.Lock()
 	emit := n.emit
+	flowCtx := n.flowCtx
 	n.mu.Unlock()
 	if emit == nil {
 		http.Error(w, "node not ready", http.StatusServiceUnavailable)
 		return
+	}
+	if flowCtx == nil {
+		flowCtx = context.Background()
 	}
 
 	body, _ := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
@@ -112,10 +123,19 @@ func (n *Node) handle(w http.ResponseWriter, r *http.Request, params map[string]
 	if timeout <= 0 {
 		timeout = defaultResponseTimeout
 	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case <-handle.Done():
-	case <-time.After(timeout):
+	case <-timer.C:
 		handle.Write(http.StatusGatewayTimeout, nil, []byte("http in: no http response within timeout"))
+	case <-flowCtx.Done():
+		handle.Write(http.StatusServiceUnavailable, nil, []byte("http in: flow undeployed before a response was sent"))
+	case <-r.Context().Done():
+		// The client went away; there is nobody left to answer, but
+		// marking the handle done keeps a later "http response" from
+		// writing to a dead connection.
+		handle.Write(http.StatusServiceUnavailable, nil, nil)
 	}
 }
 
@@ -226,7 +246,7 @@ func init() {
 					Type:        "number",
 					Description: "Milliseconds to wait for an http response node before returning 504",
 					Default:     float64(30000),
-					Min:         floatPtr(1),
+					Min:         base.FloatPtr(1),
 					Label:       "Response timeout",
 					Order:       3,
 					Widget:      "duration",
@@ -243,5 +263,3 @@ func init() {
 		panic(err)
 	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

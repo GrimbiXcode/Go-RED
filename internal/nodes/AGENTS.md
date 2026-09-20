@@ -2,6 +2,14 @@
 
 This file contains **node-specific** guidelines for developing and maintaining nodes in the `internal/nodes/` directory.
 
+> **Stand nach Phase 6 (docs/NEXT_LEVEL_PLAN.md):** gemeinsame Helfer liegen in `internal/nodes/base`
+> (Config-Zugriff mit Typkoerzierung und `Decode` in Structs, `ToFloat`/`ToString`/`ToBytes`,
+> `ParseValue`/`ParsePropertyRef`, `Context(ctx)`); neue Nodes nutzen sie statt eigener Kopien.
+> Jeder Node, der wählt, lauscht, schreibt, wartet oder schläft, muss den Kontext ehren: `DialContext`,
+> Deadlines aus `ctx.Deadline()`, `select` auf `ctx.Done()` in jedem Warten, Listener schließen, wenn
+> der `Start`-Kontext endet; jedes Netzwerk-Paket hat dafür einen `ctx_test.go`. Die Engine wartet
+> beim Undeploy auf laufende Ausführungen, ein Node, der den Kontext ignoriert, hält sie auf.
+
 ---
 
 ## Package Overview
@@ -174,7 +182,7 @@ listener via the exported `httpin.RegisterHandler`, also called from `SetConfig`
 `httpin`/`httpresponse` correlate a live `http.ResponseWriter` with the message that
 carries it through the flow via a `*httpin.ResponseHandle` stored under the plain
 message key `httpin.KeyResponseHandle` - an ordinary `interface{}` value that survives
-every node's shallow `cloneMap` helper along the way (the pointer is just copied, same as
+the shallow `base.CloneMap` copy along the way (the pointer is just copied, same as
 any other map value), the same "put a live Go value on the message" approach `watch`
 established for filesystem-event metadata. All `httpin`-derived nodes share a single
 process-wide `*http.Server` (env var `GORED_HTTP_NODE_PORT`, default 1880), deliberately
@@ -853,49 +861,25 @@ func factory(config map[string]interface{}) (registry.NodeExecutor, error) {
 
 ## Helper Utilities
 
-### Common Node Utilities
+Shared helpers live in `internal/nodes/base` (Phase 6); do not copy them into a node:
 
 ```go
-// CopyMap creates a deep copy of a map
-func CopyMap(src map[string]interface{}) map[string]interface{} {
-    dst := make(map[string]interface{}, len(src))
-    for k, v := range src {
-        dst[k] = v
-    }
-    return dst
-}
+c := base.Config(config)                 // typed accessors with defaults and coercion
+host := c.String("host", "localhost")    // Int, Int64, Float, Bool, Duration (ms or "5s"), StringSlice, Map, Slice, Has
+base.Decode(config, &settings)           // JSON round trip into a struct with json tags
 
-// GetString extracts a string from input with default
-func GetString(input map[string]interface{}, key string, defaultValue string) string {
-    if val, ok := input[key].(string); ok {
-        return val
-    }
-    return defaultValue
-}
+base.ToFloat(v) / base.ParseFloat(v)     // numbers; ParseFloat also reads numeric strings
+base.ToInt(v), base.ToBool(v), base.ToString(v), base.ToBytes(v), base.CloneMap(m), base.FloatPtr(f)
+base.ParseValue(raw), base.ValueToConfig(v)                 // typedvalue.Value  <-> {type, value}
+base.ParsePropertyRef(raw, def), base.PropertyRefToConfig(r) // typedvalue.PropertyRef <-> {type, path}
 
-// GetInt extracts an int from input with default
-func GetInt(input map[string]interface{}, key string, defaultValue int) int {
-    if val, ok := input[key].(float64); ok {
-        return int(val)
-    }
-    return defaultValue
-}
-
-// HasKey checks if a key exists in the map
-func HasKey(input map[string]interface{}, key string) bool {
-    _, ok := input[key]
-    return ok
-}
-
-// MergeMaps merges two maps (src into dst)
-func MergeMaps(dst, src map[string]interface{}) map[string]interface{} {
-    result := CopyMap(dst)
-    for k, v := range src {
-        result[k] = v
-    }
-    return result
-}
+ctx := base.Context(rawCtx)              // the interface{} the engine passes -> context.Context
+rt, ok := base.Runtime(rawCtx)           // registry.NodeRuntime, if the engine attached one
+valueResolver, propResolver := base.Resolvers(rawCtx, msg) // typedvalue resolvers over msg/flow/global
 ```
+
+`internal/nodes/base` has table-driven tests for every helper; a node package only tests
+what it adds on top.
 
 ---
 

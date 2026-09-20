@@ -18,7 +18,6 @@
 package file
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -26,6 +25,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/typedvalue"
 )
@@ -56,7 +56,7 @@ type Node struct {
 // operation; a missing filename or (for append/overwrite) a missing
 // msg.payload sends on no port rather than failing the node.
 func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[string]map[string]interface{}, error) {
-	valueResolver, _ := resolvers(ctx, input)
+	valueResolver, _ := base.Resolvers(ctx, input)
 	raw, err := n.Filename.Resolve(valueResolver)
 	if err != nil {
 		return nil, fmt.Errorf("file: %w", err)
@@ -73,7 +73,7 @@ func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[
 		if err := os.Remove(filename); err != nil && !os.IsNotExist(err) {
 			return nil, fmt.Errorf("file: delete %s: %w", filename, err)
 		}
-		out := cloneMap(input)
+		out := base.CloneMap(input)
 		out["filename"] = filename
 		return map[string]map[string]interface{}{"output": out}, nil
 	}
@@ -114,7 +114,7 @@ func (n *Node) ExecuteMulti(ctx interface{}, input map[string]interface{}) (map[
 		return nil, fmt.Errorf("file: close %s: %w", filename, closeErr)
 	}
 
-	out := cloneMap(input)
+	out := base.CloneMap(input)
 	out["filename"] = filename
 	return map[string]map[string]interface{}{"output": out}, nil
 }
@@ -187,7 +187,7 @@ func (n *Node) Validate() error {
 
 func (n *Node) GetConfig() map[string]interface{} {
 	return map[string]interface{}{
-		"filename":      valueToConfig(n.Filename),
+		"filename":      base.ValueToConfig(n.Filename),
 		"action":        n.Action,
 		"appendNewline": n.AppendNewline,
 		"createDir":     n.CreateDir,
@@ -196,7 +196,7 @@ func (n *Node) GetConfig() map[string]interface{} {
 }
 
 func (n *Node) SetConfig(config map[string]interface{}) error {
-	n.Filename = parseValue(config["filename"])
+	n.Filename = base.ParseValue(config["filename"])
 	n.Action = "append"
 	if a, ok := config["action"].(string); ok && a != "" {
 		n.Action = a
@@ -212,51 +212,6 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 		n.Encoding = e
 	}
 	return n.Validate()
-}
-
-func resolvers(ctx interface{}, input map[string]interface{}) (typedvalue.Resolver, typedvalue.PropertyResolver) {
-	valueResolver := typedvalue.Resolver{Message: input}
-	propResolver := typedvalue.PropertyResolver{Message: input}
-
-	c, ok := ctx.(context.Context)
-	if !ok {
-		return valueResolver, propResolver
-	}
-	rt, ok := registry.RuntimeFromContext(c)
-	if !ok {
-		return valueResolver, propResolver
-	}
-	if rt.FlowContext != nil {
-		valueResolver.FlowContext = rt.FlowContext
-		propResolver.FlowContext = rt.FlowContext
-	}
-	if rt.GlobalContext != nil {
-		valueResolver.GlobalContext = rt.GlobalContext
-		propResolver.GlobalContext = rt.GlobalContext
-	}
-	return valueResolver, propResolver
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func parseValue(raw interface{}) typedvalue.Value {
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return typedvalue.Value{}
-	}
-	t, _ := m["type"].(string)
-	v, _ := m["value"].(string)
-	return typedvalue.Value{Type: typedvalue.Type(t), Value: v}
-}
-
-func valueToConfig(v typedvalue.Value) map[string]interface{} {
-	return map[string]interface{}{"type": string(v.Type), "value": v.Value}
 }
 
 func init() {

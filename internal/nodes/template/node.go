@@ -14,9 +14,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/typedvalue"
 )
@@ -41,7 +41,7 @@ type Node struct {
 // Execute renders Template and writes the result to Field in a copy of
 // input.
 func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
-	output := cloneMap(input)
+	output := base.CloneMap(input)
 
 	rendered := n.Template
 	if n.Syntax != "plain" {
@@ -70,27 +70,8 @@ func render(tmpl string, msg map[string]interface{}) string {
 	return tagPattern.ReplaceAllStringFunc(tmpl, func(match string) string {
 		path := strings.TrimSpace(tagPattern.FindStringSubmatch(match)[1])
 		val, _ := (typedvalue.Value{Type: typedvalue.TypeMsg, Value: path}).Resolve(typedvalue.Resolver{Message: msg})
-		return toStr(val)
+		return base.ToString(val)
 	})
-}
-
-func toStr(v interface{}) string {
-	switch t := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return t
-	case float64:
-		return strconv.FormatFloat(t, 'f', -1, 64)
-	case bool:
-		return strconv.FormatBool(t)
-	default:
-		b, err := json.Marshal(t)
-		if err != nil {
-			return fmt.Sprintf("%v", t)
-		}
-		return string(b)
-	}
 }
 
 func (n *Node) Validate() error {
@@ -133,14 +114,6 @@ func (n *Node) SetConfig(config map[string]interface{}) error {
 		n.OutputFormat = o
 	}
 	return n.Validate()
-}
-
-func cloneMap(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
 }
 
 func init() {

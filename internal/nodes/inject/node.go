@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
@@ -273,7 +274,7 @@ func init() {
 					Type:        "number",
 					Description: "Time between injections in ms (0 = manual)",
 					Default:     0,
-					Min:         floatPtr(0),
+					Min:         base.FloatPtr(0),
 					Label:       "Repeat every",
 					Order:       3,
 					Widget:      "duration",
@@ -296,8 +297,4 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-}
-
-func floatPtr(f float64) *float64 {
-	return &f
 }
