@@ -189,10 +189,59 @@ function process(input) {
 
 ---
 
+## Shared helpers: `internal/nodes/base`
+
+Do not copy config parsing and value conversion into a new node; the
+`base` package has them, tested once:
+
+```go
+import "github.com/GrimbiXcode/Go-RED/internal/nodes/base"
+
+func (n *Node) SetConfig(config map[string]interface{}) error {
+    c := base.Config(config)
+    n.Host = c.String("host", "localhost")
+    n.Port = c.Int("port", 1883)            // float64, int, json.Number, "1883"
+    n.Timeout = c.Duration("timeoutMs", 5*time.Second) // numbers are ms, strings via time.ParseDuration
+    n.Retain = c.Bool("retain", false)
+    n.Property = base.ParsePropertyRef(config["property"], typedvalue.PropertyRef{Type: typedvalue.TypeMsg, Path: "payload"})
+    return n.Validate()
+}
+```
+
+or, for a node with many fields, decode the whole map into a struct with
+`json` tags: `base.Decode(config, &settings)`. `base.ToFloat`, `base.ToInt`,
+`base.ToString`, `base.ToBytes` and `base.ToBool` convert message values the
+way the built-in nodes do; `base.ParseValue`/`base.ValueToConfig` and
+`base.ParsePropertyRef`/`base.PropertyRefToConfig` round-trip typed inputs;
+`base.Context(ctx)` turns the `interface{}` the engine passes into a
+`context.Context`.
+
+## Context cancellation
+
+The engine cancels a node's context when the flow is undeployed or
+redeployed and when the per-message timeout expires, then waits for the
+execution to return before it closes the node's resources. A node that
+ignores its context holds that wait up (bounded by the timeout) and can
+leak a goroutine, timer or connection. So:
+
+- dial with a context (`(&net.Dialer{}).DialContext(ctx, ...)`,
+  `websocket.Dialer.DialContext`, `http.NewRequestWithContext`);
+- derive deadlines from it: `if d, ok := ctx.Deadline(); ok { conn.SetDeadline(d) }`,
+  and close a blocking connection when it ends (`context.AfterFunc(ctx, func() { conn.Close() })`);
+- never `time.Sleep`; select on a stopped timer and `ctx.Done()`;
+- in `Start(ctx, emit)`, return when `ctx` is done and close listeners so
+  accept and read loops return; drop emits after that;
+- release queued work in `Close()` (delay, batch and join do);
+- wrap the context error so callers can `errors.Is(err, context.Canceled)`.
+
+Every network node has a `ctx_test.go` proving that a cancelled context
+makes `Execute` return promptly and that `Start` returns after cancel; add
+one for a new node.
+
 ## Best Practices
 
 - Keep nodes stateless
-- Use context for timeout/cancellation
+- Use context for timeout/cancellation (see above)
 - Validate configuration
 - Handle errors gracefully
 - Add descriptive metadata

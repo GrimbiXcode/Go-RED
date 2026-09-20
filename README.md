@@ -13,15 +13,15 @@ Go—RED is a **flow-based programming editor** similar to Node-RED, but complet
 - Flow-based programming - Drag & Drop nodes, connections between nodes
 - Real-time WebUI - Live updates via WebSocket
 - Plugin System - Custom nodes in Go or JavaScript
-- High Performance - Optimized for > 100,000 messages/second
-- Go-specific implementation:
-  - Goroutines & Channels for parallel processing
-  - Interfaces for plugin architecture
-  - Generics for type-safe nodes
-  - Context for timeouts/cancellation
-  - Reflection for dynamic node registration
-- Extensible - Community plugins, custom nodes
-- Scalable - Worker pools, message batching, caching
+- Measured performance - see `docs/PERFORMANCE.md` for the benchmark
+  numbers (`go test -bench` in `internal/engine`); the engine runs each flow
+  with its own queue and a bounded set of goroutines, and every node honors
+  context cancellation
+- Node-RED import and export - `flows.json` in, `flows.json` out
+- Operations - optional bearer token, origin policy, rate limits, backups,
+  `/api/version`, Prometheus `/metrics`, configuration by flags, `GORED_*`
+  environment or a YAML file
+- Extensible - custom nodes in Go (see `docs/NODE_DEVELOPMENT.md`)
 
 ### Target Platforms
 
@@ -46,7 +46,7 @@ Go—RED is a **flow-based programming editor** similar to Node-RED, but complet
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.25+
 - Node.js 18+ (for WebUI)
 
 ### Installation
@@ -68,6 +68,39 @@ go run cmd/go-red/main.go
 ```
 
 Application will be available at http://localhost:8080
+
+### Configuration
+
+Every setting has a flag, a `GORED_*` environment variable and a key in an
+optional YAML file (`-config go-red.yaml` or `GORED_CONFIG`); flags win over
+the environment, which wins over the file.
+
+| Flag | Env | Default | Meaning |
+|---|---|---|---|
+| `-port` | `GORED_PORT` | `8080` | HTTP port |
+| `-data-dir` | `GORED_DATA_DIR` | `data` | flows, backups, quarantine |
+| `-web-dir` | `GORED_WEB_DIR` | `web/dist` | built editor |
+| `-auth-token` | `GORED_AUTH_TOKEN` | – | bearer token for the API, the WebSocket and `/metrics` (≥ 16 chars of `A-Z a-z 0-9 . _ ~ -`) |
+| `-allowed-origins` | `GORED_ALLOWED_ORIGINS` | – | extra browser origins (`scheme://host[:port]`, comma-separated, or `*`); the editor's own origin is always allowed |
+| `-rate-limit` | `GORED_RATE_LIMIT` | `60` | import/deploy requests per client and minute (`0` disables) |
+| `-max-inflight` | `GORED_MAX_INFLIGHT` | `1024` | concurrent node executions per flow (a flow's `maxConcurrency` overrides it) |
+| `-max-messages` | `GORED_MAX_MESSAGES` | `1000` | message queue size per flow |
+| `-message-log` | `GORED_MESSAGE_LOG` | `0` | routed messages kept for `GET /api/messages` |
+| `-backup-keep` / `-backup-interval` | `GORED_BACKUP_KEEP` / `GORED_BACKUP_INTERVAL` | `5` / `10m` | backups per flow file and the minimum time between two |
+| `-log-level` | `GORED_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+
+```yaml
+# go-red.yaml
+port: 8080
+authToken: change-me-to-something-long
+allowedOrigins: [https://dashboard.example]
+rateLimit: 30
+```
+
+The server refuses cross-site browser requests unless their origin is
+allowed, and with a token set the editor asks for it once and keeps it in
+the browser. `GET /api/health` and `GET /api/version` are always public;
+`GET /metrics` serves Prometheus metrics. See `docs/PROTOCOL.md`.
 
 ---
 

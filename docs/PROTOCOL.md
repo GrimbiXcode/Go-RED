@@ -27,22 +27,26 @@ the server log).
 
 | Method and path | Body | Response | Notes |
 |---|---|---|---|
-| `GET /api/health` | – | `{status, version, flows, deployed, uptimeSeconds}` | liveness |
+| `GET /api/health` | – | `{status, version, flows, deployed, uptimeSeconds}` | liveness; always public |
+| `GET /api/version` | – | `{version, goVersion, os, arch}` | always public |
+| `GET /metrics` | – | Prometheus text format | see *Operations*; guarded by the token like the API |
 | `GET /api/flows` | – | `FlowSummary[]` | every known flow, running or not |
 | `POST /api/flows` | `FlowCreateRequest {id?, name, description?}` | `201 Flow` | `id` is optional; it must be a safe file name |
-| `POST /api/flows/import` | `Flow` (a Go-RED export) **or** a Node-RED `flows.json` array | `201 {status: "imported", format, flowId, originalId, name, flows: [{flowId, originalId, name}], warnings: string[], message}` | `format` is `go-red` or `node-red`; every imported flow gets a fresh id, `originalId` echoes the file's; a Node-RED array yields one flow per tab (`flows`, first one in `flowId`) and `warnings` lists what could not be mapped (see *Node-RED import and export*) |
+| `POST /api/flows/import` | `Flow` (a Go-RED export) **or** a Node-RED `flows.json` array | `201 {status: "imported", format, flowId, originalId, name, flows: [{flowId, originalId, name}], warnings: string[], message}` | `format` is `go-red` or `node-red`; every imported flow gets a fresh id, `originalId` echoes the file's; a Node-RED array yields one flow per tab (`flows`, first one in `flowId`) and `warnings` lists what could not be mapped (see *Node-RED import and export*). Rate limited (`429`, see *Authentication and origins*) |
 | `GET /api/flows/{id}` | – | `Flow` | the **draft definition**, including `deployedAt` |
 | `PUT /api/flows/{id}` | `FlowUpdateRequest {name?, description?, nodes?, connections?, config?, order?}` | `Flow` | saves the draft only; a running instance is untouched until the next deploy. A body with only `order` moves the tab and does not count as an edit (`updatedAt` stays) |
 | `DELETE /api/flows/{id}` | – | `{status: "deleted", flowId}` | stops the flow first |
-| `POST /api/flows/{id}/deploy` | – | `DeployResponse {flowId, status, updatedAt?, deployedAt?, message?}` | runs a snapshot of the draft; `422` with the reason when it cannot run |
+| `POST /api/flows/{id}/deploy` | – | `DeployResponse {flowId, status, updatedAt?, deployedAt?, message?}` | runs a snapshot of the draft; `422` with the reason when it cannot run; rate limited (`429`) |
 | `POST /api/flows/{id}/undeploy` | – | `DeployResponse` | the definition stays, status becomes `draft` |
 | `GET /api/flows/{id}/export` | – | `Flow` as a download | `?format=node-red` returns the flow as a Node-RED `flows.json` array instead |
 | `GET /api/nodes` | – | `NodeMetadata[]` | palette and config schemas |
 | `GET /api/nodes/{type}` | – | `NodeMetadata` | |
-| `GET /api/messages?flowId=&limit=` | – | `Message[]` | the engine's message log, oldest first; for scripts and tests, the editor does not poll it |
+| `GET /api/messages?flowId=&limit=` | – | `Message[]` | the engine's message log, oldest first; for scripts and tests, the editor does not poll it. Empty unless the server runs with `-message-log N` (the log costs a lock per routed message) |
 
 `Flow.status` is one of `draft`, `running`, `error`, `deploying`,
-`undeploying`. `Flow.order` (also on `FlowSummary`) is the tab position;
+`undeploying`. `Flow.config.maxConcurrency` bounds how many node executions
+of the flow run at the same time; `0` (the default) means the server-wide
+`-max-inflight` value. `Flow.order` (also on `FlowSummary`) is the tab position;
 `GET /api/flows` is sorted by it (then by `createdAt`), a new flow gets
 `max + 1`, and the editor writes new positions with `PUT {order}` when tabs
 are dragged. It is omitted while it is `0` (flows persisted before it
@@ -52,6 +56,73 @@ node instance (Markdown); a node with `disabled: true` stays in the
 definition but is neither started on deploy nor routed to, and cannot be
 injected into. A draft differs from what is running when
 `updatedAt > deployedAt`; the editor's Deploy button uses exactly that.
+
+## Authentication and origins
+
+Without configuration the server accepts unauthenticated requests from its
+own origin only: a browser request or WebSocket handshake whose `Origin`
+host differs from the request `Host` is refused (`403 origin not allowed`),
+which keeps a page on another site from deploying or importing anything
+with a cross-site request. `-allowed-origins` (or `GORED_ALLOWED_ORIGINS`,
+comma-separated `scheme://host[:port]`, or `*`) allows other origins: they
+get CORS headers (`Access-Control-Allow-Origin` echoing the origin,
+`Vary: Origin`, allowed methods and the `Authorization`/`Content-Type`
+headers) and their `OPTIONS` preflight is answered with `204`. Non-browser
+clients send no `Origin` and are never affected.
+
+`-auth-token` (or `GORED_AUTH_TOKEN`; at least 16 characters of
+`A-Z a-z 0-9 . _ ~ -`) turns authentication on for everything under
+`/api/`, for `/ws` and for `/metrics`; `/api/health`, `/api/version` and
+the editor's static files stay public. Clients present the token as
+
+| Where | How |
+|---|---|
+| REST and `/metrics` | `Authorization: Bearer <token>` |
+| WebSocket handshake | the subprotocol list `gored, gored.token.<token>` (browsers cannot set headers there; the server selects `gored`), or `?access_token=<token>` for scripts |
+
+A missing or wrong token is `401` with `WWW-Authenticate: Bearer`. The
+editor stores the token in `localStorage` (`go-red.token`) after asking for
+it once, and sends it on every request and handshake.
+
+Import and deploy are rate limited per client address: `-rate-limit N`
+requests per minute (default 60, burst of a quarter of that, `0` disables);
+over the limit the answer is `429` with `Retry-After: 1`.
+
+## Operations
+
+`GET /metrics` exposes, in the Prometheus text format:
+
+| Series | Labels | Meaning |
+|---|---|---|
+| `gored_build_info` | `version`, `go` | always 1 |
+| `gored_uptime_seconds` | – | seconds since start |
+| `gored_flows` | `status` (`running`, `draft`, `error`) | known flows by status |
+| `gored_node_messages_total` | `flow`, `node`, `type` | messages a node handled since its flow was deployed |
+| `gored_node_errors_total` | `flow`, `node`, `type` | failed executions of that node |
+| `gored_messages_dropped_total` | – | messages dropped because a flow queue was full |
+| `gored_events_dropped_total` | – | runtime events dropped because the event queue was full |
+| `gored_websocket_clients` | – | connected editor clients |
+| `go_goroutines`, `process_start_time_seconds` | – | process health |
+
+Server configuration comes from, in rising precedence, the defaults, a YAML
+file (`-config go-red.yaml` or `GORED_CONFIG`; keys `port`, `dataDir`,
+`webDir`, `maxInflight`, `maxMessages`, `messageLog`, `logLevel`,
+`authToken`, `allowedOrigins`, `rateLimit`, `backupKeep`, `backupInterval`;
+unknown keys are an error), `GORED_*` environment variables
+(`GORED_PORT`, `GORED_DATA_DIR`, `GORED_WEB_DIR`, `GORED_MAX_INFLIGHT`,
+`GORED_MAX_MESSAGES`, `GORED_MESSAGE_LOG`, `GORED_LOG_LEVEL`,
+`GORED_AUTH_TOKEN`, `GORED_ALLOWED_ORIGINS`, `GORED_RATE_LIMIT`,
+`GORED_BACKUP_KEEP`, `GORED_BACKUP_INTERVAL`) and the flags of the same
+names (`go-red -help`).
+
+Flows are persisted one file per flow under `<dataDir>/flows/<id>.json`:
+the flow's JSON object plus a top-level `schemaVersion` (currently 2; files
+without it count as version 1 and are migrated on load). Before a file is
+overwritten a copy goes to `<dataDir>/backups/<id>.<UTC stamp>.json`, at
+most one per `-backup-interval` (default 10 min) and `-backup-keep` (default
+5) per flow; a file the server cannot parse at startup is moved to
+`<dataDir>/quarantine/` and logged, so one bad file never keeps the others
+from loading.
 
 ## Node-RED import and export
 

@@ -28,23 +28,42 @@ Client (Browser) → WebSocket/HTTP → Go—RED Server → File System/Database
 
 ### Core Components
 
-1. **Flow Engine** - Orchestrates flow execution and message routing
-2. **Node Registry** - Manages all available node types
-3. **Plugin System** - Enables custom nodes via plugins
-4. **Message Bus** - Handles communication between nodes
-5. **State Manager** - Persists flows and configurations
+1. **Flow Engine** (`internal/engine`) - flow lifecycle, message routing, runtime events
+2. **Node Registry** (`internal/registry`) - node types, their schemas and the `NodeRuntime` nodes talk to
+3. **Nodes** (`internal/nodes/*`, shared helpers in `internal/nodes/base`) - the built-in node implementations
+4. **State Manager** (`internal/state`) - persists flows (versioned files, backups, quarantine)
+5. **HTTP layer** (`cmd/go-red`) - REST, WebSocket hub, configuration, security, metrics
 
 ---
 
 ## Data Flow
 
-Messages flow through the system as follows:
+Every deployed flow has its own message queue and one dispatcher goroutine:
 
-1. Message injected into flow (via Inject node or external trigger)
-2. Flow Engine routes message to connected nodes
-3. Each node processes message in its own goroutine
-4. Output messages are routed to next nodes
-5. Process continues until message reaches end of flow
+1. A message enters the queue: injected by the editor (`InjectMessage`),
+   emitted by a source node (`EmittingNode.Start`, e.g. inject, tcp in) or
+   produced by a node execution.
+2. The dispatcher takes it off the queue, finds the nodes wired to the port
+   it left through, and runs each target in a goroutine of its own. The
+   number of executions running at once is bounded per flow (a semaphore
+   sized by the flow's `maxConcurrency`, default `-max-inflight`); when
+   every slot is busy the dispatcher waits, the queue fills, and further
+   producers drop their messages (counted in `gored_messages_dropped_total`)
+   rather than block.
+3. Each execution gets a context with the node timeout, derived from the
+   flow's context, so undeploy cancels it; a message never inherits the
+   context of the node that produced it.
+4. A node's output is queued again, until nothing is wired to it.
+
+There is no engine-wide worker pool and no lock per message on the hot
+path: the message log behind `GET /api/messages` is a fixed ring that is
+off unless `-message-log` is set. Undeploy (and redeploy, which is
+stop-then-start) cancels the flow context, waits for the dispatcher, the
+source nodes and the executions in flight, then closes node resources. All
+network and timing nodes honor cancellation (dial with context, deadlines
+from the context, `ctx.Done()` in every wait), so a stop never leaves a
+goroutine, timer or connection behind; `go test -race` and goroutine-leak
+tests keep it that way.
 
 ---
 
@@ -69,10 +88,28 @@ Messages flow through the system as follows:
 
 ## Performance Considerations
 
-- Worker pools limit concurrent goroutines
-- Message batching reduces overhead
-- Node caching improves performance
-- Object pooling reduces GC pressure
+The numbers in `docs/PERFORMANCE.md` come from `go test -bench` in
+`internal/engine` (inject → function → debug, switch fan-out, split → join)
+against real nodes; run them before repeating any throughput claim. Per
+hop the engine costs one queue send, one goroutine and one message clone;
+the JavaScript function node dominates every flow that uses it.
+
+## Configuration, security and persistence
+
+`cmd/go-red` reads its configuration from defaults, an optional YAML file,
+`GORED_*` environment variables and flags, in that order of precedence
+(`config.go`). The HTTP layer (`auth.go`) applies an origin policy to every
+request (same origin always, `-allowed-origins` for others, with CORS
+headers), an optional bearer token on the API, the WebSocket handshake and
+`/metrics`, and a per-client rate limit on import and deploy. `ops.go`
+serves `/api/version` and a hand-written Prometheus exposition of the
+engine's counters. `docs/PROTOCOL.md` lists every knob.
+
+`internal/state` writes one file per flow atomically (temp file, fsync,
+rename), stamps a `schemaVersion` and migrates older files through a chain
+of small functions on load; the previous version of a file is kept in
+`backups/` (rate limited and pruned) and files that cannot be parsed are
+moved to `quarantine/` at startup.
 
 ---
 

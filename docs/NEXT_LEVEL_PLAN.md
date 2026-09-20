@@ -495,6 +495,40 @@ Node-Größe, wodurch ein Node nach einem Tray-„Done" unsichtbar bleiben konnt
 - Node-Basisklasse (`nodes/base`) gegen Duplikate (Config-Dekodierung, Status, Logging) in 47
   Paketen.
 
+**Status: umgesetzt.** Engine (`internal/engine`): kein engine-weiter Worker-Pool mehr; jeder
+deployte Flow hat seine eigene Queue und einen Dispatcher, Node-Ausführungen laufen in eigenen
+Goroutines, begrenzt durch eine Semaphore pro Flow (`FlowConfig.MaxConcurrency`, sonst
+`-max-inflight`, Standard 1024) und in einer WaitGroup, damit Undeploy/Redeploy auf laufende
+Ausführungen wartet (mit Timeout-Schutz). Nachrichten erben nicht mehr den Timeout-Kontext des
+Vorgänger-Nodes (ein latenter Fehler, der jeden Node mit `ctx.Done()` sofort abgebrochen hätte).
+Der Message-Log für `GET /api/messages` ist ein Ring und standardmäßig aus (`-message-log N`), also
+kein Lock pro Nachricht; Drops bei voller Queue werden gezählt und sparsam geloggt.
+Goroutine-Leak- und Dispatch-Tests (`dispatch_test.go`), Benchmarks (`bench_test.go`) mit
+Ergebnissen in `docs/PERFORMANCE.md` (4 vCPU: Function-Kette ≈ 90k msg/s, Inject→Function→Debug
+≈ 80k msg/s, Switch-Fanout ≈ 60k Eingang bei dreifacher Zustellung, Split→Join ≈ 23k Arrays/s);
+README und AGENTS behaupten nur noch das Gemessene. Nodes: alle Netzwerk- und Zeit-Nodes ehren den
+Kontext (`DialContext`, Deadlines, `ctx.Done()` in jedem Warten, Listener schließen beim Ende des
+Start-Kontexts, `Close()` für join/delay/batch), je Paket ein `ctx_test.go`; Nebenbefunde behoben
+(httprequest leckte pro Nachricht einen Transport, tcpin/websocketlistener hatten ein Nil-Map-Race
+beim Shutdown, exec meldete einen abgebrochenen Prozess als Erfolg). Gemeinsame Helfer in
+`internal/nodes/base` (Config-Zugriff mit Koerzierung und `Decode` in Structs, `ToFloat`/`ToString`/
+`ToBytes`, `ParseValue`/`ParsePropertyRef`, `Context(ctx)`), die duplizierenden Nodes darauf
+migriert. Sicherheit (`cmd/go-red/auth.go`): Origin-Policy für jede Anfrage (eigene Origin immer,
+`-allowed-origins` mit CORS-Headern und Preflight, sonst 403), optionaler Bearer-Token
+(`-auth-token`/`GORED_AUTH_TOKEN`) für `/api/*`, `/ws` (Subprotokoll `gored.token.<token>` oder
+`?access_token`) und `/metrics`, Token-Bucket-Rate-Limit pro Client auf Import und Deploy (429);
+das Frontend fragt bei 401 einmal nach dem Token (`TokenPrompt`, `src/lib/auth.ts`). Konfiguration
+(`config.go`): Defaults → YAML (`-config`, unbekannte Schlüssel sind Fehler) → `GORED_*` → Flags,
+validiert; `GET /api/version`; `GET /metrics` als handgeschriebene Prometheus-Exposition
+(Nachrichten/Fehler pro Node, Flows je Status, Drops, Clients, Goroutines). Persistenz
+(`internal/state`): `schemaVersion` in jeder Datei mit Migrationskette (v1→v2 setzt den nie
+erzwungenen Platzhalter `maxConcurrency: 100` auf 0), Quarantäne nicht parsbarer Dateien beim
+Start, Backups vor dem Überschreiben (höchstens eins je `-backup-interval`, `-backup-keep` Stück).
+Abweichungen: kein SQLite-Backend (das `StateManager`-Interface bleibt der Ansatzpunkt, ein zweites
+Backend ohne cgo-Abhängigkeit wäre ein eigener Schritt); kein Basic-Auth, nur Bearer-Token, weil
+Browser-WebSockets keine Header setzen können und ein Token auf allen Wegen gleich funktioniert;
+`-max-workers` entfällt (es gibt keinen Pool mehr), stattdessen `-max-inflight`.
+
 ### Phase 7 — Auslieferung & Doku (ca. 1 Woche)
 
 - Frontend per `go:embed` ins Binary (ein Artefakt, kein `-web-dir` mehr), GoReleaser für
@@ -516,7 +550,7 @@ Node-Größe, wodurch ein Node nach einem Tray-„Done" unsichtbar bleiben konnt
 | 3 | Schema v2, Edit-Tray v2, Widgets, dynamische Ports — **erledigt** | 2 Wochen | 1, 2 |
 | 4 | Visuelles Redesign, Tokens v2, Icons, Dark Mode — **erledigt** | 2 Wochen | 1, 3 |
 | 5 | Editor-Ergonomie, Node-RED-Import — **erledigt** | 1–2 Wochen | 1, 4 |
-| 6 | Backend-Reife | 2 Wochen | 0 (parallel) |
+| 6 | Backend-Reife — **erledigt** | 2 Wochen | 0 (parallel) |
 | 7 | Auslieferung, Doku | 1 Woche | alle |
 
 Gesamt: ca. 11–13 Personenwochen bis zu einem Stand, den man öffentlich zeigen kann. Phasen 0+1+2

@@ -22,6 +22,7 @@ Go-RED/
 │   │   ├── debug/                # Debug output node
 │   │   ├── function/             # JavaScript function node
 │   │   └── inject/               # Message injection node
+│   ├── nodes/base/               # Shared node helpers (config decoding, value conversion)
 │   ├── nodered/                  # Node-RED flows.json import/export
 │   ├── registry/                 # Node type registration system
 │   └── state/                    # Flow persistence (file system)
@@ -62,9 +63,9 @@ Go-RED/
 - **Integration**: Test WebSocket communication between frontend and backend
 
 ### Performance Considerations
-- Backend must handle >100,000 messages/second
-- Use goroutines and channels for concurrent processing
-- Avoid blocking operations in hot paths
+- Throughput claims come from `go test -bench` in `internal/engine` (recorded in `docs/PERFORMANCE.md`); measure before claiming
+- Every deployed flow has its own queue, dispatcher and bounded executions; never add an engine-wide lock or log per message
+- Nodes honor context cancellation (dial with context, deadlines, `ctx.Done()` in waits) so undeploy never leaks
 - Frontend should remain responsive with many nodes/flows
 
 ---
