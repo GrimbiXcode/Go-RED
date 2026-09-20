@@ -85,6 +85,20 @@ interface FlowState {
   removeNodes: (ids: string[]) => void;
   moveNodes: (moves: NodeMove[]) => void;
   updateNode: (id: string, patch: NodePatch, options?: UpdateNodeOptions) => void;
+  /** Adds several nodes (with their ids) and the connections between them in one undo step. */
+  addNodes: (nodes: FlowNode[], connections: NodeConnection[]) => string[];
+  /** Moves nodes by a delta (arrow keys). */
+  nudgeNodes: (ids: string[], dx: number, dy: number) => void;
+  /** Adds a node of `type` in the middle of a connection, rewiring both ends. */
+  insertNodeOnEdge: (type: string, connectionId: string, position: { x: number; y: number }) => string | null;
+  /** Rewires a connection through an existing, unconnected node. */
+  spliceNodeIntoEdge: (nodeId: string, connectionId: string) => void;
+  /** Renames any flow, open or not. */
+  renameFlowById: (flowId: string, name: string) => Promise<void>;
+  /** Creates a copy of a flow (nodes, connections, config) next to it. */
+  duplicateFlow: (flowId: string) => Promise<Flow>;
+  /** Persists a new tab order. */
+  reorderFlows: (orderedIds: string[]) => Promise<void>;
   addConnection: (connection: Omit<NodeConnection, 'id'>) => void;
   removeConnections: (ids: string[]) => void;
   undo: () => void;
@@ -123,6 +137,7 @@ function summaryFromFlow(flow: Flow): FlowSummary {
     name: flow.name,
     description: flow.description,
     status: flow.status,
+    order: flow.order,
     nodeCount: Object.keys(flow.nodes || {}).length,
     createdAt: flow.createdAt,
     updatedAt: flow.updatedAt,
@@ -437,6 +452,94 @@ export const useFlowStore = create<FlowState>((set, get) => {
         }
         return { nodes: { ...doc.nodes, [id]: next }, connections };
       });
+    },
+
+    addNodes: (incoming, connections) => {
+      if (incoming.length === 0) return [];
+      const ids: string[] = [];
+      commit((doc) => {
+        const nodes = { ...doc.nodes };
+        for (const node of incoming) {
+          if (node.id in nodes) continue;
+          nodes[node.id] = node;
+          ids.push(node.id);
+        }
+        if (ids.length === 0) return null;
+        const added = connections.filter((c) => c.sourceNode in nodes && c.targetNode in nodes && !doc.connections.some((e) => isSameConnection(c, e)));
+        return { nodes, connections: [...doc.connections, ...added] };
+      });
+      return ids;
+    },
+
+    nudgeNodes: (ids, dx, dy) => {
+      const { flow } = get();
+      if (!flow || (dx === 0 && dy === 0)) return;
+      const moves = ids
+        .filter((id) => id in flow.nodes)
+        .map((id) => ({ id, position: { x: flow.nodes[id].position.x + dx, y: flow.nodes[id].position.y + dy } }));
+      get().moveNodes(moves);
+    },
+
+    insertNodeOnEdge: (type, connectionId, position) => {
+      const id = generateId();
+      let inserted = false;
+      commit((doc) => {
+        const edge = doc.connections.find((c) => c.id === connectionId);
+        if (!edge) return null;
+        inserted = true;
+        const node: FlowNode = { id, type, name: '', position, config: {}, disabled: false };
+        const connections = doc.connections.filter((c) => c.id !== connectionId);
+        connections.push(
+          { id: generateId(), sourceNode: edge.sourceNode, sourcePort: edge.sourcePort, targetNode: id, targetPort: 'input' },
+          { id: generateId(), sourceNode: id, sourcePort: 'output', targetNode: edge.targetNode, targetPort: edge.targetPort }
+        );
+        return { nodes: { ...doc.nodes, [id]: node }, connections };
+      });
+      return inserted ? id : null;
+    },
+
+    spliceNodeIntoEdge: (nodeId, connectionId) => {
+      commit((doc) => {
+        const edge = doc.connections.find((c) => c.id === connectionId);
+        if (!edge || !(nodeId in doc.nodes) || edge.sourceNode === nodeId || edge.targetNode === nodeId) return null;
+        if (doc.connections.some((c) => c.sourceNode === nodeId || c.targetNode === nodeId)) return null;
+        const connections = doc.connections.filter((c) => c.id !== connectionId);
+        connections.push(
+          { id: generateId(), sourceNode: edge.sourceNode, sourcePort: edge.sourcePort, targetNode: nodeId, targetPort: 'input' },
+          { id: generateId(), sourceNode: nodeId, sourcePort: 'output', targetNode: edge.targetNode, targetPort: edge.targetPort }
+        );
+        return { nodes: doc.nodes, connections };
+      });
+    },
+
+    renameFlowById: async (flowId, name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      if (get().flow?.id === flowId) {
+        get().renameFlow(trimmed);
+        return;
+      }
+      const saved = await api.updateFlow(flowId, { name: trimmed });
+      set((state) => ({ flows: replaceSummary(state.flows, summaryFromFlow(saved)) }));
+    },
+
+    duplicateFlow: async (flowId) => {
+      if (get().flow?.id === flowId) await get().flushSave();
+      const source = await api.fetchFlow(flowId);
+      const created = await api.createFlow({ name: `${source.name} (copy)`, description: source.description });
+      const copy = await api.updateFlow(created.id, { nodes: source.nodes, connections: source.connections, config: source.config });
+      set((state) => ({ flows: replaceSummary(state.flows, summaryFromFlow(copy)) }));
+      return copy;
+    },
+
+    reorderFlows: async (orderedIds) => {
+      const current = get().flows;
+      const rank = new Map(orderedIds.map((id, index) => [id, index]));
+      const next = [...current].sort((a, b) => (rank.get(a.id) ?? 1e9) - (rank.get(b.id) ?? 1e9)).map((flow, index) => ({ ...flow, order: index + 1 }));
+      set({ flows: next });
+      await Promise.all(
+        next.filter((flow) => current.find((f) => f.id === flow.id)?.order !== flow.order).map((flow) => api.updateFlow(flow.id, { order: flow.order }))
+      );
     },
 
     addConnection: (connection) => {

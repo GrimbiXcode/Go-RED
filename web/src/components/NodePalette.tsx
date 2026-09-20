@@ -156,7 +156,10 @@ export function NodePalette(props: NodePaletteProps) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || isEditableTarget(event.target)) return;
+      const mod = event.ctrlKey || event.metaKey;
+      const slash = event.key === '/' && !mod && !event.altKey && !isEditableTarget(event.target);
+      const find = mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'f';
+      if (!slash && !find) return;
       event.preventDefault();
       searchRef.current?.focus();
       searchRef.current?.select();

@@ -11,6 +11,9 @@ interface EditorState {
   sidebarTab: SidebarTab | null;
   showExport: boolean;
   showImport: boolean;
+  showShortcuts: boolean;
+  /** Nodes the canvas should select on its next render (after a paste). */
+  pendingSelection: string[] | null;
 
   setSelection: (ids: string[]) => void;
   clearSelection: () => void;
@@ -20,6 +23,9 @@ interface EditorState {
   toggleSidebarTab: (tab: SidebarTab) => void;
   setShowExport: (show: boolean) => void;
   setShowImport: (show: boolean) => void;
+  setShowShortcuts: (show: boolean) => void;
+  requestSelection: (ids: string[]) => void;
+  clearPendingSelection: () => void;
   /** Forget UI state that belongs to a flow when another flow is opened. */
   resetForFlow: () => void;
 }
@@ -33,6 +39,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   sidebarTab: 'info',
   showExport: false,
   showImport: false,
+  showShortcuts: false,
+  pendingSelection: null,
 
   setSelection: (ids) =>
     set((state) => (sameIds(state.selectedNodeIds, ids) ? state : { selectedNodeIds: ids })),
@@ -43,5 +51,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   toggleSidebarTab: (tab) => set((state) => ({ sidebarTab: state.sidebarTab === tab ? null : tab })),
   setShowExport: (show) => set({ showExport: show }),
   setShowImport: (show) => set({ showImport: show }),
-  resetForFlow: () => set({ selectedNodeIds: [], configNodeId: null }),
+  setShowShortcuts: (show) => set({ showShortcuts: show }),
+  requestSelection: (ids) => set({ pendingSelection: ids, selectedNodeIds: ids }),
+  clearPendingSelection: () => set({ pendingSelection: null }),
+  resetForFlow: () => set({ selectedNodeIds: [], configNodeId: null, pendingSelection: null }),
 }));

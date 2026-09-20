@@ -19,6 +19,8 @@ import { useEditorStore, type SidebarTab } from '../store/editorStore';
 import { notify } from '../store/notificationStore';
 import { deployFlow } from '../utils/api';
 import { NoFlowsState } from './EmptyStates';
+import { ShortcutHelp } from './ShortcutHelp';
+import { copySelection, duplicateSelection, pasteClipboard } from '../store/editorActions';
 import { useEditorShortcuts } from '../hooks/useEditorShortcuts';
 
 function errorMessage(error: unknown): string {
@@ -54,6 +56,9 @@ export function FlowEditor() {
   const redo = useFlowStore((state) => state.redo);
   const flushSave = useFlowStore((state) => state.flushSave);
   const updateNode = useFlowStore((state) => state.updateNode);
+  const renameFlowById = useFlowStore((state) => state.renameFlowById);
+  const duplicateFlow = useFlowStore((state) => state.duplicateFlow);
+  const reorderFlows = useFlowStore((state) => state.reorderFlows);
   const nodeTypes = useFlowStore((state) => state.nodeTypes);
   const removeNodes = useFlowStore((state) => state.removeNodes);
 
@@ -65,6 +70,8 @@ export function FlowEditor() {
   const showImport = useEditorStore((state) => state.showImport);
   const setShowExport = useEditorStore((state) => state.setShowExport);
   const setShowImport = useEditorStore((state) => state.setShowImport);
+  const showShortcuts = useEditorStore((state) => state.showShortcuts);
+  const setShowShortcuts = useEditorStore((state) => state.setShowShortcuts);
   const resetForFlow = useEditorStore((state) => state.resetForFlow);
 
   // Initial data.
@@ -105,7 +112,55 @@ export function FlowEditor() {
     };
   }, [flushSave]);
 
-  useEditorShortcuts({ undo, redo });
+  const handleDuplicateFlow = useCallback(
+    async (id: string) => {
+      try {
+        const copy = await duplicateFlow(id);
+        notify('success', t('toast.flowDuplicated', { name: copy.name }));
+        navigate(`/flow/${copy.id}`);
+      } catch (error) {
+        notify('error', t('toast.flowDuplicateFailed', { message: errorMessage(error) }));
+      }
+    },
+    [duplicateFlow, navigate, t]
+  );
+
+  const handleDeploy = useCallback(async () => {
+    try {
+      await deploy();
+      notify('success', t('toast.deployed'));
+    } catch (error) {
+      notify('error', t('toast.deployFailed', { message: errorMessage(error) }));
+    }
+  }, [deploy, t]);
+
+  const shortcutDeploy = useCallback(() => {
+    if (canDeploy) void handleDeploy();
+  }, [canDeploy, handleDeploy]);
+  const shortcutExport = useCallback(() => {
+    if (flow) setShowExport(true);
+  }, [flow, setShowExport]);
+  const shortcutHelp = useCallback(() => setShowShortcuts(true), [setShowShortcuts]);
+  const shortcutPaste = useCallback(() => {
+    pasteClipboard();
+  }, []);
+  const shortcutCopy = useCallback(() => {
+    copySelection();
+  }, []);
+  const shortcutDuplicate = useCallback(() => {
+    duplicateSelection();
+  }, []);
+
+  useEditorShortcuts({
+    undo,
+    redo,
+    deploy: shortcutDeploy,
+    exportFlow: shortcutExport,
+    help: shortcutHelp,
+    copy: shortcutCopy,
+    paste: shortcutPaste,
+    duplicate: shortcutDuplicate,
+  });
 
   const handleSelectFlow = useCallback(
     (id: string) => {
@@ -138,15 +193,6 @@ export function FlowEditor() {
     },
     [flows, flowId, deleteFlow, navigate, t]
   );
-
-  const handleDeploy = useCallback(async () => {
-    try {
-      await deploy();
-      notify('success', t('toast.deployed'));
-    } catch (error) {
-      notify('error', t('toast.deployFailed', { message: errorMessage(error) }));
-    }
-  }, [deploy, t]);
 
   const modifiedFlows = useMemo(
     () => flows.filter((f) => f.id !== flowId && f.status === 'running' && !!f.deployedAt && f.updatedAt > f.deployedAt),
@@ -267,6 +313,9 @@ export function FlowEditor() {
             onSelectFlow={handleSelectFlow}
             onCreateFlow={handleCreateFlow}
             onDeleteFlow={handleDeleteFlow}
+            onRenameFlow={(id, name) => void renameFlowById(id, name)}
+            onDuplicateFlow={(id) => void handleDuplicateFlow(id)}
+            onReorderFlows={(ids) => void reorderFlows(ids)}
           />
 
           <div className="flex-1 overflow-hidden">
@@ -302,6 +351,8 @@ export function FlowEditor() {
       {flow && <ExportModal flowId={flow.id} flowName={flow.name} isOpen={showExport} onClose={() => setShowExport(false)} />}
 
       <ImportModal isOpen={showImport} onClose={() => setShowImport(false)} onFlowImported={handleFlowImported} />
+
+      <ShortcutHelp isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </div>
   );
 }

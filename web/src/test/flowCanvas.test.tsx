@@ -58,6 +58,13 @@ describe('mergeCanvasNodes', () => {
     expect(merged[0].selected).toBe(true);
   });
 
+  it('keeps the measured size so xyflow does not hide the node again', () => {
+    const current: CanvasNode[] = [{ ...incoming()[0], measured: { width: 140, height: 36 } }];
+    const merged = mergeCanvasNodes(current, incoming());
+    expect(merged[0].measured).toEqual({ width: 140, height: 36 });
+    expect(merged[1].measured).toBeUndefined();
+  });
+
   it('drops nodes that no longer exist', () => {
     const merged = mergeCanvasNodes(incoming(), incoming().slice(1));
     expect(merged.map((n) => n.id)).toEqual(['b']);
