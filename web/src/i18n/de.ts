@@ -315,6 +315,12 @@ const de: TranslationResource = {
     deploying: 'wird deployed',
     undeploying: 'wird gestoppt',
   },
+  auth: {
+    title: 'Anmelden',
+    text: 'Dieser Go-RED-Server verlangt ein Zugriffstoken. Gib das Token ein, mit dem er gestartet wurde (-auth-token oder GORED_AUTH_TOKEN).',
+    placeholder: 'Zugriffstoken',
+    submit: 'Weiter',
+  },
   common: {
     close: 'Schließen',
     yes: 'Ja',

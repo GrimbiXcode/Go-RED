@@ -1,5 +1,6 @@
 import type { WebSocketMessage, WebSocketMessageType } from '../types/message';
 import { getWebSocketUrl } from '../utils/api';
+import { wsProtocols } from './auth';
 
 /**
  * The single WebSocket connection of the editor.
@@ -164,7 +165,7 @@ export class WebSocketClient {
 
     let socket: WebSocket;
     try {
-      socket = new WebSocket(this.url);
+      socket = new WebSocket(this.url, wsProtocols());
     } catch (error) {
       this.setState({ connected: false, connecting: false, error: toError(error) });
       this.scheduleReconnect();

@@ -16,9 +16,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // The Host header is passed through on purpose: the server's origin
+      // policy compares it with the browser's Origin (localhost:5173).
       '/api': {
         target: 'http://localhost:8080',
-        changeOrigin: true,
       },
       '/ws': {
         target: 'ws://localhost:8080',

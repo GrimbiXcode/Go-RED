@@ -313,6 +313,12 @@ const en = {
     deploying: 'deploying',
     undeploying: 'stopping',
   },
+  auth: {
+    title: 'Sign in',
+    text: 'This Go-RED server requires an access token. Enter the token it was started with (-auth-token or GORED_AUTH_TOKEN).',
+    placeholder: 'Access token',
+    submit: 'Continue',
+  },
   common: {
     close: 'Close',
     yes: 'Yes',

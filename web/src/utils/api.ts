@@ -8,6 +8,8 @@ import type {
   DeployResponse,
 } from '../types/api';
 
+import { authHeaders, authRequired } from '../lib/auth';
+
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 export interface RequestOptions {
@@ -26,6 +28,7 @@ async function apiRequest<T, U = undefined>(
     method,
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(),
     },
     keepalive: requestOptions.keepalive,
   };
@@ -33,6 +36,9 @@ async function apiRequest<T, U = undefined>(
     options.body = JSON.stringify(data);
   }
   const response = await fetch(url, options);
+  if (response.status === 401) {
+    authRequired();
+  }
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     const detail = errorData.error || errorData.message || response.statusText;

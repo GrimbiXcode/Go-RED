@@ -11,7 +11,10 @@ class FakeWebSocket {
   onerror: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
 
-  constructor(public url: string) {
+  constructor(
+    public url: string,
+    public protocols?: string | string[]
+  ) {
     FakeWebSocket.instances.push(this);
   }
 

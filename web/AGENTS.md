@@ -25,6 +25,9 @@
 > Komponenten. Flow-Tabs (`FlowTabs.tsx`) benennen um, sortieren per Drag (`Flow.order`) und haben
 > ein Kontextmenü. Import/Export können Go-RED-JSON und Node-RED `flows.json`
 > (`utils/api.ts`, Konvertierung serverseitig in `internal/nodered`).
+> Seit Phase 6 kennt das Frontend ein optionales Zugriffstoken (`src/lib/auth.ts`: `localStorage`
+> `go-red.token`, `Authorization: Bearer` in `utils/api.ts`, Subprotokoll `gored.token.<token>` im
+> `wsClient`); ein 401 öffnet `components/TokenPrompt.tsx`, das nach dem Speichern die Seite neu lädt.
 > UI-Texte kommen aus `src/i18n/` (`t('…')`), nie als Literale in Komponenten. Tests:
 > `src/test/*.test.ts(x)` (Vitest) und `e2e/*.spec.ts` (Playwright gegen den echten Server).
 > Die Architektur ist in `docs/ARCHITECTURE.md`, Abschnitt "Frontend Architecture", beschrieben.

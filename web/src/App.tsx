@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { FlowEditor } from './components/FlowEditor';
 import { ToastHost } from './components/ToastNotification';
+import { TokenPrompt } from './components/TokenPrompt';
 import { StyleGuide } from './pages/StyleGuide';
 import { bindServerEvents } from './store/bindServerEvents';
 
@@ -17,6 +18,7 @@ function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <ToastHost />
+      <TokenPrompt />
     </div>
   );
 }
