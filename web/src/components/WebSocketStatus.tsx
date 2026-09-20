@@ -9,17 +9,17 @@ export interface WebSocketStatusProps {
 }
 
 const dotColorsOnDark = {
-  connected: 'bg-white',
-  connecting: 'bg-white/70 animate-pulse',
-  error: 'bg-gr-fuchsia-300',
+  connected: 'bg-ok',
+  connecting: 'bg-warn animate-pulse',
+  error: 'bg-danger',
   unknown: 'bg-white/40',
 };
 
 const dotColorsOnLight = {
-  connected: 'bg-gr-blue-500',
-  connecting: 'bg-gr-skyblue-500 animate-pulse',
-  error: 'bg-gr-fuchsia-500',
-  unknown: 'bg-gray-400',
+  connected: 'bg-ok',
+  connecting: 'bg-warn animate-pulse',
+  error: 'bg-danger',
+  unknown: 'bg-faint',
 };
 
 export function WebSocketStatus({ variant = 'dot-light' }: WebSocketStatusProps) {
@@ -34,7 +34,7 @@ export function WebSocketStatus({ variant = 'dot-light' }: WebSocketStatusProps)
 
   return (
     <span
-      className={`flex items-center gap-1.5 text-xs ${onDark ? 'text-white/90' : 'text-gray-500'}`}
+      className={`flex items-center gap-1.5 text-xs ${onDark ? 'text-white/75' : 'text-muted'}`}
       title={label}
       data-testid="ws-status"
       data-state={key}

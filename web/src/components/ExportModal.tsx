@@ -33,21 +33,21 @@ export function ExportModal({ flowId, flowName, isOpen, onClose }: ExportModalPr
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-label={t('export.title')}>
-      <div className="bg-white rounded shadow-xl w-full max-w-md">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h3 className="font-semibold text-sm text-gray-800">{t('export.title')}</h3>
-          <button className="text-gray-400 hover:text-gray-600" onClick={onClose} aria-label={t('common.close')}>
+      <div className="bg-panel rounded shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+          <h3 className="font-semibold text-sm text-fg">{t('export.title')}</h3>
+          <button className="text-faint hover:text-muted" onClick={onClose} aria-label={t('common.close')}>
             ✕
           </button>
         </div>
 
         <div className="p-4">
-          <p className="text-sm text-gray-600 mb-4">
+          <p className="text-sm text-muted mb-4">
             <Trans i18nKey="export.text" values={{ name: flowName }} components={{ 1: <strong /> }} />
           </p>
 
-          <div className="bg-gray-50 p-3 rounded mb-4">
-            <div className="text-xs text-gray-600">
+          <div className="bg-surface p-3 rounded mb-4">
+            <div className="text-xs text-muted">
               <div>
                 <strong>{t('export.flowId')}:</strong> {flowId}
               </div>
@@ -58,12 +58,12 @@ export function ExportModal({ flowId, flowName, isOpen, onClose }: ExportModalPr
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-gray-200">
-          <button className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded" onClick={onClose} disabled={isExporting}>
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-line">
+          <button className="px-3 py-1.5 text-xs text-muted hover:bg-sunken rounded" onClick={onClose} disabled={isExporting}>
             {t('export.cancel')}
           </button>
           <button
-            className="px-3 py-1.5 bg-gr-blue-500 text-white rounded hover:bg-gr-blue-600 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 bg-accent text-accent-fg rounded hover:bg-accent-strong text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleExport}
             disabled={isExporting}
           >

@@ -97,23 +97,23 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-label={t('import.title')}>
-      <div className="bg-white rounded shadow-xl w-full max-w-md">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h3 className="font-semibold text-sm text-gray-800">{t('import.title')}</h3>
-          <button className="text-gray-400 hover:text-gray-600" onClick={onClose} aria-label={t('common.close')}>
+      <div className="bg-panel rounded shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+          <h3 className="font-semibold text-sm text-fg">{t('import.title')}</h3>
+          <button className="text-faint hover:text-muted" onClick={onClose} aria-label={t('common.close')}>
             ✕
           </button>
         </div>
 
         <div className="p-4">
-          <p className="text-sm text-gray-600 mb-4">{t('import.text')}</p>
+          <p className="text-sm text-muted mb-4">{t('import.text')}</p>
 
           <div className="mb-4">
-            <label className="block text-xs font-medium text-gray-700 mb-2">{t('import.fileLabel')}</label>
+            <label className="block text-xs font-medium text-fg mb-2">{t('import.fileLabel')}</label>
             <div className="flex gap-2">
               <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".json" className="flex-1 text-xs" disabled={isImporting} />
               <button
-                className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-xs"
+                className="px-3 py-1.5 bg-sunken text-fg rounded hover:bg-line text-xs"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isImporting}
               >
@@ -122,12 +122,12 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
             </div>
           </div>
 
-          {error && <div className="bg-gr-fuchsia-50 text-gr-fuchsia-700 p-3 rounded mb-4 text-xs">{t('import.errorPrefix', { message: error })}</div>}
+          {error && <div className="bg-danger-soft text-danger-text p-3 rounded mb-4 text-xs">{t('import.errorPrefix', { message: error })}</div>}
 
           {preview && (
-            <div className="bg-gr-blue-50 p-3 rounded mb-4">
-              <h4 className="font-medium text-gr-blue-800 mb-2 text-xs">{t('import.preview')}</h4>
-              <div className="text-xs text-gray-700 space-y-1">
+            <div className="bg-accent-soft p-3 rounded mb-4">
+              <h4 className="font-medium text-accent-text mb-2 text-xs">{t('import.preview')}</h4>
+              <div className="text-xs text-fg space-y-1">
                 <div>
                   <strong>{t('import.name')}:</strong> {preview.name}
                 </div>
@@ -145,19 +145,19 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-gray-200">
-          <button className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded" onClick={onClose} disabled={isImporting}>
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-line">
+          <button className="px-3 py-1.5 text-xs text-muted hover:bg-sunken rounded" onClick={onClose} disabled={isImporting}>
             {t('import.cancel')}
           </button>
           <button
-            className="px-3 py-1.5 text-xs text-gr-fuchsia-600 hover:bg-gr-fuchsia-50 rounded disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            className="px-3 py-1.5 text-xs text-danger-text hover:bg-danger-soft rounded disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
             onClick={handleReset}
             disabled={isImporting || !selectedFile}
           >
             {t('import.clear')}
           </button>
           <button
-            className="px-3 py-1.5 bg-gr-blue-500 text-white rounded hover:bg-gr-blue-600 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 bg-accent text-accent-fg rounded hover:bg-accent-strong text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleImport}
             disabled={isImporting || !selectedFile || !!error}
           >

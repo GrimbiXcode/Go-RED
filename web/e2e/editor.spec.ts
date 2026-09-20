@@ -302,6 +302,51 @@ test.describe('flow editor', () => {
     await expect(page.getByTestId('flow-status')).toHaveText('error');
   });
 
+  test('the theme choice applies immediately and survives a reload', async ({ page }) => {
+    await page.goto(`/flow/${FLOW_ID}`);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', /light|dark/);
+    await page.getByRole('button', { name: 'Main menu' }).click();
+    await page.getByRole('menuitem', { name: 'Dark' }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.getByRole('button', { name: 'Main menu' }).click();
+    await page.getByRole('menuitem', { name: 'Light' }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  });
+
+  test('the palette opens its search with / and remembers collapsed categories', async ({ page }) => {
+    await page.goto(`/flow/${FLOW_ID}`);
+    await deselectAll(page);
+    await page.keyboard.press('/');
+    const search = page.getByRole('searchbox', { name: 'Search nodes…' });
+    await expect(search).toBeFocused();
+    await page.keyboard.type('switch');
+    await expect(page.getByTestId('palette-node-switch')).toBeVisible();
+    await expect(page.getByTestId('palette-node-inject')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('palette-node-inject')).toBeVisible();
+
+    await page.getByRole('button', { name: /^output/i }).click();
+    await expect(page.getByTestId('palette-node-debug')).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByTestId('palette-node-inject')).toBeVisible();
+    await expect(page.getByTestId('palette-node-debug')).toHaveCount(0);
+    await page.getByRole('button', { name: /^output/i }).click();
+    await expect(page.getByTestId('palette-node-debug')).toBeVisible();
+  });
+
+  test('without any flow the editor offers to create one, and an empty flow shows a hint', async ({ page, request }) => {
+    const flows: { id: string }[] = await (await request.get('/api/flows')).json();
+    for (const flow of flows) await request.delete(`/api/flows/${flow.id}`);
+    await page.goto('/');
+    await expect(page.getByTestId('empty-flows')).toBeVisible();
+    await page.getByRole('button', { name: 'Create a flow' }).click();
+    await expect(page).toHaveURL(/\/flow\//);
+    await expect(page.getByTestId('canvas-empty')).toBeVisible();
+    await expect(page.locator('.react-flow__node')).toHaveCount(0);
+  });
+
   test('the language can be switched and is remembered', async ({ page }) => {
     await page.goto(`/flow/${FLOW_ID}`);
     await page.getByRole('button', { name: 'Main menu' }).click();

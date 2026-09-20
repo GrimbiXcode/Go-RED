@@ -29,7 +29,7 @@ export function ListWidget({ id, property, value, onChange, error, context, setI
       {items.map((item, index) => (
         <div
           key={index}
-          className={`rounded border border-gray-200 bg-gray-50 p-2 ${dragIndex === index ? 'opacity-50' : ''}`}
+          className={`rounded border border-line bg-surface p-2 ${dragIndex === index ? 'opacity-50' : ''}`}
           draggable
           onDragStart={() => setDragIndex(index)}
           onDragOver={(event) => event.preventDefault()}
@@ -40,7 +40,7 @@ export function ListWidget({ id, property, value, onChange, error, context, setI
           onDragEnd={() => setDragIndex(null)}
           data-testid={`list-item-${id}-${index}`}
         >
-          <div className="flex items-center gap-1 mb-1 text-[10px] text-gray-500">
+          <div className="flex items-center gap-1 mb-1 text-2xs text-muted">
             <span className="cursor-grab select-none" title={t('widgets.drag')}>
               ⋮⋮
             </span>
@@ -67,14 +67,14 @@ export function ListWidget({ id, property, value, onChange, error, context, setI
               compact
             />
           ) : (
-            <pre className="text-[11px] font-mono">{JSON.stringify(item)}</pre>
+            <pre className="text-2xs font-mono">{JSON.stringify(item)}</pre>
           )}
         </div>
       ))}
-      {error && items.length === 0 && <div className="text-[11px] text-gr-fuchsia-600">{error}</div>}
+      {error && items.length === 0 && <div className="text-2xs text-danger-text">{error}</div>}
       <button
         type="button"
-        className="text-xs text-gr-blue-600 hover:underline"
+        className="text-xs text-accent-text hover:underline"
         onClick={() => update([...items, itemSchema ? withDefaults(itemSchema, {}) : {}])}
         data-testid={`list-add-${id}`}
       >

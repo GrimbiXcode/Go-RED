@@ -101,15 +101,38 @@ describe('NodePalette', () => {
     { id: 'function', type: 'function', name: 'Function', description: 'Runs JavaScript', category: 'function', inputs: [], outputs: [], configSchema: { properties: {}, required: [] }, icon: '', tags: ['javascript'] },
   ];
 
-  it('groups nodes by category and expands the first category by default', () => {
-    render(<NodePalette nodeTypes={nodeTypes} loading={false} />);
-    expect(screen.getByRole('button', { name: /input/i })).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('button', { name: /output/i })).toHaveAttribute('aria-expanded', 'false');
+  it('groups nodes by category, all open by default, and remembers collapsed categories', () => {
+    window.localStorage.removeItem('go-red.palette.collapsed');
+    const { unmount } = render(<NodePalette nodeTypes={nodeTypes} loading={false} />);
+    expect(screen.getByRole('button', { name: /^input/i })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: /^output/i })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByTestId('palette-node-inject')).toBeInTheDocument();
-    expect(screen.queryByTestId('palette-node-debug')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /output/i }));
     expect(screen.getByTestId('palette-node-debug')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^output/i }));
+    expect(screen.queryByTestId('palette-node-debug')).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem('go-red.palette.collapsed') || '[]')).toEqual(['output']);
+
+    unmount();
+    render(<NodePalette nodeTypes={nodeTypes} loading={false} />);
+    expect(screen.queryByTestId('palette-node-debug')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^output/i }));
+    expect(screen.getByTestId('palette-node-debug')).toBeInTheDocument();
+    window.localStorage.removeItem('go-red.palette.collapsed');
+  });
+
+  it('focuses the search box on / unless the user is typing', () => {
+    render(<NodePalette nodeTypes={nodeTypes} loading={false} />);
+    const search = screen.getByRole('searchbox', { name: 'Search nodes…' });
+    fireEvent.keyDown(window, { key: '/' });
+    expect(search).toHaveFocus();
+    search.blur();
+    const other = document.createElement('input');
+    document.body.appendChild(other);
+    other.focus();
+    fireEvent.keyDown(other, { key: '/' });
+    expect(search).not.toHaveFocus();
+    other.remove();
   });
 
   it('filters by name, type, description and tag and expands matches', () => {

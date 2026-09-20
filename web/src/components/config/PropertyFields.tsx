@@ -31,14 +31,14 @@ function Field({ prop, id, value, onChange, error, required, context, setInvalid
 }) {
   const Widget = widgetRegistry[prop.widget];
   const label = (
-    <label htmlFor={id} className="text-xs font-medium text-gray-600">
+    <label htmlFor={id} className="text-xs font-medium text-muted">
       {prop.label}
-      {required && <span className="text-gr-fuchsia-500 ml-0.5">*</span>}
+      {required && <span className="text-danger ml-0.5">*</span>}
     </label>
   );
-  const help = !compact && prop.schema.description ? <div className="mt-1 text-[10px] text-gray-400 leading-snug">{prop.schema.description}</div> : null;
+  const help = !compact && prop.schema.description ? <div className="mt-1 text-2xs text-faint leading-snug">{prop.schema.description}</div> : null;
   const errorLine = error ? (
-    <div className="mt-1 text-[11px] text-gr-fuchsia-600" data-testid="field-error" data-field={id}>
+    <div className="mt-1 text-2xs text-danger-text" data-testid="field-error" data-field={id}>
       {error}
     </div>
   ) : null;
@@ -77,7 +77,7 @@ export function PropertyFields({ schema, config, onChange, errors, prefix, conte
     <div className={compact ? 'space-y-2' : 'space-y-4'}>
       {groups.map((group) => (
         <div key={group.group || '__default'} className={compact ? 'space-y-2' : 'space-y-3'}>
-          {group.group && <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-200 pb-1">{group.group}</div>}
+          {group.group && <div className="text-2xs font-semibold uppercase tracking-wide text-faint border-b border-line pb-1">{group.group}</div>}
           {group.properties.map((prop) => {
             const id = prefix ? `${prefix}.${prop.key}` : prop.key;
             return (
@@ -97,7 +97,7 @@ export function PropertyFields({ schema, config, onChange, errors, prefix, conte
           })}
         </div>
       ))}
-      {groups.length === 0 && <div className="text-xs text-gray-500">{t('config.noProperties')}</div>}
+      {groups.length === 0 && <div className="text-xs text-muted">{t('config.noProperties')}</div>}
     </div>
   );
 }

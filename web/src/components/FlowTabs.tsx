@@ -10,19 +10,19 @@ export interface FlowTabsProps {
 }
 
 const statusDotClass: Record<string, string> = {
-  running: 'bg-gr-blue-500',
-  error: 'bg-gr-fuchsia-500',
+  running: 'bg-ok',
+  error: 'bg-danger',
 };
 
 function statusDot(status: string) {
-  return statusDotClass[status] || 'bg-gray-300';
+  return statusDotClass[status] || 'bg-faint';
 }
 
 export function FlowTabs({ flows, selectedFlowId, onSelectFlow, onCreateFlow, onDeleteFlow }: FlowTabsProps) {
   const { t } = useTranslation();
 
   return (
-    <div className="flex items-center bg-gray-100 border-b border-gray-300 shrink-0 overflow-x-auto" role="tablist">
+    <div className="flex items-center bg-sunken border-b border-line shrink-0 overflow-x-auto" role="tablist">
       <div className="flex items-stretch">
         {flows.map((flow) => {
           const isActive = flow.id === selectedFlowId;
@@ -31,8 +31,8 @@ export function FlowTabs({ flows, selectedFlowId, onSelectFlow, onCreateFlow, on
               key={flow.id}
               role="tab"
               aria-selected={isActive}
-              className={`group flex items-center gap-2 px-3 h-8 text-xs font-medium border-r border-gray-300 whitespace-nowrap ${
-                isActive ? 'bg-white text-gray-800' : 'text-gray-600 hover:bg-gray-200'
+              className={`group flex items-center gap-2 px-3 h-8 text-xs font-medium border-r border-line whitespace-nowrap ${
+                isActive ? 'bg-panel text-fg shadow-[inset_0_2px_0_var(--accent)]' : 'text-muted hover:bg-surface hover:text-fg'
               }`}
               onClick={() => onSelectFlow(flow.id)}
               title={flow.name}
@@ -43,7 +43,7 @@ export function FlowTabs({ flows, selectedFlowId, onSelectFlow, onCreateFlow, on
                 <span
                   role="button"
                   aria-label={t('tabs.deleteFlow')}
-                  className="ml-1 rounded hover:bg-gray-200 px-1 text-gray-400 hover:text-gr-fuchsia-600 opacity-0 group-hover:opacity-100"
+                  className="ml-1 rounded hover:bg-line px-1 text-faint hover:text-danger-text opacity-0 group-hover:opacity-100"
                   onClick={(event) => {
                     event.stopPropagation();
                     onDeleteFlow(flow.id);
@@ -57,7 +57,7 @@ export function FlowTabs({ flows, selectedFlowId, onSelectFlow, onCreateFlow, on
         })}
       </div>
       <button
-        className="w-8 h-8 flex items-center justify-center text-gray-500 hover:bg-gray-200 shrink-0"
+        className="w-8 h-8 flex items-center justify-center text-muted hover:bg-line shrink-0"
         onClick={onCreateFlow}
         title={t('tabs.newFlow')}
         aria-label={t('tabs.newFlow')}

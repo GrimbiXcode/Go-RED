@@ -20,7 +20,7 @@ export interface NodeEditTrayProps {
 }
 
 const tabClass = (active: boolean) =>
-  `px-3 py-1.5 text-xs border-b-2 ${active ? 'border-gr-blue-500 text-gr-blue-700 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`;
+  `px-3 py-1.5 text-xs border-b-2 ${active ? 'border-accent text-accent-text font-medium' : 'border-transparent text-muted hover:text-fg'}`;
 
 /**
  * Node edit tray: slides in at the right, like Node-RED's edit dialog but
@@ -83,30 +83,30 @@ export function NodeEditTray({ node, onClose, onSave, onDelete }: NodeEditTrayPr
 
   return (
     <div
-      className="fixed top-11 bottom-6 right-9 w-96 bg-white border-l border-gray-200 shadow-xl z-30 flex flex-col animate-slide-in-right"
+      className="fixed top-11 bottom-6 right-9 w-96 bg-panel border-l border-line shadow-xl z-30 flex flex-col animate-slide-in-right"
       role="dialog"
       aria-label={metadata?.name || node.type}
       data-testid="node-config"
     >
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-line">
         <span className={`w-3 h-3 rounded-sm shrink-0 ${color.swatch}`} style={metadata?.color ? { backgroundColor: metadata.color } : undefined} aria-hidden="true" />
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-gray-800 truncate">{metadata?.name || node.type}</div>
-          <div className="text-[10px] text-gray-400 truncate font-mono">{node.id}</div>
+          <div className="text-sm font-semibold text-fg truncate">{metadata?.name || node.type}</div>
+          <div className="text-2xs text-faint truncate font-mono">{node.id}</div>
         </div>
-        <button className="text-gray-400 hover:text-gray-600 shrink-0" onClick={onClose} aria-label={t('config.close')}>
+        <button className="text-faint hover:text-muted shrink-0" onClick={onClose} aria-label={t('config.close')}>
           ✕
         </button>
       </div>
 
       <div className="px-3 pt-3">
-        <label htmlFor="node-name" className="block text-xs font-medium text-gray-600 mb-1">
+        <label htmlFor="node-name" className="block text-xs font-medium text-muted mb-1">
           {t('config.nodeName')}
         </label>
         <input id="node-name" type="text" value={name} onChange={(event) => setName(event.target.value)} className={inputClass} placeholder={t('config.nodeNamePlaceholder')} />
       </div>
 
-      <div className="flex border-b border-gray-200 px-3 mt-2" role="tablist">
+      <div className="flex border-b border-line px-3 mt-2" role="tablist">
         {tabs.map((entry) => (
           <button
             key={entry.id}
@@ -134,8 +134,8 @@ export function NodeEditTray({ node, onClose, onSave, onDelete }: NodeEditTrayPr
             <PropertyFields schema={schema} config={config} onChange={handleChange} errors={errors} context={context} setInvalid={setInvalid} />
           ) : (
             <div className="space-y-2">
-              <div className="text-xs text-gray-600">{t('config.noSchema')}</div>
-              <label className="block text-xs font-medium text-gray-600">{t('config.customJson')}</label>
+              <div className="text-xs text-muted">{t('config.noSchema')}</div>
+              <label className="block text-xs font-medium text-muted">{t('config.customJson')}</label>
               <JsonWidget
                 id="config"
                 property={{ type: 'object', description: '', default: undefined, enum: [], pattern: '', label: t('config.customJson') }}
@@ -150,7 +150,7 @@ export function NodeEditTray({ node, onClose, onSave, onDelete }: NodeEditTrayPr
         {tab === 'description' && (
           <div className="space-y-3">
             <div>
-              <label htmlFor="node-description" className="block text-xs font-medium text-gray-600 mb-1">
+              <label htmlFor="node-description" className="block text-xs font-medium text-muted mb-1">
                 {t('config.tabs.description')}
               </label>
               <textarea
@@ -163,11 +163,11 @@ export function NodeEditTray({ node, onClose, onSave, onDelete }: NodeEditTrayPr
               />
             </div>
             <div>
-              <div className="text-xs font-medium text-gray-600 mb-1">{t('config.about', { type: metadata?.name || node.type })}</div>
+              <div className="text-xs font-medium text-muted mb-1">{t('config.about', { type: metadata?.name || node.type })}</div>
               {helpHtml ? (
-                <div className="markdown text-xs text-gray-700 bg-gray-50 rounded p-2" data-testid="node-type-help" dangerouslySetInnerHTML={{ __html: helpHtml }} />
+                <div className="markdown text-xs text-fg bg-surface rounded p-2" data-testid="node-type-help" dangerouslySetInnerHTML={{ __html: helpHtml }} />
               ) : (
-                <div className="text-xs text-gray-400">{t('config.noHelp')}</div>
+                <div className="text-xs text-faint">{t('config.noHelp')}</div>
               )}
             </div>
           </div>
@@ -177,20 +177,20 @@ export function NodeEditTray({ node, onClose, onSave, onDelete }: NodeEditTrayPr
           <div className="space-y-4">
             <div>
               <div className="flex items-center gap-2">
-                <input id="node-enabled" type="checkbox" className="h-4 w-4 accent-gr-blue-500" checked={!disabled} onChange={(event) => setDisabled(!event.target.checked)} />
-                <label htmlFor="node-enabled" className="text-xs font-medium text-gray-600">
+                <input id="node-enabled" type="checkbox" className="h-4 w-4 accent-accent" checked={!disabled} onChange={(event) => setDisabled(!event.target.checked)} />
+                <label htmlFor="node-enabled" className="text-xs font-medium text-muted">
                   {t('config.enabled')}
                 </label>
               </div>
-              <div className="mt-1 text-[10px] text-gray-400 leading-snug">{t('config.enabledHelp')}</div>
+              <div className="mt-1 text-2xs text-faint leading-snug">{t('config.enabledHelp')}</div>
             </div>
-            <div className="text-xs text-gray-600 space-y-1">
+            <div className="text-xs text-muted space-y-1">
               <div>
-                <span className="text-gray-400">{t('sidebar.type')}: </span>
-                {metadata?.name || node.type} <span className="font-mono text-gray-400">({node.type})</span>
+                <span className="text-faint">{t('sidebar.type')}: </span>
+                {metadata?.name || node.type} <span className="font-mono text-faint">({node.type})</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-gray-400">{t('config.category')}: </span>
+                <span className="text-faint">{t('config.category')}: </span>
                 <span className={`inline-block w-3 h-3 rounded-sm ${color.swatch}`} style={metadata?.color ? { backgroundColor: metadata.color } : undefined} />
                 {category}
               </div>
@@ -199,9 +199,9 @@ export function NodeEditTray({ node, onClose, onSave, onDelete }: NodeEditTrayPr
         )}
       </form>
 
-      <div className="flex items-center justify-between gap-2 p-3 border-t border-gray-200">
+      <div className="flex items-center justify-between gap-2 p-3 border-t border-line">
         {onDelete ? (
-          <button type="button" className="px-3 py-1.5 text-xs text-gr-fuchsia-600 hover:bg-gr-fuchsia-50 rounded" onClick={onDelete}>
+          <button type="button" className="px-3 py-1.5 text-xs text-danger-text hover:bg-danger-soft rounded" onClick={onDelete}>
             {t('config.delete')}
           </button>
         ) : (
@@ -209,16 +209,16 @@ export function NodeEditTray({ node, onClose, onSave, onDelete }: NodeEditTrayPr
         )}
         <div className="flex items-center gap-2">
           {problemCount > 0 && (
-            <span className="text-[11px] text-gr-fuchsia-600" data-testid="config-problems">
+            <span className="text-2xs text-danger-text" data-testid="config-problems">
               {t('config.problems', { count: problemCount })}
             </span>
           )}
-          <button type="button" className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded" onClick={onClose}>
+          <button type="button" className="px-3 py-1.5 text-xs text-muted hover:bg-sunken rounded" onClick={onClose}>
             {t('config.cancel')}
           </button>
           <button
             type="button"
-            className="px-3 py-1.5 text-xs font-medium bg-gr-blue-500 text-white rounded hover:bg-gr-blue-600 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 text-xs font-medium bg-accent text-accent-fg rounded hover:bg-accent-strong disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={submit}
             disabled={!canSave}
             data-testid="config-done"

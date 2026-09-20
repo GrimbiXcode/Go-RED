@@ -17,6 +17,8 @@ import { useFlowStore, selectCanDeploy, selectCanRedo, selectCanUndeploy, select
 import { connectionsOnMissingPorts, outputPortIds } from '../schema/ports';
 import { useEditorStore, type SidebarTab } from '../store/editorStore';
 import { notify } from '../store/notificationStore';
+import { deployFlow } from '../utils/api';
+import { NoFlowsState } from './EmptyStates';
 import { useEditorShortcuts } from '../hooks/useEditorShortcuts';
 
 function errorMessage(error: unknown): string {
@@ -146,6 +148,28 @@ export function FlowEditor() {
     }
   }, [deploy, t]);
 
+  const modifiedFlows = useMemo(
+    () => flows.filter((f) => f.id !== flowId && f.status === 'running' && !!f.deployedAt && f.updatedAt > f.deployedAt),
+    [flows, flowId]
+  );
+
+  const handleDeployAll = useCallback(async () => {
+    let count = 0;
+    try {
+      if (canDeploy) {
+        await deploy();
+        count++;
+      }
+      for (const target of modifiedFlows) {
+        await deployFlow(target.id);
+        count++;
+      }
+      notify('success', t('toast.deployedAll', { count }));
+    } catch (error) {
+      notify('error', t('toast.deployFailed', { message: errorMessage(error) }));
+    }
+  }, [canDeploy, deploy, modifiedFlows, t]);
+
   const handleUndeploy = useCallback(async () => {
     try {
       await undeploy();
@@ -196,7 +220,7 @@ export function FlowEditor() {
   if (flowsLoading && flows.length === 0) {
     return (
       <div className="flex h-full w-full items-center justify-center">
-        <div className="text-gray-500">{t('app.loadingFlows')}</div>
+        <div className="text-muted">{t('app.loadingFlows')}</div>
       </div>
     );
   }
@@ -204,8 +228,8 @@ export function FlowEditor() {
   if (flowsError && flows.length === 0) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-3">
-        <div className="text-gr-fuchsia-600">{t('app.loadError', { message: flowsError })}</div>
-        <button className="px-3 py-1.5 text-xs bg-gr-blue-500 text-white rounded" onClick={() => void loadFlows()}>
+        <div className="text-danger-text">{t('app.loadError', { message: flowsError })}</div>
+        <button className="px-3 py-1.5 text-xs bg-accent text-accent-fg rounded" onClick={() => void loadFlows()}>
           {t('app.retry')}
         </button>
       </div>
@@ -221,7 +245,9 @@ export function FlowEditor() {
         canUndeploy={canUndeploy}
         canUndo={canUndo}
         canRedo={canRedo}
+        modifiedFlows={modifiedFlows.length}
         onDeploy={handleDeploy}
+        onDeployAll={handleDeployAll}
         onUndeploy={handleUndeploy}
         onUndo={undo}
         onRedo={redo}
@@ -230,7 +256,7 @@ export function FlowEditor() {
       />
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-64 bg-white border-r border-gray-200 overflow-y-auto">
+        <div className="w-64 bg-panel border-r border-line overflow-y-auto shrink-0">
           <NodePalette />
         </div>
 
@@ -244,9 +270,11 @@ export function FlowEditor() {
           />
 
           <div className="flex-1 overflow-hidden">
-            {flowError ? (
-              <div className="flex h-full w-full items-center justify-center bg-gray-100">
-                <div className="text-gr-fuchsia-600 text-sm">{flowError}</div>
+            {flows.length === 0 ? (
+              <NoFlowsState onCreate={() => void handleCreateFlow()} onImport={() => setShowImport(true)} />
+            ) : flowError ? (
+              <div className="flex h-full w-full items-center justify-center bg-canvas">
+                <div className="text-danger-text text-sm">{flowError}</div>
               </div>
             ) : (
               <ReactFlowProvider>

@@ -49,7 +49,7 @@ function NumberWidget({ id, property, value, onChange, error }: WidgetProps) {
 }
 
 function BooleanWidget({ id, value, onChange }: WidgetProps) {
-  return <input id={id} type="checkbox" className="h-4 w-4 accent-gr-blue-500" checked={!!value} onChange={(event) => onChange(event.target.checked)} />;
+  return <input id={id} type="checkbox" className="h-4 w-4 accent-accent" checked={!!value} onChange={(event) => onChange(event.target.checked)} />;
 }
 
 function SelectWidget({ id, property, value, onChange, error }: WidgetProps) {
@@ -160,7 +160,7 @@ function StringListWidget({ id, property, value, onChange, error }: WidgetProps)
           </button>
         </div>
       ))}
-      <button type="button" className="text-xs text-gr-blue-600 hover:underline" onClick={() => update([...items, ''])}>
+      <button type="button" className="text-xs text-accent-text hover:underline" onClick={() => update([...items, ''])}>
         + {t('widgets.add')}
       </button>
     </div>
@@ -210,7 +210,7 @@ function KeyValueWidget({ id, value, onChange, error }: WidgetProps) {
           </button>
         </div>
       ))}
-      <button type="button" className="text-xs text-gr-blue-600 hover:underline" onClick={() => update([...rows, { key: '', value: '' }])}>
+      <button type="button" className="text-xs text-accent-text hover:underline" onClick={() => update([...rows, { key: '', value: '' }])}>
         + {t('widgets.add')}
       </button>
     </div>
@@ -235,13 +235,13 @@ function NodeSelectWidget({ id, property, value, onChange, error, context }: Wid
   if (property.multiple) {
     const selected = new Set(Array.isArray(value) ? value.map(String) : []);
     return (
-      <div className="space-y-1 max-h-40 overflow-y-auto border border-gray-200 rounded p-2" data-testid={`node-select-${id}`}>
-        {candidates.length === 0 && <div className="text-xs text-gray-400">{t('widgets.noNodes')}</div>}
+      <div className="space-y-1 max-h-40 overflow-y-auto border border-line rounded p-2" data-testid={`node-select-${id}`}>
+        {candidates.length === 0 && <div className="text-xs text-faint">{t('widgets.noNodes')}</div>}
         {candidates.map((candidate) => (
-          <label key={candidate.id} className="flex items-center gap-2 text-xs text-gray-700">
+          <label key={candidate.id} className="flex items-center gap-2 text-xs text-fg">
             <input
               type="checkbox"
-              className="h-3.5 w-3.5 accent-gr-blue-500"
+              className="h-3.5 w-3.5 accent-accent"
               checked={selected.has(candidate.id)}
               onChange={(event) => {
                 const next = new Set(selected);

@@ -69,11 +69,16 @@ function languageExtensions(language: CodeLanguage): Extension[] {
 }
 
 const theme = EditorView.theme({
-  '&': { fontSize: '12px', border: '1px solid #d1d5db', borderRadius: '4px', backgroundColor: '#fff' },
-  '&.cm-focused': { outline: '2px solid #00add8', outlineOffset: '-1px' },
-  '.cm-content': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', padding: '4px 0' },
-  '.cm-gutters': { backgroundColor: '#f9fafb', color: '#9ca3af', border: 'none' },
-  '.cm-activeLine': { backgroundColor: '#f3f4f6' },
+  '&': { fontSize: '12px', border: '1px solid var(--line)', borderRadius: '6px', backgroundColor: 'var(--bg-panel)', color: 'var(--fg)' },
+  '&.cm-focused': { outline: '2px solid var(--accent)', outlineOffset: '-1px' },
+  '.cm-content': { fontFamily: '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace', padding: '4px 0', caretColor: 'var(--fg)' },
+  '.cm-cursor': { borderLeftColor: 'var(--fg)' },
+  '.cm-gutters': { backgroundColor: 'var(--bg-surface)', color: 'var(--fg-faint)', border: 'none' },
+  '.cm-activeLine': { backgroundColor: 'var(--bg-surface)' },
+  '.cm-activeLineGutter': { backgroundColor: 'var(--bg-sunken)' },
+  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'var(--selection) !important' },
+  '.cm-tooltip': { backgroundColor: 'var(--bg-panel)', border: '1px solid var(--line)', color: 'var(--fg)' },
+  '.cm-tooltip-autocomplete ul li[aria-selected]': { backgroundColor: 'var(--accent-soft)', color: 'var(--fg)' },
   '.cm-scroller': { overflow: 'auto' },
 });
 

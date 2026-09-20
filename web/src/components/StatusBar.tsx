@@ -19,7 +19,7 @@ export function StatusBar({ flow, saveState, saveError }: StatusBarProps) {
   const connectionCount = flow ? (flow.connections || []).length : 0;
 
   let saveLabel: string | null = null;
-  let saveClass = 'text-gray-500';
+  let saveClass = 'text-muted';
   if (flow) {
     switch (saveState) {
       case 'saving':
@@ -30,7 +30,7 @@ export function StatusBar({ flow, saveState, saveError }: StatusBarProps) {
         break;
       case 'error':
         saveLabel = t('status.saveFailed', { message: saveError || '' });
-        saveClass = 'text-gr-fuchsia-600';
+        saveClass = 'text-danger-text';
         break;
       default:
         saveLabel = t('status.saved');
@@ -38,7 +38,7 @@ export function StatusBar({ flow, saveState, saveError }: StatusBarProps) {
   }
 
   return (
-    <div className="h-6 flex items-center justify-between px-3 bg-gray-100 border-t border-gray-200 text-[10px] text-gray-500 shrink-0">
+    <div className="h-6 flex items-center justify-between px-3 bg-sunken border-t border-line text-2xs text-muted shrink-0">
       <div className="flex items-center gap-3">
         <WebSocketStatus variant="dot-light" />
         {saveLabel && (

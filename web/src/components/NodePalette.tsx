@@ -1,9 +1,12 @@
-import React, { useCallback, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 import type { NodeMetadata } from '../types/node';
-import { CategoryIcon, NodeIcon } from './CategoryIcon';
+import { NodeIcon } from './CategoryIcon';
 import { getCategoryColor, sortCategories } from '../utils/nodeCategories';
 import { useFlowStore } from '../store/flowStore';
+
+const COLLAPSED_KEY = 'go-red.palette.collapsed';
 
 export function getCategories(nodeTypes: NodeMetadata[]): string[] {
   const categories = new Set<string>();
@@ -35,6 +38,31 @@ export function filterNodeTypes(nodeTypes: NodeMetadata[], query: string): NodeM
   );
 }
 
+function readCollapsed(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeCollapsed(collapsed: Set<string>): void {
+  try {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(Array.from(collapsed)));
+  } catch {
+    // Not remembered, still applied for this session.
+  }
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+/** A palette row is a miniature of the node: icon well in the category color plus the label. */
 function NodePaletteItem({ node }: { node: NodeMetadata }) {
   const handleDragStart = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
@@ -48,15 +76,16 @@ function NodePaletteItem({ node }: { node: NodeMetadata }) {
 
   return (
     <div
-      className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-50 cursor-grab active:cursor-grabbing"
+      className="flex items-center h-7 rounded-md border border-line bg-panel shadow-panel hover:border-line-strong hover:shadow-float cursor-grab active:cursor-grabbing overflow-hidden"
       draggable
       onDragStart={handleDragStart}
       title={node.description || node.name}
       data-testid={`palette-node-${node.type}`}
     >
-      <span className={`w-2 h-2 rounded-sm shrink-0 ${color.swatch}`} aria-hidden="true" />
-      <NodeIcon icon={node.icon} category={node.category} className={`w-3.5 h-3.5 shrink-0 ${color.softText}`} />
-      <span className="text-xs flex-1 truncate">{node.name}</span>
+      <span className="flex items-center justify-center w-7 h-full text-white shrink-0" style={{ background: node.color || color.fill }}>
+        <NodeIcon icon={node.icon} category={node.category} className="w-3.5 h-3.5" />
+      </span>
+      <span className="px-2 text-xs text-fg truncate flex-1">{node.name}</span>
     </div>
   );
 }
@@ -69,25 +98,26 @@ interface CategorySectionProps {
 }
 
 function CategorySection({ category, nodes, isExpanded, onToggle }: CategorySectionProps) {
+  const { t } = useTranslation();
   const color = getCategoryColor(category);
+  const Chevron = isExpanded ? ChevronDown : ChevronRight;
 
   return (
-    <div className="mb-1">
+    <div className="mb-2">
       <button
-        className={`flex items-center justify-between w-full px-2 py-1.5 rounded ${color.softBg} ${color.softText} font-medium`}
+        className="flex items-center w-full gap-2 px-1 py-1 rounded text-xs font-medium text-fg hover:bg-surface"
         onClick={onToggle}
         aria-expanded={isExpanded}
+        title={isExpanded ? t('palette.collapse') : t('palette.expand')}
       >
-        <div className="flex items-center gap-1.5">
-          <CategoryIcon category={category} className="w-3.5 h-3.5" />
-          <span className="capitalize text-xs">{category}</span>
-          <span className="text-[10px] text-gray-500">{nodes.length}</span>
-        </div>
-        <span className="text-[10px]">{isExpanded ? '▼' : '▶'}</span>
+        <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: color.fill }} aria-hidden="true" />
+        <span className="capitalize">{category}</span>
+        <span className="text-2xs text-faint ml-auto">{nodes.length}</span>
+        <Chevron className="w-3.5 h-3.5 text-faint" aria-hidden="true" />
       </button>
 
       {isExpanded && (
-        <div className="mt-0.5 ml-3">
+        <div className="mt-1 space-y-1 pl-1">
           {nodes.map((node) => (
             <NodePaletteItem key={node.id} node={node} />
           ))}
@@ -103,6 +133,11 @@ export interface NodePaletteProps {
   loading?: boolean;
 }
 
+/**
+ * Node palette: categories with a color chip, all open unless the user
+ * collapsed them (remembered per browser), rows as mini nodes, and a
+ * search box that "/" focuses from anywhere in the editor.
+ */
 export function NodePalette(props: NodePaletteProps) {
   const { t } = useTranslation();
   const storeNodeTypes = useFlowStore((state) => state.nodeTypes);
@@ -110,25 +145,32 @@ export function NodePalette(props: NodePaletteProps) {
   const nodeTypes = props.nodeTypes ?? storeNodeTypes;
   const loading = props.loading ?? storeLoading;
 
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => readCollapsed());
   const [searchQuery, setSearchQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const filteredNodeTypes = useMemo(() => filterNodeTypes(nodeTypes, searchQuery), [nodeTypes, searchQuery]);
   const filteredGroupedNodes = useMemo(() => groupByCategory(filteredNodeTypes), [filteredNodeTypes]);
   const filteredCategories = useMemo(() => getCategories(filteredNodeTypes), [filteredNodeTypes]);
   const searching = searchQuery.trim().length > 0;
 
-  React.useEffect(() => {
-    if (filteredCategories.length > 0 && expandedCategories.size === 0) {
-      setExpandedCategories(new Set([filteredCategories[0]]));
-    }
-  }, [filteredCategories, expandedCategories.size]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || isEditableTarget(event.target)) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const toggleCategory = useCallback((category: string) => {
-    setExpandedCategories((prev) => {
+    setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(category)) next.delete(category);
       else next.add(category);
+      writeCollapsed(next);
       return next;
     });
   }, []);
@@ -136,42 +178,55 @@ export function NodePalette(props: NodePaletteProps) {
   if (loading && nodeTypes.length === 0) {
     return (
       <div className="p-4">
-        <div className="text-sm text-gray-500">{t('palette.loading')}</div>
+        <div className="text-sm text-muted">{t('palette.loading')}</div>
       </div>
     );
   }
 
   return (
-    <div className="p-2 h-full text-xs" data-testid="node-palette">
-      <div className="mb-2">
+    <div className="p-2 h-full text-xs flex flex-col" data-testid="node-palette">
+      <div className="relative mb-3">
+        <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" aria-hidden="true" />
         <input
+          ref={searchRef}
           type="search"
-          className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-gr-blue-500 focus:border-transparent"
+          className="w-full pl-7 pr-8 py-1.5 text-xs border border-line rounded-md bg-panel text-fg placeholder:text-faint focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
           placeholder={t('palette.search')}
           aria-label={t('palette.search')}
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setSearchQuery('');
+              (event.target as HTMLInputElement).blur();
+            }
+          }}
         />
+        {!searching && (
+          <kbd className="absolute right-2 top-1/2 -translate-y-1/2 px-1 rounded border border-line text-2xs text-faint font-mono" title={t('palette.shortcut')}>
+            /
+          </kbd>
+        )}
       </div>
 
       {filteredCategories.length === 0 ? (
-        <div className="text-xs text-gray-500 p-2">{searching ? t('palette.noMatch') : t('palette.noNodes')}</div>
+        <div className="text-xs text-muted p-2">{searching ? t('palette.noMatch') : t('palette.noNodes')}</div>
       ) : (
-        <div className="space-y-0.5">
+        <div className="flex-1 overflow-y-auto">
           {filteredCategories.map((category) => (
             <CategorySection
               key={category}
               category={category}
               nodes={filteredGroupedNodes[category] || []}
-              isExpanded={searching || expandedCategories.has(category)}
+              isExpanded={searching || !collapsed.has(category)}
               onToggle={() => toggleCategory(category)}
             />
           ))}
         </div>
       )}
 
-      <div className="mt-4 pt-2 border-t border-gray-200">
-        <div className="text-[10px] text-gray-400">{t('palette.hint')}</div>
+      <div className="mt-2 pt-2 border-t border-line">
+        <div className="text-2xs text-faint">{t('palette.hint')}</div>
       </div>
     </div>
   );
