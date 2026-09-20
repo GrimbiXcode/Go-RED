@@ -43,6 +43,10 @@ engine/ ─────┬───── state/ (state DOES import engine — s
 - ✅ `dto/` imports `engine/` and `registry/` (it converts between their
   internal types and the canonical wire format); nothing in `engine/` or
   `registry/` imports `dto/` back.
+- ✅ `nodered/` imports `engine/` only: it converts Node-RED `flows.json`
+  arrays to `engine.Flow`s and back (`docs/PROTOCOL.md`, *Node-RED import
+  and export*). It knows nothing about HTTP or the registry; unknown node
+  types are kept with their raw properties and reported as warnings.
 - ❌ `registry/` should NOT import `engine/` (circular dependency).
 - ❌ `internal/` packages should NOT be imported by packages outside `internal/`
   and `cmd/`.

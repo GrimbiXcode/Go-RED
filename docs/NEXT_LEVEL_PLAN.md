@@ -452,6 +452,34 @@ sondern pro Metrik-Intervall (1 s), da die Engine keine Einzelnachrichten pusht.
 - Import/Export im **Node-RED-JSON-Format** (Array aus Nodes mit `wires`), damit bestehende
   Flows aus Node-RED übernommen werden können; das ist ein echter Adoptions-Hebel.
 
+**Status: umgesetzt.** Alle Mehrfach-Aktionen sind Store-Aktionen (`web/src/store/editorActions.ts`,
+`flowStore`), damit Tastatur, Kontextmenü und Tab-Menü dieselbe Implementierung mit Undo und
+Autosave teilen. Clipboard (`src/lib/clipboard.ts`) als JSON-Clip in Speicher + `localStorage`,
+daher Copy/Paste/Duplicate auch zwischen Flows und Browser-Tabs; Einfügen vergibt neue IDs,
+mappt die Verbindungen um, versetzt und selektiert die Nodes. Layout (`src/lib/layout.ts`):
+Snap-to-Grid 20 px, Ausrichten (6 Richtungen), Verteilen, Auto-Layout mit dagre; Pfeiltasten
+verschieben um 1 px, mit Shift um einen Rasterschritt. Rahmen-Selektion per Drag,
+`Space+Drag`/mittlere Maustaste pannen, `+`/`-` zoomen. Kontextmenüs auf Node, Selektion, Kante
+und Canvas (`ContextMenu.tsx`), Doppelklick auf den Canvas öffnet Quick-Add mit Suche
+(`QuickAdd.tsx`), Palette-Drop oder ein unverbundener Node auf einer Kante fügt ihn ein
+(`insertNodeOnEdge`, `spliceNodeIntoEdge`). Shortcuts in `hooks/useEditorShortcuts.ts`
+(`Ctrl+S/Z/Y/C/V/D/A/F/E`, `?` öffnet `ShortcutHelp.tsx`), in Eingabefeldern inaktiv. Flow-Tabs:
+Umbenennen per Doppelklick, Drag-Sortierung (persistiert als `Flow.order`, neue Flows bekommen
+`max + 1`, `PUT {order}` allein zählt nicht als Änderung), Kontextmenü mit Umbenennen /
+Duplizieren / Löschen, Dirty-Punkt bei `updatedAt > deployedAt`. Node-RED: `internal/nodered`
+konvertiert `flows.json` in beide Richtungen (Tabs → Flows, `wires` → Verbindungen, Positionen
+Mitte ↔ Ecke, Config-Nodes in die nutzenden Flows kopiert, Feld-Mapping für alle 47 Typen,
+unbekannte Typen mit Rohdaten und Warnung, Subflows/Gruppen übersprungen);
+`POST /api/flows/import` erkennt Arrays automatisch, `GET …/export?format=node-red` exportiert;
+der Import-Dialog zeigt Format, Tabs und nicht unterstützte Typen vorab, der Export-Dialog hat
+eine Formatwahl. Tests: Vitest für Clipboard, Layout, Store-Aktionen, Tabs; Go-Tests für
+Import/Export-Roundtrip und Tab-Reihenfolge; Playwright für Copy/Paste/Duplicate, Kontextmenü,
+Quick-Add, `Ctrl+S`, Tab-Umbenennen und -Sortieren, Node-RED-Import mit Deploy und Re-Export.
+Abweichungen: Auto-Layout mit dagre statt elk; „Deaktivieren" im Tab-Menü entfällt, weil die
+Engine keinen Flow-weiten Disabled-Zustand kennt (Stop tut das); Undo/Redo gab es bereits seit
+Phase 1. Nebenbefund behoben: der Canvas verwarf bei jedem Store-Update die von xyflow gemessene
+Node-Größe, wodurch ein Node nach einem Tray-„Done" unsichtbar bleiben konnte.
+
 ### Phase 6 — Backend-Reife (parallel zu 3–5, ca. 2 Wochen)
 
 - Persistenz: atomares Schreiben (temp + rename), `schemaVersion` im Flow-JSON, Migrationsfunktion,
@@ -487,7 +515,7 @@ sondern pro Metrik-Intervall (1 s), da die Engine keine Einzelnachrichten pusht.
 | 2 | Engine-Events, Live-Debug, Node-Status — **erledigt** | 1 Woche | 0 |
 | 3 | Schema v2, Edit-Tray v2, Widgets, dynamische Ports — **erledigt** | 2 Wochen | 1, 2 |
 | 4 | Visuelles Redesign, Tokens v2, Icons, Dark Mode — **erledigt** | 2 Wochen | 1, 3 |
-| 5 | Editor-Ergonomie, Node-RED-Import | 1–2 Wochen | 1, 4 |
+| 5 | Editor-Ergonomie, Node-RED-Import — **erledigt** | 1–2 Wochen | 1, 4 |
 | 6 | Backend-Reife | 2 Wochen | 0 (parallel) |
 | 7 | Auslieferung, Doku | 1 Woche | alle |
 

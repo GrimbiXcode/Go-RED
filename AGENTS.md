@@ -22,6 +22,7 @@ Go-RED/
 │   │   ├── debug/                # Debug output node
 │   │   ├── function/             # JavaScript function node
 │   │   └── inject/               # Message injection node
+│   ├── nodered/                  # Node-RED flows.json import/export
 │   ├── registry/                 # Node type registration system
 │   └── state/                    # Flow persistence (file system)
 ├── data/flows/                   # Persisted flow data

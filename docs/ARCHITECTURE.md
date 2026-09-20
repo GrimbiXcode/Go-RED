@@ -133,7 +133,48 @@ filter and clear.
 
 `@xyflow/react` (v12) renders the working copy. Node positions are written
 back to the store once per drag; store updates that arrive mid-drag keep the
-dragged node's on-screen position and the current selection.
+dragged node's on-screen position, the current selection and xyflow's
+measured node sizes (a node without a measurement is hidden until xyflow
+re-measures it, so the merge never drops it).
+
+### Editing ergonomics
+
+Everything that edits several nodes at once is a store action in
+`store/editorActions.ts` or `flowStore`, never canvas-local state, so undo,
+autosave and the keyboard, the context menus and the tab menu all share one
+implementation:
+
+- **Clipboard** (`lib/clipboard.ts`): copy/paste/duplicate keep a JSON
+  clip of nodes and the connections between them in memory and in
+  `localStorage`, so it works across flows and browser tabs; pasting mints
+  new ids, remaps the connections, offsets the nodes and selects them.
+- **Layout** (`lib/layout.ts`): snap-to-grid (20 px), align and distribute
+  the selection, and an auto-layout of the whole flow with dagre (left to
+  right, ordered by the wires). Arrow keys nudge the selection by 1 px,
+  with Shift by one grid step.
+- **Context menus** (`components/ContextMenu.tsx`) on nodes, selections,
+  wires and the empty canvas; a double-click on the canvas opens
+  **Quick-Add** (`components/QuickAdd.tsx`, search and Enter); dropping a
+  palette entry or an unconnected node onto a wire splices it in
+  (`insertNodeOnEdge`, `spliceNodeIntoEdge`).
+- **Shortcuts** (`hooks/useEditorShortcuts.ts`): `Ctrl+Z/Y`, `Ctrl+S`
+  deploy, `Ctrl+C/V/D`, `Ctrl+A`, `Ctrl+F` palette search, `Ctrl+E`
+  export, `Space+drag` pans, `+`/`-` zoom, `?` opens the reference
+  (`components/ShortcutHelp.tsx`). Shortcuts are ignored while typing.
+- **Flow tabs** (`components/FlowTabs.tsx`): double-click renames inline,
+  dragging reorders (persisted as `Flow.order`, see `docs/PROTOCOL.md`),
+  the context menu duplicates or deletes, and a dot marks flows that
+  changed since their last deploy.
+
+### Import and export
+
+The export dialog offers Go-RED's own JSON or a Node-RED `flows.json`; the
+import dialog accepts both and shows a preview (format, number of tabs,
+node types without a Go-RED counterpart) before it posts the file. The
+conversion is server-side in `internal/nodered` (one flow per tab, wires to
+connections, config nodes copied into the flows that use them, per-type
+property mapping, warnings for what could not be mapped); the protocol
+document lists the mapping.
 
 ### Editing nodes
 

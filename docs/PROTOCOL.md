@@ -30,24 +30,49 @@ the server log).
 | `GET /api/health` | – | `{status, version, flows, deployed, uptimeSeconds}` | liveness |
 | `GET /api/flows` | – | `FlowSummary[]` | every known flow, running or not |
 | `POST /api/flows` | `FlowCreateRequest {id?, name, description?}` | `201 Flow` | `id` is optional; it must be a safe file name |
-| `POST /api/flows/import` | `Flow` (an export) | `201 {status: "imported", flowId, originalId, name, message}` | the imported flow always gets a fresh id; `originalId` echoes the one from the file |
+| `POST /api/flows/import` | `Flow` (a Go-RED export) **or** a Node-RED `flows.json` array | `201 {status: "imported", format, flowId, originalId, name, flows: [{flowId, originalId, name}], warnings: string[], message}` | `format` is `go-red` or `node-red`; every imported flow gets a fresh id, `originalId` echoes the file's; a Node-RED array yields one flow per tab (`flows`, first one in `flowId`) and `warnings` lists what could not be mapped (see *Node-RED import and export*) |
 | `GET /api/flows/{id}` | – | `Flow` | the **draft definition**, including `deployedAt` |
-| `PUT /api/flows/{id}` | `FlowUpdateRequest {name?, description?, nodes?, connections?, config?}` | `Flow` | saves the draft only; a running instance is untouched until the next deploy |
+| `PUT /api/flows/{id}` | `FlowUpdateRequest {name?, description?, nodes?, connections?, config?, order?}` | `Flow` | saves the draft only; a running instance is untouched until the next deploy. A body with only `order` moves the tab and does not count as an edit (`updatedAt` stays) |
 | `DELETE /api/flows/{id}` | – | `{status: "deleted", flowId}` | stops the flow first |
 | `POST /api/flows/{id}/deploy` | – | `DeployResponse {flowId, status, updatedAt?, deployedAt?, message?}` | runs a snapshot of the draft; `422` with the reason when it cannot run |
 | `POST /api/flows/{id}/undeploy` | – | `DeployResponse` | the definition stays, status becomes `draft` |
-| `GET /api/flows/{id}/export` | – | `Flow` as a download | |
+| `GET /api/flows/{id}/export` | – | `Flow` as a download | `?format=node-red` returns the flow as a Node-RED `flows.json` array instead |
 | `GET /api/nodes` | – | `NodeMetadata[]` | palette and config schemas |
 | `GET /api/nodes/{type}` | – | `NodeMetadata` | |
 | `GET /api/messages?flowId=&limit=` | – | `Message[]` | the engine's message log, oldest first; for scripts and tests, the editor does not poll it |
 
 `Flow.status` is one of `draft`, `running`, `error`, `deploying`,
-`undeploying`. A `Node` in a flow is `{id, type, name?, description?,
+`undeploying`. `Flow.order` (also on `FlowSummary`) is the tab position;
+`GET /api/flows` is sorted by it (then by `createdAt`), a new flow gets
+`max + 1`, and the editor writes new positions with `PUT {order}` when tabs
+are dragged. It is omitted while it is `0` (flows persisted before it
+existed). A `Node` in a flow is `{id, type, name?, description?,
 position, config, disabled}`: `description` is the user's own note on the
 node instance (Markdown); a node with `disabled: true` stays in the
 definition but is neither started on deploy nor routed to, and cannot be
 injected into. A draft differs from what is running when
 `updatedAt > deployedAt`; the editor's Deploy button uses exactly that.
+
+## Node-RED import and export
+
+`internal/nodered` converts between Node-RED's `flows.json` (a flat array of
+objects with `type`, `z`, `x`, `y`, `wires`) and Go-RED flows, in both
+directions. The import is detected by the body's first byte (`[`).
+
+| Node-RED | Go-RED |
+|---|---|
+| `tab` | one `Flow` per tab (`label` → name, `info` → description, `disabled` → every node disabled); nodes without a tab land in a flow called *Imported flow* |
+| node `x`, `y` (center) | `position` (top-left, `x - 70`, `y - 15`); the export adds the offset back |
+| `wires[i][j]` | a connection from output port `i` to the target's `input`; port `0` is `output`, a switch's ports are `"0"`, `"1"`, … |
+| `d: true` | `disabled: true` |
+| config nodes (`mqtt-broker`, `tls-config`, `websocket-listener`, `websocket-client`, `http proxy`, anything without `wires`) | copied into every flow whose nodes reference them (`broker`, `server`, `tls`, `proxy`); exported without `z` |
+| `subflow`, `subflow:*`, `group` | skipped, with a warning |
+| known types (inject, debug, function, switch, change, template, delay, trigger, exec, range, rbe, batch, split, join, link in/out, catch, status, complete, comment, sort, csv, html, json, xml, yaml, file, file in, watch, http in/request/response, mqtt in/out, tcp in/out/request, udp in/out, websocket in/out, junction) | properties are mapped field by field (`mapping.go`), e.g. `payload`/`payloadType` → typed `payload`, `func` → `code`, switch `rules[].t/v/vt` → `operator/value{type,value}`; an unsupported switch operator stays in place so the ports keep lining up, with a warning |
+| unknown types | kept with their raw properties (minus `id`, `type`, `z`, `x`, `y`, `wires`) and reported in `warnings`; the flow cannot deploy until they are replaced |
+
+Warnings are de-duplicated with a count and returned by the import; the
+editor shows a preview (format, tabs, unsupported types) before importing
+and the warnings as a toast afterwards.
 
 ## WebSocket
 

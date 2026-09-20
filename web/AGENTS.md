@@ -18,6 +18,13 @@
 > semantischen Utilities (`bg-panel`, `text-muted`, `border-line`, `bg-accent`, `bg-cat-*`); keine
 > rohen `gray-*`-Klassen mehr. Theme in `src/lib/theme.ts`, Icons per Name aus `components/icons.ts`
 > (Lucide), Node-Optik in `NodeShell.tsx` + `.gr-node*`, Styleguide unter `/styleguide`.
+> Seit Phase 5 sind Mehrfach-Aktionen (Copy/Paste/Duplicate, Ausrichten, Verteilen, Auto-Layout,
+> Node auf Kante einfügen) Store-Aktionen in `src/store/editorActions.ts` bzw. `flowStore`, nie
+> Canvas-lokaler Zustand; Clipboard in `src/lib/clipboard.ts`, Layout in `src/lib/layout.ts`,
+> Shortcuts in `hooks/useEditorShortcuts.ts`, Kontextmenü/Quick-Add/Shortcut-Hilfe als eigene
+> Komponenten. Flow-Tabs (`FlowTabs.tsx`) benennen um, sortieren per Drag (`Flow.order`) und haben
+> ein Kontextmenü. Import/Export können Go-RED-JSON und Node-RED `flows.json`
+> (`utils/api.ts`, Konvertierung serverseitig in `internal/nodered`).
 > UI-Texte kommen aus `src/i18n/` (`t('…')`), nie als Literale in Komponenten. Tests:
 > `src/test/*.test.ts(x)` (Vitest) und `e2e/*.spec.ts` (Playwright gegen den echten Server).
 > Die Architektur ist in `docs/ARCHITECTURE.md`, Abschnitt "Frontend Architecture", beschrieben.

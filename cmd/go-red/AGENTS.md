@@ -198,8 +198,8 @@ func main() {
 | DELETE | `/api/flows/{id}` | Delete flow | `handleDeleteFlow` |
 | POST | `/api/flows/{id}/deploy` | Deploy flow | `handleDeployFlow` |
 | POST | `/api/flows/{id}/undeploy` | Undeploy flow | `handleUndeployFlow` |
-| GET | `/api/flows/{id}/export` | Export flow as JSON | `handleExportFlow` |
-| POST | `/api/flows/import` | Import flow from JSON | `handleImportFlow` |
+| GET | `/api/flows/{id}/export` | Export flow as JSON (`?format=node-red` for a Node-RED array) | `handleExportFlow` |
+| POST | `/api/flows/import` | Import a Go-RED flow or a Node-RED `flows.json` array (one flow per tab) | `handleImportFlow`, `importNodeRED` |
 
 ### Nodes
 
