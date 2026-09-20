@@ -77,7 +77,6 @@ func (routerNode) ExecuteMulti(ctx interface{}, input map[string]interface{}) (m
 
 func newTestEngine(reg *registry.NodeRegistry) *FlowEngine {
 	e := NewFlowEngine(EngineConfig{
-		WorkerPoolSize:    5,
 		MessageBufferSize: 100,
 		DefaultTimeout:    5 * time.Second,
 	}, reg)

@@ -40,6 +40,9 @@ jobs:
       - name: go test (race detector)
         run: go test -race -count=1 ./...
 
+      - name: Benchmarks compile and run (one iteration)
+        run: go test ./internal/engine -run '^$' -bench . -benchtime 1x
+
       - name: Generated TypeScript types are up to date
         run: |
           go generate ./internal/dto/...

@@ -71,7 +71,8 @@ type FlowConfig struct {
 	// Timeout is the maximum time a message can spend in the flow before timing out.
 	Timeout time.Duration `json:"timeout"`
 
-	// MaxConcurrency is the maximum number of messages that can be processed concurrently.
+	// MaxConcurrency bounds how many node executions of this flow run at the
+	// same time; 0 means the engine-wide default (EngineConfig.MaxInflightPerFlow).
 	MaxConcurrency int `json:"maxConcurrency"`
 
 	// RetryPolicy defines how to handle retries for failed messages.
@@ -148,7 +149,7 @@ func NewFlow(id, name string) *Flow {
 		Connections: []NodeConnection{},
 		Config: FlowConfig{
 			Timeout:        30 * time.Second,
-			MaxConcurrency: 100,
+			MaxConcurrency: 0,
 			RetryPolicy: RetryPolicy{
 				MaxRetries: 3,
 				Backoff:    1 * time.Second,

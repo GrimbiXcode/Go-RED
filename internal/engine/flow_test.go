@@ -92,7 +92,7 @@ func TestFlowCreation(t *testing.T) {
 
 		// Check default config
 		assert.Equal(t, 30*time.Second, flow.Config.Timeout)
-		assert.Equal(t, 100, flow.Config.MaxConcurrency)
+		assert.Equal(t, 0, flow.Config.MaxConcurrency)
 		assert.Equal(t, 3, flow.Config.RetryPolicy.MaxRetries)
 		assert.Equal(t, 1*time.Second, flow.Config.RetryPolicy.Backoff)
 		assert.Equal(t, 30*time.Second, flow.Config.RetryPolicy.MaxBackoff)

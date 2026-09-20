@@ -10,8 +10,12 @@ The `engine/` package is the **core** of Go-RED, responsible for:
 
 1. **Flow Lifecycle Management**: Create, Deploy, Undeploy, Delete flows
 2. **Message Processing**: Routing and execution of messages through node networks
-3. **Concurrency Control**: Worker pools, goroutine management
-4. **State Tracking**: Flow status, message logging, debugging
+3. **Concurrency Control**: one queue and dispatcher per deployed flow, executions bounded by a
+   per-flow semaphore (`FlowConfig.MaxConcurrency`, else `EngineConfig.MaxInflightPerFlow`),
+   tracked so undeploy waits for them; there is no engine-wide worker pool since Phase 6
+4. **State Tracking**: Flow status, runtime events and counters (`events.go`), an opt-in message
+   log ring (`EngineConfig.MessageLogSize`, 0 = off), `NodeStats`/`FlowCounts` for `/metrics`;
+   benchmarks in `bench_test.go`, dispatch and leak tests in `dispatch_test.go`
 
 ---
 

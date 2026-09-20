@@ -85,7 +85,8 @@ type Config struct {
 	Port        int
 	DataDir     string
 	WebUIDir    string
-	MaxWorkers  int
+	MaxInflight int
+	MessageLog  int
 	MaxMessages int
 	LogLevel    string
 }
@@ -108,11 +109,12 @@ func main() {
 	}
 
 	flowEngine := engine.NewFlowEngine(engine.EngineConfig{
-		WorkerPoolSize:    config.MaxWorkers,
-		MessageBufferSize: config.MaxMessages,
-		DefaultTimeout:    30 * time.Second,
-		MaxRetries:        3,
-		RetryBackoff:      1 * time.Second,
+		MessageBufferSize:  config.MaxMessages,
+		MaxInflightPerFlow: config.MaxInflight,
+		MessageLogSize:     config.MessageLog,
+		DefaultTimeout:     30 * time.Second,
+		MaxRetries:         3,
+		RetryBackoff:       1 * time.Second,
 	}, nodeRegistry)
 	flowEngine.SetStateManager(stateManager)
 
@@ -162,8 +164,9 @@ func parseFlags() Config {
 	flag.IntVar(&config.Port, "port", 8080, "Port to listen on")
 	flag.StringVar(&config.DataDir, "data-dir", "data", "Directory for flow data")
 	flag.StringVar(&config.WebUIDir, "web-dir", "web/dist", "Directory for the built WebUI")
-	flag.IntVar(&config.MaxWorkers, "max-workers", 100, "Number of message routing workers")
-	flag.IntVar(&config.MaxMessages, "max-messages", 1000, "Message buffer size")
+	flag.IntVar(&config.MaxInflight, "max-inflight", 1024, "Maximum concurrent node executions per flow (a flow's maxConcurrency overrides it)")
+	flag.IntVar(&config.MaxMessages, "max-messages", 1000, "Message queue size per flow")
+	flag.IntVar(&config.MessageLog, "message-log", 0, "Number of routed messages to keep for GET /api/messages (0 disables)")
 	flag.StringVar(&config.LogLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
 	flag.Parse()

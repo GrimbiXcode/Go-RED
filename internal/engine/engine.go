@@ -63,12 +63,20 @@ func ValidateFlowID(id string) error {
 
 // EngineConfig contains configuration options for the FlowEngine.
 type EngineConfig struct {
-	// WorkerPoolSize is the number of worker goroutines that route messages
-	// between nodes.
-	WorkerPoolSize int
-
-	// MessageBufferSize is the size of the message channel buffer.
+	// MessageBufferSize is the size of every deployed flow's message queue.
+	// A message that finds the queue full is dropped and counted.
 	MessageBufferSize int
+
+	// MaxInflightPerFlow bounds how many node executions of one flow may run
+	// at the same time; a flow's own FlowConfig.MaxConcurrency, when set,
+	// takes precedence. The dispatcher waits for a free slot, so the queue
+	// (MessageBufferSize) is the only buffer between producers and this cap.
+	MaxInflightPerFlow int
+
+	// MessageLogSize is how many routed messages the engine keeps for
+	// GET /api/messages. 0 disables the log, which also takes its lock off
+	// the hot path.
+	MessageLogSize int
 
 	// DefaultTimeout is the default timeout for node execution.
 	DefaultTimeout time.Duration
@@ -83,11 +91,12 @@ type EngineConfig struct {
 // DefaultEngineConfig returns a default EngineConfig.
 func DefaultEngineConfig() EngineConfig {
 	return EngineConfig{
-		WorkerPoolSize:    100,
-		MessageBufferSize: 1000,
-		DefaultTimeout:    30 * time.Second,
-		MaxRetries:        3,
-		RetryBackoff:      1 * time.Second,
+		MessageBufferSize:  1000,
+		MaxInflightPerFlow: 1024,
+		MessageLogSize:     0,
+		DefaultTimeout:     30 * time.Second,
+		MaxRetries:         3,
+		RetryBackoff:       1 * time.Second,
 	}
 }
 
@@ -120,11 +129,11 @@ type FlowEngine struct {
 	// registry contains all available node types.
 	registry *registry.NodeRegistry
 
-	// msgChan is the channel for messages routed between nodes.
-	msgChan chan Message
-
-	// wg tracks worker and per-flow processor goroutines.
+	// wg tracks the engine-wide goroutines (event dispatcher, metrics loop).
 	wg sync.WaitGroup
+
+	// droppedMessages counts messages dropped because a flow queue was full.
+	droppedMessages atomic.Uint64
 
 	// ctx and cancel are used for graceful shutdown.
 	ctx    context.Context
@@ -146,10 +155,14 @@ type FlowEngine struct {
 	// messageIDCounter is used to generate unique message IDs.
 	messageIDCounter atomic.Uint64
 
-	// messageLog stores recent messages for debugging and monitoring.
-	messageLog    []Message
-	messageLogMu  sync.RWMutex
-	maxMessageLog int
+	// messageLog is a ring buffer of recently routed messages (GET
+	// /api/messages). messageLogSize == 0 disables it entirely; it is atomic
+	// so the hot path can check it without the lock.
+	messageLog     []Message
+	messageLogPos  int
+	messageLogLen  int
+	messageLogMu   sync.RWMutex
+	messageLogSize atomic.Int64
 
 	// globalStore is the "global" context (flow.get/set's global-scoped
 	// counterpart), shared by every flow deployed on this engine.
@@ -176,11 +189,21 @@ type ActiveFlow struct {
 	// Status is the runtime status of the flow.
 	Status FlowStatus
 
-	// msgChan is the channel for messages injected into this flow.
+	// msgChan is the flow's message queue: everything a node emits or the
+	// editor injects goes through it to the flow's dispatcher.
 	msgChan chan Message
 
-	// wg tracks EmittingNode.Start goroutines of this flow.
-	wg sync.WaitGroup
+	// slots bounds the number of concurrently running node executions
+	// (see EngineConfig.MaxInflightPerFlow).
+	slots chan struct{}
+
+	// wg tracks the dispatcher and the EmittingNode.Start goroutines of this
+	// flow; inflight tracks running node executions.
+	wg       sync.WaitGroup
+	inflight sync.WaitGroup
+
+	// dropped counts messages that found msgChan full.
+	dropped atomic.Uint64
 
 	// ctx and cancel are used for flow-specific cancellation.
 	ctx    context.Context
@@ -206,8 +229,11 @@ type ActiveFlow struct {
 
 // NewFlowEngine creates a new FlowEngine with the given configuration and registry.
 func NewFlowEngine(config EngineConfig, nodeRegistry *registry.NodeRegistry) *FlowEngine {
-	if config.WorkerPoolSize <= 0 {
-		config.WorkerPoolSize = DefaultEngineConfig().WorkerPoolSize
+	if config.MaxInflightPerFlow <= 0 {
+		config.MaxInflightPerFlow = DefaultEngineConfig().MaxInflightPerFlow
+	}
+	if config.MessageLogSize < 0 {
+		config.MessageLogSize = 0
 	}
 	if config.MessageBufferSize <= 0 {
 		config.MessageBufferSize = DefaultEngineConfig().MessageBufferSize
@@ -218,21 +244,21 @@ func NewFlowEngine(config EngineConfig, nodeRegistry *registry.NodeRegistry) *Fl
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &FlowEngine{
-		flows:         make(map[string]*Flow),
-		active:        make(map[string]*ActiveFlow),
-		registry:      nodeRegistry,
-		msgChan:       make(chan Message, config.MessageBufferSize),
-		ctx:           ctx,
-		cancel:        cancel,
-		config:        config,
-		messageLog:    make([]Message, 0),
-		maxMessageLog: 1000, // Store last 1000 messages
-		globalStore:   registry.NewContextStore(),
-		events:        newEventHub(),
-		debugLogs:     make(map[string][]DebugEvent),
-		nodeStatus:    make(map[string]map[string]NodeStatus),
+	e := &FlowEngine{
+		flows:       make(map[string]*Flow),
+		active:      make(map[string]*ActiveFlow),
+		registry:    nodeRegistry,
+		ctx:         ctx,
+		cancel:      cancel,
+		config:      config,
+		messageLog:  make([]Message, config.MessageLogSize),
+		globalStore: registry.NewContextStore(),
+		events:      newEventHub(),
+		debugLogs:   make(map[string][]DebugEvent),
+		nodeStatus:  make(map[string]map[string]NodeStatus),
 	}
+	e.messageLogSize.Store(int64(config.MessageLogSize))
+	return e
 }
 
 // GlobalContext returns the engine-wide context store shared by every flow
@@ -251,25 +277,22 @@ func (e *FlowEngine) GetStateManager() StateManager {
 	return e.stateManager
 }
 
-// Start starts the FlowEngine's worker pool, the runtime event dispatcher
-// and the metrics loop.
+// Start starts the runtime event dispatcher and the metrics loop. Message
+// routing needs no engine-wide goroutines: every deployed flow runs its own
+// dispatcher (see processFlowMessages).
 func (e *FlowEngine) Start() error {
-	for i := 0; i < e.config.WorkerPoolSize; i++ {
-		e.wg.Add(1)
-		go e.worker()
-	}
 	e.wg.Add(2)
 	go func() {
 		defer e.wg.Done()
 		e.events.dispatch(e.ctx)
 	}()
 	go e.metricsLoop()
-	slog.Info("flow engine started", "workers", e.config.WorkerPoolSize)
+	slog.Info("flow engine started", "maxInflightPerFlow", e.config.MaxInflightPerFlow, "queue", e.config.MessageBufferSize)
 	return nil
 }
 
-// Stop stops every deployed flow, then the worker pool, and waits for all
-// engine goroutines to finish. Flow definitions keep their persisted status
+// Stop stops every deployed flow, then the engine goroutines, and waits for
+// all of them to finish. Flow definitions keep their persisted status
 // so that flows which were running are deployed again on the next start.
 func (e *FlowEngine) Stop() error {
 	e.stopMu.Lock()
@@ -294,33 +317,13 @@ func (e *FlowEngine) Stop() error {
 	return nil
 }
 
-// worker routes messages from the engine channel until the engine stops.
-func (e *FlowEngine) worker() {
-	defer e.wg.Done()
-
-	for {
-		select {
-		case msg := <-e.msgChan:
-			e.processMessage(msg)
-		case <-e.ctx.Done():
-			return
-		}
-	}
-}
-
-// processMessage routes a single message to the nodes connected to the last
-// node in its path and executes each of them in its own goroutine.
-func (e *FlowEngine) processMessage(msg Message) {
+// processMessage routes one message of activeFlow to the nodes connected to
+// the last node in its path and runs each of them in its own goroutine,
+// bounded by the flow's execution slots: when every slot is taken the
+// dispatcher waits here (and the flow queue fills up) instead of spawning
+// without limit. It returns false once the flow is stopping.
+func (e *FlowEngine) processMessage(activeFlow *ActiveFlow, msg Message) bool {
 	e.AddMessageToLog(msg)
-
-	e.mu.RLock()
-	activeFlow, exists := e.active[msg.FlowID]
-	e.mu.RUnlock()
-
-	if !exists {
-		slog.Debug("dropping message for flow that is not deployed", "flow", msg.FlowID, "message", msg.ID)
-		return
-	}
 
 	targetNodes := e.findTargetNodes(activeFlow.Flow, msg)
 
@@ -331,18 +334,29 @@ func (e *FlowEngine) processMessage(msg Message) {
 			continue
 		}
 
+		select {
+		case activeFlow.slots <- struct{}{}:
+		case <-activeFlow.ctx.Done():
+			return false
+		}
+
 		var nodeType string
 		if node, ok := activeFlow.Flow.Nodes[nodeID]; ok {
 			nodeType = node.Type
 		}
 
-		// Create a new message context with timeout, and embed the
-		// NodeRuntime (flow/global context store, error/status reporting)
-		// the node can retrieve via registry.RuntimeFromContext.
-		ctx, cancel := context.WithTimeout(msg.Context, e.config.DefaultTimeout)
+		// Every execution gets its own timeout under the flow's context (so
+		// undeploy cancels it) and the NodeRuntime (flow/global context
+		// store, error/status reporting) the node retrieves via
+		// registry.RuntimeFromContext. The timeout is per node: a message
+		// never inherits the context of the node that produced it.
+		ctx, cancel := context.WithTimeout(activeFlow.ctx, e.config.DefaultTimeout)
 		ctx = registry.WithRuntime(ctx, e.newNodeRuntime(activeFlow, nodeID, nodeType))
 
+		activeFlow.inflight.Add(1)
 		go func(nodeID, nodeType string, exec registry.NodeExecutor, nodeCtx context.Context) {
+			defer activeFlow.inflight.Done()
+			defer func() { <-activeFlow.slots }()
 			defer cancel()
 
 			newMsg := msg.Clone()
@@ -352,6 +366,7 @@ func (e *FlowEngine) processMessage(msg Message) {
 			e.executeNode(activeFlow, nodeID, nodeType, exec, nodeCtx, newMsg)
 		}(nodeID, nodeType, executor, ctx)
 	}
+	return true
 }
 
 // executeNode runs a single node against msg (whose Path already includes
@@ -378,7 +393,8 @@ func (e *FlowEngine) executeNode(activeFlow *ActiveFlow, nodeID, nodeType string
 			portMsg := msg.Clone()
 			portMsg.Payload = payload
 			portMsg.OutputPort = port
-			e.submitMessage(portMsg)
+			portMsg.Context = activeFlow.ctx
+			e.submitMessage(activeFlow, portMsg)
 			e.handleNodeComplete(activeFlow, nodeID, nodeType, payload)
 			sent++
 		}
@@ -399,7 +415,8 @@ func (e *FlowEngine) executeNode(activeFlow *ActiveFlow, nodeID, nodeType string
 
 	msg.Payload = output
 	msg.OutputPort = ""
-	e.submitMessage(msg)
+	msg.Context = activeFlow.ctx
+	e.submitMessage(activeFlow, msg)
 	e.handleNodeComplete(activeFlow, nodeID, nodeType, output)
 }
 
@@ -505,26 +522,53 @@ func (e *FlowEngine) findConnectedNodes(flow *Flow, nodeID string, sourcePort st
 	return connectedNodes
 }
 
-// submitMessage hands a message to the worker pool. It never blocks and is
-// safe to call at any time, including after Stop (the message is dropped).
-func (e *FlowEngine) submitMessage(msg Message) {
+// submitMessage queues msg for activeFlow's dispatcher. It never blocks and
+// is safe to call at any time, including while the flow or the engine is
+// stopping: a stopped flow or a full queue drops the message; drops are
+// counted (MessagesDropped) and logged sparingly.
+func (e *FlowEngine) submitMessage(activeFlow *ActiveFlow, msg Message) {
 	msg.ID = "msg-" + strconv.FormatUint(e.messageIDCounter.Add(1), 10)
 
-	if e.ctx.Err() != nil {
+	if activeFlow.ctx.Err() != nil {
 		return
 	}
 
 	select {
-	case e.msgChan <- msg:
+	case activeFlow.msgChan <- msg:
 	default:
-		slog.Warn("message channel full, dropping message", "flow", msg.FlowID, "message", msg.ID)
+		e.droppedMessages.Add(1)
+		if n := activeFlow.dropped.Add(1); n == 1 || n%1000 == 0 {
+			slog.Warn("flow queue full, dropping messages", "flow", msg.FlowID, "dropped", n, "queue", cap(activeFlow.msgChan))
+		}
 	}
 }
 
-// SubmitMessage submits a message to the engine for processing.
-// This is the public method for submitting messages.
+// SubmitMessage queues a message for the running flow named by msg.FlowID,
+// as if the last node in msg.Path had just emitted it. Messages for flows
+// that are not deployed are dropped.
 func (e *FlowEngine) SubmitMessage(msg Message) {
-	e.submitMessage(msg)
+	e.mu.RLock()
+	activeFlow, ok := e.active[msg.FlowID]
+	e.mu.RUnlock()
+	if !ok {
+		slog.Debug("dropping message for flow that is not deployed", "flow", msg.FlowID)
+		return
+	}
+	e.submitMessage(activeFlow, msg)
+}
+
+// MessagesDropped returns how many messages were dropped because a flow
+// queue was full since the engine started.
+func (e *FlowEngine) MessagesDropped() uint64 {
+	return e.droppedMessages.Load()
+}
+
+// inflightLimit is how many node executions of flow may run at once.
+func (e *FlowEngine) inflightLimit(flow *Flow) int {
+	if flow.Config.MaxConcurrency > 0 {
+		return flow.Config.MaxConcurrency
+	}
+	return e.config.MaxInflightPerFlow
 }
 
 // Deploy registers flow as the definition for flow.ID (replacing any
@@ -583,6 +627,7 @@ func (e *FlowEngine) deployLocked(def *Flow) error {
 		Flow:          snapshot,
 		Status:        FlowStatusActive,
 		msgChan:       make(chan Message, e.config.MessageBufferSize),
+		slots:         make(chan struct{}, e.inflightLimit(snapshot)),
 		nodeExecutors: make(map[string]registry.NodeExecutor),
 		ContextStore:  registry.NewContextStore(),
 		EventBus:      registry.NewEventBus(),
@@ -638,7 +683,7 @@ func (e *FlowEngine) deployLocked(def *Flow) error {
 		activeFlow.nodeExecutors[nodeID] = executor
 	}
 
-	e.wg.Add(1)
+	activeFlow.wg.Add(1)
 	go e.processFlowMessages(activeFlow)
 
 	// Start nodes that originate their own messages (EmittingNode), e.g. a
@@ -663,13 +708,36 @@ func (e *FlowEngine) deployLocked(def *Flow) error {
 func (e *FlowEngine) stopActiveLocked(activeFlow *ActiveFlow) {
 	activeFlow.cancel()
 
-	// Wait for EmittingNode.Start goroutines to observe cancellation and
-	// return before releasing node resources under them.
+	// Wait for the dispatcher and the EmittingNode.Start goroutines to
+	// observe cancellation, then for node executions still in flight (their
+	// contexts are cancelled too), before releasing node resources under
+	// them. A node that ignores its context is not waited on forever.
 	activeFlow.wg.Wait()
+	if !waitTimeout(&activeFlow.inflight, e.config.DefaultTimeout+time.Second) {
+		slog.Warn("node executions still running after undeploy", "flow", activeFlow.Flow.ID)
+	}
 
 	closeNodeExecutors(activeFlow.nodeExecutors)
 
 	delete(e.active, activeFlow.Flow.ID)
+}
+
+// waitTimeout waits for wg, giving up after d. It reports whether wg was
+// done in time.
+func waitTimeout(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // persistLocked saves def through the state manager, if one is configured.
@@ -735,9 +803,9 @@ func (e *FlowEngine) startEmittingNodes(activeFlow *ActiveFlow) {
 			defer activeFlow.wg.Done()
 
 			emit := func(payload map[string]interface{}) {
-				msg := NewMessageWithContext(nodeCtx, payload, activeFlow.Flow.ID)
+				msg := NewMessageWithContext(activeFlow.ctx, payload, activeFlow.Flow.ID)
 				msg.AddToPath(nodeID)
-				e.submitMessage(msg)
+				e.submitMessage(activeFlow, msg)
 			}
 
 			if err := emitter.Start(nodeCtx, emit); err != nil {
@@ -803,7 +871,7 @@ func (e *FlowEngine) submitToFlowNode(activeFlow *ActiveFlow, targetNodeID strin
 	}
 	msg := NewMessageWithContext(activeFlow.ctx, payload, activeFlow.Flow.ID)
 	msg.AddToPath(targetNodeID)
-	e.submitMessage(msg)
+	e.submitMessage(activeFlow, msg)
 }
 
 // closeNodeExecutors calls Close on every executor implementing
@@ -822,15 +890,17 @@ func closeNodeExecutors(nodeExecutors map[string]registry.NodeExecutor) {
 	}
 }
 
-// processFlowMessages processes messages injected into a specific flow.
+// processFlowMessages is the flow's dispatcher: it takes messages off the
+// flow queue and hands them to processMessage until the flow stops.
 func (e *FlowEngine) processFlowMessages(activeFlow *ActiveFlow) {
-	defer e.wg.Done()
-	defer activeFlow.cancel()
+	defer activeFlow.wg.Done()
 
 	for {
 		select {
 		case msg := <-activeFlow.msgChan:
-			e.processMessage(msg)
+			if !e.processMessage(activeFlow, msg) {
+				return
+			}
 		case <-activeFlow.ctx.Done():
 			return
 		}
@@ -1130,37 +1200,55 @@ func (e *FlowEngine) LoadAllFlows() error {
 	return nil
 }
 
-// AddMessageToLog adds a message to the message log for debugging.
-// Messages are stored in a circular buffer with maxMessageLog size.
+// AddMessageToLog records a routed message for GET /api/messages. The log
+// is a fixed-size ring; with size 0 (the default) it is disabled and this
+// returns without taking a lock.
 func (e *FlowEngine) AddMessageToLog(msg Message) {
+	if e.messageLogSize.Load() == 0 {
+		return
+	}
 	e.messageLogMu.Lock()
 	defer e.messageLogMu.Unlock()
-
-	e.messageLog = append(e.messageLog, msg)
-
-	if len(e.messageLog) > e.maxMessageLog {
-		e.messageLog = e.messageLog[len(e.messageLog)-e.maxMessageLog:]
+	size := len(e.messageLog)
+	if size == 0 {
+		return
+	}
+	e.messageLog[e.messageLogPos] = msg
+	e.messageLogPos = (e.messageLogPos + 1) % size
+	if e.messageLogLen < size {
+		e.messageLogLen++
 	}
 }
 
-// GetMessageLog returns all messages in the log.
-// The returned slice is a copy to prevent external modification.
+// messagesInOrder returns the logged messages oldest first. The caller
+// holds messageLogMu.
+func (e *FlowEngine) messagesInOrder() []Message {
+	size := len(e.messageLog)
+	if size == 0 || e.messageLogLen == 0 {
+		return nil
+	}
+	out := make([]Message, 0, e.messageLogLen)
+	start := (e.messageLogPos - e.messageLogLen + size) % size
+	for i := 0; i < e.messageLogLen; i++ {
+		out = append(out, e.messageLog[(start+i)%size])
+	}
+	return out
+}
+
+// GetMessageLog returns the logged messages, oldest first, as a copy.
 func (e *FlowEngine) GetMessageLog() []Message {
 	e.messageLogMu.RLock()
 	defer e.messageLogMu.RUnlock()
-
-	messages := make([]Message, len(e.messageLog))
-	copy(messages, e.messageLog)
-	return messages
+	return e.messagesInOrder()
 }
 
-// GetMessageLogForFlow returns messages for a specific flow.
+// GetMessageLogForFlow returns the logged messages of one flow, oldest first.
 func (e *FlowEngine) GetMessageLogForFlow(flowID string) []Message {
 	e.messageLogMu.RLock()
 	defer e.messageLogMu.RUnlock()
 
 	var flowMessages []Message
-	for _, msg := range e.messageLog {
+	for _, msg := range e.messagesInOrder() {
 		if msg.FlowID == flowID {
 			flowMessages = append(flowMessages, msg)
 		}
@@ -1168,19 +1256,24 @@ func (e *FlowEngine) GetMessageLogForFlow(flowID string) []Message {
 	return flowMessages
 }
 
-// ClearMessageLog clears all messages from the log.
+// ClearMessageLog drops every logged message.
 func (e *FlowEngine) ClearMessageLog() {
 	e.messageLogMu.Lock()
 	defer e.messageLogMu.Unlock()
-	e.messageLog = make([]Message, 0)
+	e.messageLogPos = 0
+	e.messageLogLen = 0
 }
 
-// SetMaxMessageLog sets the maximum number of messages to keep in the log.
-func (e *FlowEngine) SetMaxMessageLog(max int) {
+// SetMaxMessageLog resizes the message log; 0 disables it. Messages logged
+// so far are dropped.
+func (e *FlowEngine) SetMaxMessageLog(size int) {
+	if size < 0 {
+		size = 0
+	}
 	e.messageLogMu.Lock()
 	defer e.messageLogMu.Unlock()
-	e.maxMessageLog = max
-	if len(e.messageLog) > e.maxMessageLog {
-		e.messageLog = e.messageLog[len(e.messageLog)-e.maxMessageLog:]
-	}
+	e.messageLog = make([]Message, size)
+	e.messageLogPos = 0
+	e.messageLogLen = 0
+	e.messageLogSize.Store(int64(size))
 }

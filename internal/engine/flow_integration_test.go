@@ -34,7 +34,6 @@ func TestFlowIntegration_FullNodeFlow(t *testing.T) {
 		// Setup
 		registry := registry.GetGlobalRegistry()
 		config := EngineConfig{
-			WorkerPoolSize:    10,
 			MessageBufferSize: 1000,
 			DefaultTimeout:    5 * time.Second,
 		}
@@ -200,8 +199,8 @@ func TestFlowIntegration_NodeInitialization(t *testing.T) {
 	t.Run("should initialize all node types correctly", func(t *testing.T) {
 		registry := registry.GetGlobalRegistry()
 		config := EngineConfig{
-			WorkerPoolSize:    5,
 			MessageBufferSize: 100,
+			MessageLogSize:    100,
 			DefaultTimeout:    5 * time.Second,
 		}
 		engine := NewFlowEngine(config, registry)
@@ -227,8 +226,8 @@ func TestInjectNode_ManualInjection(t *testing.T) {
 	t.Run("should inject message when triggered via InjectMessage", func(t *testing.T) {
 		registry := registry.GetGlobalRegistry()
 		config := EngineConfig{
-			WorkerPoolSize:    5,
 			MessageBufferSize: 100,
+			MessageLogSize:    100,
 			DefaultTimeout:    5 * time.Second,
 		}
 		engine := NewFlowEngine(config, registry)
@@ -313,8 +312,8 @@ func TestDebugNode_Logging(t *testing.T) {
 	t.Run("should log messages and store in buffer", func(t *testing.T) {
 		registry := registry.GetGlobalRegistry()
 		config := EngineConfig{
-			WorkerPoolSize:    5,
 			MessageBufferSize: 100,
+			MessageLogSize:    100,
 			DefaultTimeout:    5 * time.Second,
 		}
 		engine := NewFlowEngine(config, registry)

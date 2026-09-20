@@ -14,7 +14,6 @@ import (
 
 func createTestEngine() *FlowEngine {
 	config := EngineConfig{
-		WorkerPoolSize:    10,
 		MessageBufferSize: 1000,
 		DefaultTimeout:    30 * time.Second,
 	}

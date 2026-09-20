@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -285,6 +286,63 @@ func (e *FlowEngine) GetNodeStatuses(flowID string) map[string]NodeStatus {
 		out[id] = status
 	}
 	return out
+}
+
+// NodeStats is a running node's counters together with its identity, for
+// operational metrics (GET /metrics).
+type NodeStats struct {
+	FlowID   string
+	NodeID   string
+	NodeType string
+	Messages uint64
+	Errors   uint64
+}
+
+// NodeStats returns the counters of every node of every running flow,
+// including nodes that have not handled anything yet, ordered by flow and
+// node ID.
+func (e *FlowEngine) NodeStats() []NodeStats {
+	e.mu.RLock()
+	flows := make([]*ActiveFlow, 0, len(e.active))
+	for _, af := range e.active {
+		flows = append(flows, af)
+	}
+	e.mu.RUnlock()
+
+	var out []NodeStats
+	for _, af := range flows {
+		for nodeID, counter := range af.counters {
+			var nodeType string
+			if node, ok := af.Flow.Nodes[nodeID]; ok {
+				nodeType = node.Type
+			}
+			out = append(out, NodeStats{FlowID: af.Flow.ID, NodeID: nodeID, NodeType: nodeType, Messages: counter.messages.Load(), Errors: counter.errors.Load()})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].FlowID != out[j].FlowID {
+			return out[i].FlowID < out[j].FlowID
+		}
+		return out[i].NodeID < out[j].NodeID
+	})
+	return out
+}
+
+// FlowCounts returns how many known flows are in each status.
+func (e *FlowEngine) FlowCounts() map[FlowStatus]int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	counts := make(map[FlowStatus]int)
+	for _, def := range e.flows {
+		counts[def.Status]++
+	}
+	return counts
+}
+
+// EventsDropped returns how many runtime events were dropped because the
+// event queue was full since the engine started.
+func (e *FlowEngine) EventsDropped() uint64 {
+	return e.events.dropped.Load()
 }
 
 // GetMetrics returns the counters of every node of a running flow that
