@@ -34,6 +34,14 @@ async function flowFromServer(request: APIRequestContext) {
   return response.json();
 }
 
+/** Removes every flow but the seeded one so tab assertions see a known list. */
+async function deleteOtherFlows(request: APIRequestContext) {
+  const flows: { id: string }[] = await (await request.get('/api/flows')).json();
+  for (const flow of flows) {
+    if (flow.id !== FLOW_ID) await request.delete(`/api/flows/${flow.id}`);
+  }
+}
+
 async function waitForSaved(page: Page) {
   await expect(page.getByTestId('save-state')).toHaveAttribute('data-state', 'idle', { timeout: 10_000 });
 }
@@ -357,5 +365,147 @@ test.describe('flow editor', () => {
     await page.getByRole('button', { name: 'Hauptmenü' }).click();
     await page.getByRole('menuitem', { name: 'English' }).click();
     await expect(page.getByRole('button', { name: 'Main menu' })).toBeVisible();
+  });
+
+  test('copy, paste and duplicate work with the keyboard, the context menu deletes a node', async ({ page, request }) => {
+    await page.goto(`/flow/${FLOW_ID}`);
+    await expect(page.locator('.react-flow__node')).toHaveCount(3);
+
+    await page.locator('.react-flow__node[data-id="n2"]').click();
+    await page.keyboard.press('Control+c');
+    await expect(page.getByText('1 node copied')).toBeVisible();
+    await page.keyboard.press('Control+v');
+    await expect(page.getByText('1 node pasted')).toBeVisible();
+    await expect(page.locator('.react-flow__node')).toHaveCount(4);
+    // The pasted node is the new selection, offset from its original.
+    const selected = page.locator('.react-flow__node.selected');
+    await expect(selected).toHaveCount(1);
+    await expect(selected).not.toHaveAttribute('data-id', 'n2');
+    await waitForSaved(page);
+    const pasted = await flowFromServer(request);
+    const copy = Object.values(pasted.nodes as Record<string, SeedNode>).find((n) => n.id !== 'n2' && n.type === 'function');
+    expect(copy?.name).toBe('Transform');
+    expect(copy?.config.code).toBe(demoNodes.n2.config.code);
+    expect(copy?.position).toEqual({ x: demoNodes.n2.position.x + 40, y: demoNodes.n2.position.y + 40 });
+
+    await page.keyboard.press('Control+d');
+    await expect(page.locator('.react-flow__node')).toHaveCount(5);
+
+    await page.locator('.react-flow__node[data-id="n1"]').click({ button: 'right' });
+    await expect(page.getByTestId('context-menu')).toBeVisible();
+    await page.getByTestId('context-delete').click();
+    await expect(page.locator('.react-flow__node[data-id="n1"]')).toHaveCount(0);
+    await waitForSaved(page);
+    const deleted = await flowFromServer(request);
+    expect(deleted.nodes.n1).toBeUndefined();
+    expect(deleted.connections.some((c: SeedConnection) => c.sourceNode === 'n1')).toBe(false);
+  });
+
+  test('double-clicking the canvas adds a node through quick-add and Ctrl+S deploys', async ({ page, request }) => {
+    await page.goto(`/flow/${FLOW_ID}`);
+    await expect(page.locator('.react-flow__node')).toHaveCount(3);
+
+    await page.locator('.react-flow__pane').dblclick({ position: { x: 60, y: 60 } });
+    const quickAdd = page.getByTestId('quick-add');
+    await expect(quickAdd).toBeVisible();
+    await quickAdd.getByRole('textbox').fill('debug');
+    await quickAdd.getByTestId('quick-add-debug').click();
+    await expect(quickAdd).toBeHidden();
+    await expect(page.locator('.react-flow__node')).toHaveCount(4);
+    await waitForSaved(page);
+    const saved = await flowFromServer(request);
+    expect(Object.values(saved.nodes as Record<string, SeedNode>).filter((n) => n.type === 'debug')).toHaveLength(2);
+
+    await deselectAll(page);
+    await page.keyboard.press('Control+s');
+    await expect(page.getByTestId('flow-status')).toHaveText('running');
+  });
+
+  test('tabs are renamed inline, reordered by drag, and ? opens the shortcut help', async ({ page, request }) => {
+    await deleteOtherFlows(request);
+    await request.post('/api/flows', { data: { id: 'e2e-second', name: 'Second' } });
+    await page.goto(`/flow/${FLOW_ID}`);
+
+    await page.getByTestId(`flow-tab-${FLOW_ID}`).dblclick();
+    const input = page.getByTestId('tab-rename-input');
+    await expect(input).toBeVisible();
+    await input.fill('Renamed Demo');
+    await input.press('Enter');
+    await expect(page.getByRole('tab', { name: /Renamed Demo/ })).toHaveAttribute('aria-selected', 'true');
+    await expect.poll(async () => (await flowFromServer(request)).name, { timeout: 10_000 }).toBe('Renamed Demo');
+
+    await page.getByTestId('flow-tab-e2e-second').dragTo(page.getByTestId(`flow-tab-${FLOW_ID}`));
+    await expect(page.getByRole('tab')).toHaveText([/Second/, /Renamed Demo/]);
+    await expect
+      .poll(async () => ((await (await request.get('/api/flows')).json()) as { id: string }[]).map((f) => f.id), { timeout: 10_000 })
+      .toEqual(['e2e-second', FLOW_ID]);
+    await page.reload();
+    await expect(page.getByRole('tab')).toHaveText([/Second/, /Renamed Demo/]);
+
+    await deselectAll(page);
+    await page.keyboard.press('?');
+    const help = page.getByTestId('shortcut-help');
+    await expect(help).toBeVisible();
+    await help.getByRole('button', { name: 'Close' }).click();
+    await expect(help).toBeHidden();
+  });
+
+  test('a Node-RED export imports as one flow per tab, runs, and exports back as Node-RED JSON', async ({ page, request }) => {
+    const nodeRed = [
+      { id: 'tab1', type: 'tab', label: 'Main', disabled: false, info: 'Demo' },
+      { id: 'tab2', type: 'tab', label: 'Second', disabled: false, info: '' },
+      { id: 'n1', type: 'inject', z: 'tab1', name: 'Tick', repeat: '1', crontab: '', once: false, topic: '', payload: 'tick', payloadType: 'str', x: 110, y: 100, wires: [['n2']] },
+      { id: 'n2', type: 'function', z: 'tab1', name: 'Count', func: 'msg.count = 1;\nreturn msg;', outputs: 1, x: 300, y: 100, wires: [['n3']] },
+      { id: 'n3', type: 'debug', z: 'tab1', name: 'Out', active: true, tosidebar: true, console: false, complete: 'true', x: 480, y: 100, wires: [] },
+      { id: 'n4', type: 'ui_chart', z: 'tab1', name: 'Chart', group: 'g1', x: 480, y: 200, wires: [[]] },
+      { id: 'n5', type: 'comment', z: 'tab2', name: 'Note', info: 'hello', x: 200, y: 100, wires: [] },
+    ];
+    await deleteOtherFlows(request);
+    await page.goto(`/flow/${FLOW_ID}`);
+    await page.getByRole('button', { name: 'Main menu' }).click();
+    await page.getByRole('menuitem', { name: 'Import…' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Import flow' });
+    await dialog.locator('input[type="file"]').setInputFiles({ name: 'flows.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(nodeRed)) });
+    const preview = dialog.getByTestId('import-preview');
+    await expect(preview).toHaveAttribute('data-format', 'node-red');
+    await expect(preview).toContainText('Flows: 2');
+    await expect(dialog.getByTestId('import-unsupported')).toContainText('ui_chart');
+    await dialog.getByRole('button', { name: 'Import', exact: true }).click();
+
+    await expect(page.getByText('2 flows imported from Node-RED')).toBeVisible();
+    await expect(page.getByText(/Import finished with/)).toBeVisible();
+    await expect(page).not.toHaveURL(new RegExp(`/flow/${FLOW_ID}$`));
+    await expect(page.getByRole('tab', { name: /Main/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: /Second/ })).toBeVisible();
+    await expect(page.locator('.react-flow__node')).toHaveCount(4);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+
+    const flows: { id: string; name: string }[] = await (await request.get('/api/flows')).json();
+    const main = flows.find((f) => f.name === 'Main');
+    expect(main).toBeTruthy();
+    const imported = await (await request.get(`/api/flows/${main!.id}`)).json();
+    expect(imported.description).toBe('Demo');
+    expect(imported.nodes.n1.config.payload).toEqual({ payload: 'tick' });
+    expect(imported.nodes.n1.config.interval).toBe(1000);
+    expect(imported.nodes.n2.config.code).toBe('msg.count = 1;\nreturn msg;');
+    expect(imported.nodes.n4.type).toBe('ui_chart');
+    expect(imported.connections).toHaveLength(2);
+
+    // Without the dashboard node the imported flow runs as is.
+    await page.locator('.react-flow__node[data-id="n4"]').click({ button: 'right' });
+    await page.getByTestId('context-delete').click();
+    await waitForSaved(page);
+    await page.getByTestId('deploy-button').click();
+    await expect(page.getByTestId('flow-status')).toHaveText('running');
+    await openDebugTab(page);
+    await expect(page.getByTestId('debug-message').first()).toContainText('tick', { timeout: 10_000 });
+
+    const exported = await request.get(`/api/flows/${main!.id}/export?format=node-red`);
+    expect(exported.ok()).toBeTruthy();
+    const items: Record<string, unknown>[] = await exported.json();
+    expect(items[0]).toMatchObject({ id: main!.id, type: 'tab', label: 'Main', info: 'Demo' });
+    expect(items.find((item) => item.id === 'n1')).toMatchObject({ type: 'inject', z: main!.id, payload: 'tick', payloadType: 'str', wires: [['n2']] });
+    expect(items.find((item) => item.id === 'n2')).toMatchObject({ type: 'function', func: 'msg.count = 1;\nreturn msg;', wires: [['n3']] });
+    expect(items.find((item) => item.id === 'n4')).toBeUndefined();
   });
 });

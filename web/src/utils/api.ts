@@ -133,47 +133,58 @@ export const generateId = (): string => {
   return Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
 };
 
-// Export a flow by downloading it as a JSON file
-export const exportFlow = async (flowId: string): Promise<void> => {
-  const response = await apiRequest<Flow>('GET', `/flows/${flowId}/export`);
+export type ExportFormat = 'go-red' | 'node-red';
+
+// Export a flow by downloading it as a JSON file, in Go-RED's own format or as a Node-RED flows.json.
+export const exportFlow = async (flowId: string, format: ExportFormat = 'go-red'): Promise<void> => {
+  const query = format === 'node-red' ? '?format=node-red' : '';
+  const response = await apiRequest<unknown>('GET', `/flows/${flowId}/export${query}`);
   if (!response) {
     throw new Error('No data in response');
   }
-  
-  // Create download link
+
   const dataStr = JSON.stringify(response, null, 2);
   const dataBlob = new Blob([dataStr], { type: 'application/json' });
   const url = URL.createObjectURL(dataBlob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `flow-${flowId}.json`;
+  link.download = format === 'node-red' ? `flow-${flowId}.node-red.json` : `flow-${flowId}.json`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 };
 
-// Import a flow from a JSON file
-export const importFlow = async (file: File): Promise<{ flowId: string; name: string; message: string }> => {
-  // Read file content
-  const content = await file.text();
-  const flowData: Flow = JSON.parse(content);
+export interface ImportedFlow {
+  flowId: string;
+  originalId: string;
+  name: string;
+}
 
-  const response = await apiRequest<{
-    status: string;
-    flowId: string;
-    originalId: string;
-    name: string;
-    message: string;
-  }, Flow>('POST', '/flows/import', flowData);
-  
+export interface ImportResult {
+  format: 'go-red' | 'node-red';
+  flowId: string;
+  name: string;
+  flows: ImportedFlow[];
+  warnings: string[];
+  message: string;
+}
+
+// Import a flow file: a Go-RED flow object or a Node-RED export array (one flow per tab).
+export const importFlow = async (file: File): Promise<ImportResult> => {
+  const content = await file.text();
+  const data: unknown = JSON.parse(content);
+
+  const response = await apiRequest<ImportResult, unknown>('POST', '/flows/import', data);
   if (!response) {
     throw new Error('No data in response');
   }
-  
   return {
+    format: response.format || 'go-red',
     flowId: response.flowId,
     name: response.name,
+    flows: response.flows || [{ flowId: response.flowId, originalId: '', name: response.name }],
+    warnings: response.warnings || [],
     message: response.message,
   };
 };

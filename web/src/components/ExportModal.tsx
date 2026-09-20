@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { notify } from '../store/notificationStore';
-import { exportFlow } from '../utils/api';
+import { exportFlow, type ExportFormat } from '../utils/api';
 
 interface ExportModalProps {
   flowId: string;
@@ -13,11 +13,12 @@ interface ExportModalProps {
 export function ExportModal({ flowId, flowName, isOpen, onClose }: ExportModalProps) {
   const { t } = useTranslation();
   const [isExporting, setIsExporting] = useState(false);
+  const [format, setFormat] = useState<ExportFormat>('go-red');
 
   const handleExport = useCallback(async () => {
     try {
       setIsExporting(true);
-      await exportFlow(flowId);
+      await exportFlow(flowId, format);
       notify('success', t('export.success', { name: flowName }));
       onClose();
     } catch (error) {
@@ -25,7 +26,7 @@ export function ExportModal({ flowId, flowName, isOpen, onClose }: ExportModalPr
     } finally {
       setIsExporting(false);
     }
-  }, [flowId, flowName, onClose, t]);
+  }, [flowId, flowName, format, onClose, t]);
 
   if (!isOpen) {
     return null;
@@ -46,13 +47,29 @@ export function ExportModal({ flowId, flowName, isOpen, onClose }: ExportModalPr
             <Trans i18nKey="export.text" values={{ name: flowName }} components={{ 1: <strong /> }} />
           </p>
 
+          <fieldset className="mb-4">
+            <legend className="text-xs font-medium text-fg mb-2">{t('export.format')}</legend>
+            <div className="space-y-1.5">
+              {(['go-red', 'node-red'] as ExportFormat[]).map((option) => (
+                <label key={option} className="flex items-start gap-2 text-xs text-fg cursor-pointer">
+                  <input type="radio" name="export-format" className="mt-0.5 accent-accent" value={option} checked={format === option} onChange={() => setFormat(option)} />
+                  <span>
+                    {option === 'go-red' ? t('export.formatGoRed') : t('export.formatNodeRed')}
+                    {option === 'node-red' && <span className="block text-2xs text-muted">{t('export.formatNodeRedHint')}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
           <div className="bg-surface p-3 rounded mb-4">
             <div className="text-xs text-muted">
               <div>
                 <strong>{t('export.flowId')}:</strong> {flowId}
               </div>
               <div>
-                <strong>{t('export.fileName')}:</strong> flow-{flowId}.json
+                <strong>{t('export.fileName')}:</strong> flow-{flowId}
+                {format === 'node-red' ? '.node-red' : ''}.json
               </div>
             </div>
           </div>

@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, type ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { notify } from '../store/notificationStore';
 import { importFlow } from '../utils/api';
+import { useFlowStore } from '../store/flowStore';
 
 interface ImportModalProps {
   isOpen: boolean;
@@ -10,10 +11,33 @@ interface ImportModalProps {
 }
 
 interface Preview {
+  format: 'go-red' | 'node-red';
   name: string;
   description: string;
+  flows: number;
   nodes: number;
   connections: number;
+  unsupported: string[];
+}
+
+/** Summarizes a Node-RED export (array of nodes with wires) for the preview. */
+export function previewNodeRed(data: unknown[], knownTypes: Set<string>): Preview {
+  const tabs = data.filter((item) => (item as { type?: string })?.type === 'tab') as { label?: string; info?: string }[];
+  const nodes = data.filter((item) => {
+    const type = (item as { type?: string })?.type;
+    return type && type !== 'tab' && type !== 'group' && type !== 'subflow' && !type.startsWith('subflow:');
+  }) as { type: string; wires?: unknown[][] }[];
+  const unsupported = Array.from(new Set(nodes.map((n) => n.type).filter((type) => !knownTypes.has(type)))).sort();
+  const connections = nodes.reduce((sum, n) => sum + (n.wires || []).reduce((s, targets) => s + (Array.isArray(targets) ? targets.length : 0), 0), 0);
+  return {
+    format: 'node-red',
+    name: tabs.map((tab) => tab.label).filter(Boolean).join(', ') || 'Imported flow',
+    description: tabs[0]?.info || '',
+    flows: Math.max(tabs.length, 1),
+    nodes: nodes.length,
+    connections,
+    unsupported,
+  };
 }
 
 export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProps) {
@@ -44,15 +68,22 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
       reader.onload = (loadEvent) => {
         try {
           const data = JSON.parse(String(loadEvent.target?.result ?? ''));
+          if (Array.isArray(data)) {
+            setPreview(previewNodeRed(data, new Set(useFlowStore.getState().nodeTypes.map((nt) => nt.type))));
+            return;
+          }
           if (!data || typeof data.name !== 'string' || !data.name) {
             setError(t('import.missingName'));
             return;
           }
           setPreview({
+            format: 'go-red',
             name: data.name,
             description: data.description || '',
+            flows: 1,
             nodes: data.nodes ? Object.keys(data.nodes).length : 0,
             connections: Array.isArray(data.connections) ? data.connections.length : 0,
+            unsupported: [],
           });
         } catch {
           setError(t('import.invalidJson'));
@@ -72,7 +103,11 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
       setIsImporting(true);
       setError('');
       const result = await importFlow(selectedFile);
-      notify('success', t('import.success', { name: result.name }));
+      if (result.format === 'node-red') notify('success', t('import.successMany', { count: result.flows.length }));
+      else notify('success', t('import.success', { name: result.name }));
+      if (result.warnings.length > 0) {
+        notify('warning', t('import.warningsToast', { count: result.warnings.length, first: result.warnings[0] }), 12000);
+      }
       onFlowImported(result.flowId);
       onClose();
     } catch (err) {
@@ -127,7 +162,15 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
           {preview && (
             <div className="bg-accent-soft p-3 rounded mb-4">
               <h4 className="font-medium text-accent-text mb-2 text-xs">{t('import.preview')}</h4>
-              <div className="text-xs text-fg space-y-1">
+              <div className="text-xs text-fg space-y-1" data-testid="import-preview" data-format={preview.format}>
+                <div>
+                  <strong>{t('import.format')}:</strong> {preview.format === 'node-red' ? t('import.formatNodeRed') : t('import.formatGoRed')}
+                </div>
+                {preview.format === 'node-red' && (
+                  <div>
+                    <strong>{t('import.flows')}:</strong> {preview.flows}
+                  </div>
+                )}
                 <div>
                   <strong>{t('import.name')}:</strong> {preview.name}
                 </div>
@@ -140,6 +183,11 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
                 <div>
                   <strong>{t('import.connections')}:</strong> {preview.connections}
                 </div>
+                {preview.unsupported.length > 0 && (
+                  <div className="text-warn-text" data-testid="import-unsupported">
+                    <strong>{t('import.unsupported')}:</strong> {preview.unsupported.join(', ')}
+                  </div>
+                )}
               </div>
             </div>
           )}
