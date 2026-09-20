@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/GrimbiXcode/Go-RED/cmd/go-red/websocket"
 	"github.com/GrimbiXcode/Go-RED/internal/dto"
 	"github.com/GrimbiXcode/Go-RED/internal/engine"
+	"github.com/GrimbiXcode/Go-RED/internal/nodered"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/state"
 
@@ -514,15 +516,32 @@ func (s *server) handleExportFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.URL.Query().Get("format") == "node-red" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=flow-%s.node-red.json", flowID))
+		writeJSON(w, http.StatusOK, nodered.Export(flow))
+		return
+	}
+
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=flow-%s.json", flowID))
 	writeJSON(w, http.StatusOK, dto.ToWire(flow))
 }
 
 func (s *server) handleImportFlow(w http.ResponseWriter, r *http.Request) {
-	// The body is a canonical wire Flow (the same shape produced by
-	// GET /api/flows/{id}/export).
+	// The body is either a canonical wire Flow (the shape produced by
+	// GET /api/flows/{id}/export) or a Node-RED export: a JSON array of
+	// nodes with "wires", which may hold several tabs.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if nodered.IsExport(body) {
+		s.importNodeRED(w, body)
+		return
+	}
+
 	var importData dto.Flow
-	if err := decodeJSON(w, r, &importData); err != nil {
+	if err := json.Unmarshal(body, &importData); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -539,12 +558,7 @@ func (s *server) handleImportFlow(w http.ResponseWriter, r *http.Request) {
 	originalID := importData.ID
 	flow := engine.NewFlow(uuid.New().String(), importData.Name)
 	dto.PopulateFromWire(flow, importData)
-	for nodeID, node := range flow.Nodes {
-		node.Type = sanitizeString(node.Type)
-		node.Name = sanitizeString(node.Name)
-		node.Description = sanitizeString(node.Description)
-		flow.Nodes[nodeID] = node
-	}
+	s.sanitizeNodes(flow)
 
 	if err := s.engine.AddFlow(flow); err != nil {
 		writeEngineError(w, err)
@@ -554,9 +568,67 @@ func (s *server) handleImportFlow(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"status":     "imported",
+		"format":     "go-red",
 		"flowId":     flow.ID,
 		"originalId": originalID,
 		"name":       flow.Name,
+		"flows":      []map[string]interface{}{{"flowId": flow.ID, "originalId": originalID, "name": flow.Name}},
+		"warnings":   []string{},
 		"message":    "Flow imported successfully",
 	})
+}
+
+// importNodeRED imports every tab of a Node-RED export as its own flow.
+func (s *server) importNodeRED(w http.ResponseWriter, body []byte) {
+	result, err := nodered.Import(body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(result.Flows) == 0 {
+		writeError(w, http.StatusBadRequest, "the export contains no flows")
+		return
+	}
+
+	imported := make([]map[string]interface{}, 0, len(result.Flows))
+	for _, flow := range result.Flows {
+		originalID := flow.ID
+		flow.ID = uuid.New().String()
+		flow.Name = strings.TrimSpace(sanitizeString(flow.Name))
+		if flow.Name == "" {
+			flow.Name = "Imported flow"
+		}
+		flow.Description = sanitizeString(flow.Description)
+		s.sanitizeNodes(flow)
+		if err := s.engine.AddFlow(flow); err != nil {
+			writeEngineError(w, err)
+			return
+		}
+		s.notify.FlowChanged(flow.ID)
+		imported = append(imported, map[string]interface{}{"flowId": flow.ID, "originalId": originalID, "name": flow.Name})
+	}
+	warnings := result.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	}
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"status":     "imported",
+		"format":     "node-red",
+		"flowId":     imported[0]["flowId"],
+		"originalId": imported[0]["originalId"],
+		"name":       imported[0]["name"],
+		"flows":      imported,
+		"warnings":   warnings,
+		"message":    fmt.Sprintf("%d flow(s) imported from Node-RED", len(imported)),
+	})
+}
+
+// sanitizeNodes strips control characters from user-visible node strings.
+func (s *server) sanitizeNodes(flow *engine.Flow) {
+	for nodeID, node := range flow.Nodes {
+		node.Type = sanitizeString(node.Type)
+		node.Name = sanitizeString(node.Name)
+		node.Description = sanitizeString(node.Description)
+		flow.Nodes[nodeID] = node
+	}
 }
