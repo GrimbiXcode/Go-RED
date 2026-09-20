@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -171,6 +173,11 @@ func (c *Client) enqueue(message WebSocketMessage) bool {
 // The clients map is only ever mutated by Run (via register/unregister) or
 // by removeClient, always under mu.
 type Hub struct {
+	// CheckOrigin decides which browser origins may open a WebSocket. nil
+	// means same-origin only (see sameOrigin); main sets it from the
+	// configured allowed origins.
+	CheckOrigin func(r *http.Request) bool
+
 	clients    map[*Client]bool
 	broadcast  chan outbound
 	register   chan *Client
@@ -392,18 +399,33 @@ func (c *Client) writePump() {
 	}
 }
 
+// sameOrigin is the default origin policy: browser handshakes must come
+// from the page the server itself served (Origin host == request Host);
+// requests without an Origin header (non-browser clients) pass.
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && strings.EqualFold(u.Host, r.Host)
+}
+
 // ServeWebSocket handles WebSocket requests and upgrades the connection
 // It accepts an optional messageHandler function for custom message processing
 func (h *Hub) ServeWebSocket(w http.ResponseWriter, r *http.Request, messageHandler func(*Client, WebSocketMessage)) {
+	checkOrigin := h.CheckOrigin
+	if checkOrigin == nil {
+		checkOrigin = sameOrigin
+	}
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
-		CheckOrigin: func(r *http.Request) bool {
-			// Every origin is accepted for now; origin checks and
-			// authentication are part of the Phase 6 security baseline
-			// (docs/NEXT_LEVEL_PLAN.md).
-			return true
-		},
+		CheckOrigin:     checkOrigin,
+		// The editor offers "gored" (plus a token-carrying protocol when
+		// authentication is on); selecting it makes browsers accept the
+		// handshake. Clients that offer nothing get nothing, as before.
+		Subprotocols: []string{"gored"},
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)

@@ -64,16 +64,25 @@ var _ engine.StateManager = (*memoryStateManager)(nil)
 // WebSocket endpoint) so tests exercise exactly the routes main wires up.
 func newTestServer(t *testing.T) (*engine.FlowEngine, http.Handler) {
 	t.Helper()
+	return newTestServerWith(t, routerOptions{})
+}
+
+// newTestServerWith is newTestServer with router options (auth token,
+// origins, rate limit); an empty WebDir becomes a temp dir.
+func newTestServerWith(t *testing.T, opts routerOptions) (*engine.FlowEngine, http.Handler) {
+	t.Helper()
 	reg := registry.GetGlobalRegistry()
 	e := engine.NewFlowEngine(engine.EngineConfig{
-		WorkerPoolSize:    4,
 		MessageBufferSize: 100,
 		DefaultTimeout:    5 * time.Second,
 	}, reg)
 	e.SetStateManager(newMemoryStateManager())
 	require.NoError(t, e.Start())
 	t.Cleanup(func() { e.Stop() })
-	return e, newRouter(e, reg, nil, t.TempDir())
+	if opts.WebDir == "" {
+		opts.WebDir = t.TempDir()
+	}
+	return e, newRouter(e, reg, nil, opts)
 }
 
 func do(t *testing.T, h http.Handler, method, target string, body interface{}) *httptest.ResponseRecorder {

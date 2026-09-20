@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -80,29 +79,27 @@ import (
 // version is set at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
-// Config holds the command-line configuration of the server.
-type Config struct {
-	Port        int
-	DataDir     string
-	WebUIDir    string
-	MaxInflight int
-	MessageLog  int
-	MaxMessages int
-	LogLevel    string
-}
-
 // maxBodyBytes caps the size of any REST request body.
 const maxBodyBytes = 10 << 20
 
 func main() {
-	config := parseFlags()
+	config, showVersion, err := loadConfig(os.Args[1:], os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "go-red:", err)
+		os.Exit(2)
+	}
+	if showVersion {
+		fmt.Println("go-red", version)
+		os.Exit(0)
+	}
 	setupLogging(config.LogLevel)
-	slog.Info("starting Go-RED", "version", version, "port", config.Port, "dataDir", config.DataDir, "webDir", config.WebUIDir)
+	slog.Info("starting Go-RED", "version", version, "port", config.Port, "dataDir", config.DataDir, "webDir", config.WebUIDir,
+		"auth", config.AuthToken != "", "allowedOrigins", config.AllowedOrigins, "rateLimit", config.RateLimit)
 
 	nodeRegistry := registry.GetGlobalRegistry()
 	slog.Info("node registry initialized", "nodeTypes", len(nodeRegistry.GetAllNodes()))
 
-	stateManager, err := state.NewFileStateManager(config.DataDir)
+	stateManager, err := state.NewFileStateManagerWithOptions(config.DataDir, state.Options{BackupKeep: config.BackupKeep, BackupMinInterval: config.BackupInterval})
 	if err != nil {
 		slog.Error("failed to create state manager", "err", err)
 		os.Exit(1)
@@ -127,12 +124,18 @@ func main() {
 	}
 
 	wsHub := websocket.NewHub()
+	wsHub.CheckOrigin = func(r *http.Request) bool { return originAllowed(r, config.AllowedOrigins) }
 	wsHandler := websocket.NewWebSocketHandler(wsHub, flowEngine, nodeRegistry)
 	go wsHub.Run()
 
 	server := &http.Server{
-		Addr:              ":" + strconv.Itoa(config.Port),
-		Handler:           newRouter(flowEngine, nodeRegistry, wsHandler, config.WebUIDir),
+		Addr: ":" + strconv.Itoa(config.Port),
+		Handler: newRouter(flowEngine, nodeRegistry, wsHandler, routerOptions{
+			WebDir:             config.WebUIDir,
+			AuthToken:          config.AuthToken,
+			AllowedOrigins:     config.AllowedOrigins,
+			RateLimitPerMinute: config.RateLimit,
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -157,24 +160,6 @@ func main() {
 	}
 	flowEngine.Stop()
 	slog.Info("shutdown complete")
-}
-
-func parseFlags() Config {
-	var config Config
-	flag.IntVar(&config.Port, "port", 8080, "Port to listen on")
-	flag.StringVar(&config.DataDir, "data-dir", "data", "Directory for flow data")
-	flag.StringVar(&config.WebUIDir, "web-dir", "web/dist", "Directory for the built WebUI")
-	flag.IntVar(&config.MaxInflight, "max-inflight", 1024, "Maximum concurrent node executions per flow (a flow's maxConcurrency overrides it)")
-	flag.IntVar(&config.MaxMessages, "max-messages", 1000, "Message queue size per flow")
-	flag.IntVar(&config.MessageLog, "message-log", 0, "Number of routed messages to keep for GET /api/messages (0 disables)")
-	flag.StringVar(&config.LogLevel, "log-level", "info", "Log level: debug, info, warn, error")
-	showVersion := flag.Bool("version", false, "Print the version and exit")
-	flag.Parse()
-	if *showVersion {
-		fmt.Println("go-red", version)
-		os.Exit(0)
-	}
-	return config
 }
 
 // setupLogging installs a leveled slog handler as the process-wide default.
@@ -217,24 +202,36 @@ type server struct {
 	startedAt time.Time
 }
 
+// routerOptions is the part of the configuration the HTTP layer needs.
+type routerOptions struct {
+	WebDir             string
+	AuthToken          string
+	AllowedOrigins     []string
+	RateLimitPerMinute int
+}
+
 // newRouter wires every REST route, the WebSocket endpoint (when ws is not
-// nil) and the static WebUI with SPA fallback into one handler.
-func newRouter(e *engine.FlowEngine, reg *registry.NodeRegistry, ws *websocket.WebSocketHandler, webDir string) http.Handler {
+// nil), the operational endpoints and the static WebUI with SPA fallback
+// into one handler, guarded by the origin policy and the optional token.
+func newRouter(e *engine.FlowEngine, reg *registry.NodeRegistry, ws *websocket.WebSocketHandler, opts routerOptions) http.Handler {
 	var notify Notifier = noopNotifier{}
 	if ws != nil {
 		notify = ws
 	}
-	s := &server{engine: e, registry: reg, notify: notify, webDir: webDir, startedAt: time.Now()}
+	s := &server{engine: e, registry: reg, notify: notify, webDir: opts.WebDir, startedAt: time.Now()}
+	limiter := newRateLimiter(opts.RateLimitPerMinute)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/version", s.handleVersion)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("GET /api/flows", s.handleGetFlows)
 	mux.HandleFunc("POST /api/flows", s.handleCreateFlow)
-	mux.HandleFunc("POST /api/flows/import", s.handleImportFlow)
+	mux.HandleFunc("POST /api/flows/import", limiter.limit(s.handleImportFlow))
 	mux.HandleFunc("GET /api/flows/{id}", s.handleGetFlow)
 	mux.HandleFunc("PUT /api/flows/{id}", s.handleUpdateFlow)
 	mux.HandleFunc("DELETE /api/flows/{id}", s.handleDeleteFlow)
-	mux.HandleFunc("POST /api/flows/{id}/deploy", s.handleDeployFlow)
+	mux.HandleFunc("POST /api/flows/{id}/deploy", limiter.limit(s.handleDeployFlow))
 	mux.HandleFunc("POST /api/flows/{id}/undeploy", s.handleUndeployFlow)
 	mux.HandleFunc("GET /api/flows/{id}/export", s.handleExportFlow)
 	mux.HandleFunc("GET /api/nodes", s.handleGetNodes)
@@ -243,8 +240,8 @@ func newRouter(e *engine.FlowEngine, reg *registry.NodeRegistry, ws *websocket.W
 	if ws != nil {
 		mux.HandleFunc("GET /ws", ws.ServeWebSocket)
 	}
-	mux.Handle("/", spaHandler(webDir))
-	return mux
+	mux.Handle("/", spaHandler(opts.WebDir))
+	return corsMiddleware(opts.AllowedOrigins, requireAuth(opts.AuthToken, mux))
 }
 
 // spaHandler serves the built WebUI. Existing files are served as-is;

@@ -212,7 +212,22 @@ func main() {
 
 | Method | Endpoint | Description | Handler |
 |--------|----------|-------------|---------|
-| GET | `/api/messages` | Get message log | `handleGetMessages` |
+| GET | `/api/messages` | Get message log (empty unless `-message-log N`) | `handleGetMessages` |
+
+### Operations (Phase 6)
+
+| Method | Endpoint | Description | Handler |
+|--------|----------|-------------|---------|
+| GET | `/api/health` | Liveness, always public | `handleHealth` |
+| GET | `/api/version` | Version, Go version, OS, arch; always public | `handleVersion` (ops.go) |
+| GET | `/metrics` | Prometheus text exposition of the engine counters | `handleMetrics` (ops.go) |
+
+> Configuration lives in `config.go` (`loadConfig`: defaults → YAML file → `GORED_*` env → flags,
+> validated), the security baseline in `auth.go` (`requireAuth` bearer token for `/api/*`, `/ws`,
+> `/metrics`; `corsMiddleware` origin policy with `-allowed-origins`; `rateLimiter` on import and
+> deploy). `newRouter` takes `routerOptions`; tests use `newTestServerWith`. The WebSocket hub's
+> `CheckOrigin` is set from the same origin list and the upgrader selects the `gored` subprotocol
+> (the editor offers `gored.token.<token>` next to it when a token is configured).
 
 ### WebSocket
 
