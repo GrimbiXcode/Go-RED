@@ -289,7 +289,7 @@ func init() {
 			},
 		},
 		Help: "**Maps a number from one range to another.** *Scale* maps linearly, *Scale and limit* also clamps to the output range, *Scale and wrap* rolls over.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M3 11h18v2H3z"/></svg>`,
+		Icon: "sliders-horizontal",
 		Tags: []string{"function", "range", "scale"},
 	})
 	if err != nil {

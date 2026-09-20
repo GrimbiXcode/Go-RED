@@ -185,7 +185,7 @@ func init() {
 			Required: []string{"url"},
 		},
 		Help: "**Outgoing WebSocket connection** shared by `websocket in` and `websocket out` nodes. The connection is kept open and re-established when it drops.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v16H4zM8 9l3 3-3 3M13 15h4"/></svg>`,
+		Icon: "plug",
 		Tags: []string{"config", "websocket", "client"},
 	})
 	if err != nil {

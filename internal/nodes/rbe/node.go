@@ -257,7 +257,7 @@ func init() {
 			},
 		},
 		Help: "**Report by exception:** passes a message only when the watched value changed since the last one (or changed by more than a gap).",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 5h16l-6 8v6l-4-2v-4z"/></svg>`,
+		Icon: "filter",
 		Tags: []string{"function", "filter", "rbe", "deadband"},
 	})
 	if err != nil {

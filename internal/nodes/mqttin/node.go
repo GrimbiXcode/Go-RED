@@ -145,7 +145,7 @@ func init() {
 			Required: []string{"broker", "topic"},
 		},
 		Help: "**Subscribes to an MQTT topic** on the selected broker. Each received message has `msg.payload` (the message body) and `msg.topic`. Wildcards `+` and `#` are allowed.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M12 2L2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`,
+		Icon: "radio-tower",
 		Tags: []string{"network", "mqtt", "subscribe"},
 	})
 	if err != nil {

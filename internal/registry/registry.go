@@ -173,7 +173,7 @@ type NodeMetadata struct {
 	Inputs       []Port   `json:"inputs"`       // Input ports
 	Outputs      []Port   `json:"outputs"`      // Output ports
 	ConfigSchema Schema   `json:"configSchema"` // Configuration schema
-	Icon         string   `json:"icon"`         // SVG icon for UI
+	Icon         string   `json:"icon"`         // Lucide icon name ("timer"); inline <svg> markup is still accepted
 	Tags         []string `json:"tags"`         // Search tags
 
 	// OutputsFrom makes the number of output ports depend on the length

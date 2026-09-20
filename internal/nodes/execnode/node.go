@@ -286,7 +286,7 @@ func init() {
 			Required: []string{"command"},
 		},
 		Help: "**Runs a system command** and emits its output: `msg.payload` is stdout, `msg.stderr` and `msg.rc` carry stderr and the exit code.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v16H4zM7 8l4 4-4 4M13 16h4"/></svg>`,
+		Icon: "terminal",
 		Tags: []string{"function", "exec", "command", "shell"},
 	})
 	if err != nil {

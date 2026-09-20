@@ -144,7 +144,7 @@ func init() {
 			},
 		},
 		Help: "**Catches errors** thrown by other nodes of this flow and emits a message with `msg.error`. Leave the scope empty to catch errors from every node.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#F44336"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>`,
+		Icon: "life-buoy",
 		Tags: []string{"flow-control", "catch", "error"},
 	})
 	if err != nil {

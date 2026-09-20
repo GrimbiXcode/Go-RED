@@ -105,7 +105,7 @@ func init() {
 			Required: []string{"server"},
 		},
 		Help: "**Receives WebSocket messages** from the selected listener or client connection. `msg.payload` is the message text.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v16H4zM8 9l3 3-3 3M13 15h4"/></svg>`,
+		Icon: "plug",
 		Tags: []string{"network", "websocket", "subscribe"},
 	})
 	if err != nil {

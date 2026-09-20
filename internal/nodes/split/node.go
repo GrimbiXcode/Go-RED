@@ -301,7 +301,7 @@ func init() {
 			},
 		},
 		Help: "**Splits `msg.payload` into a sequence** of messages: one per array element, per line or separator of a string, or per key of an object. Each message carries `msg.parts` so a `join` node can reassemble them.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>`,
+		Icon: "scissors",
 		Tags: []string{"flow-control", "split", "sequence"},
 	})
 	if err != nil {

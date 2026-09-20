@@ -182,7 +182,7 @@ func init() {
 			Required: []string{"path"},
 		},
 		Help: "**WebSocket endpoint** served by Go-RED on the `http in` port. `websocket in` receives what clients send, `websocket out` broadcasts to them.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v16H4zM8 9l3 3-3 3M13 15h4"/></svg>`,
+		Icon: "server",
 		Tags: []string{"config", "websocket", "server"},
 	})
 	if err != nil {

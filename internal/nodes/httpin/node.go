@@ -236,7 +236,7 @@ func init() {
 			Required: []string{"path"},
 		},
 		Help: "**Creates an HTTP endpoint.** Requests to the path become messages with `msg.payload` (body), `msg.req` (headers, query, params). Wire an `http response` node to answer; otherwise the request times out.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v4H4zM4 10h16v10H4z"/></svg>`,
+		Icon: "cloud-download",
 		Tags: []string{"network", "http", "server", "endpoint"},
 	})
 	if err != nil {

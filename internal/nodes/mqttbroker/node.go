@@ -310,7 +310,7 @@ func init() {
 			Required: []string{"url"},
 		},
 		Help: "**Connection to an MQTT broker**, shared by every `mqtt in` and `mqtt out` node that references it. The connection is opened when the flow deploys and reconnects on its own.\n\nTurn on *Use TLS* for `mqtts://` URLs.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M12 2L2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`,
+		Icon: "server",
 		Tags: []string{"config", "mqtt", "broker"},
 	})
 	if err != nil {

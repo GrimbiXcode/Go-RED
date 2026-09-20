@@ -210,7 +210,7 @@ func init() {
 			},
 		},
 		Help: "**Collects messages into batches.** Emits one message with `msg.payload` as an array, either every *n* messages or every interval.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M3 3h6v6H3zm8 0h6v6h-6zm8 0h2v6h-2zM3 11h6v6H3zm8 0h6v6h-6zm8 0h2v6h-2z"/></svg>`,
+		Icon: "layers",
 		Tags: []string{"flow-control", "batch", "sequence"},
 	})
 	if err != nil {

@@ -43,7 +43,7 @@ func init() {
 		},
 		ConfigSchema: registry.Schema{},
 		Help:         "**A wiring point.** Passes every message through unchanged; use it to tidy up wires.",
-		Icon:         `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#9E9E9E"><circle cx="12" cy="12" r="4"/></svg>`,
+		Icon:         "circle-dot",
 		Tags:         []string{"flow-control", "junction"},
 	})
 	if err != nil {

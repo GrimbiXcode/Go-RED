@@ -276,7 +276,7 @@ func init() {
 			Required: []string{"port"},
 		},
 		Help: "**Receives data over TCP**, either by listening on a port or by connecting to a host. Emits one message per line or per chunk received.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v16H4zM8 9l3 3-3 3M13 15h4"/></svg>`,
+		Icon: "cable",
 		Tags: []string{"network", "tcp", "server"},
 	})
 	if err != nil {

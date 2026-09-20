@@ -445,7 +445,7 @@ func init() {
 			Required: []string{"url"},
 		},
 		Help: "**Sends an HTTP request** and emits the response: `msg.payload` is the body, `msg.statusCode` and `msg.headers` the rest. `msg.payload` of the incoming message is sent as the request body for POST/PUT/PATCH.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM2 12h20M12 2a15 15 0 010 20 15 15 0 010-20z"/></svg>`,
+		Icon: "globe",
 		Tags: []string{"network", "http", "request", "client"},
 	})
 	if err != nil {

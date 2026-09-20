@@ -401,7 +401,7 @@ func init() {
 		},
 		Help:        "**Routes messages by rules.** Each rule owns one output port; a message is sent to the port of every rule that matches (or only the first, with *Check all rules* off). *otherwise* matches when no earlier rule did.",
 		OutputsFrom: &registry.OutputsFrom{Property: "rules", Label: "{{operator}} {{value.value}}"},
-		Icon:        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M9.6 15.6L4.8 12l4.8-3.6v2.4H15V7.2L19.2 12 15 16.8v-2.4H9.6v1.2z"/></svg>`,
+		Icon:        "route",
 		Tags:        []string{"function", "switch", "route", "condition"},
 	})
 	if err != nil {

@@ -269,7 +269,7 @@ func init() {
 			},
 		},
 		Help: "**Delays each message** by a fixed time, or **limits the rate** to a number of messages per interval (queueing or dropping the rest).",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm1 11h-6v-2h4V6h2z"/></svg>`,
+		Icon: "timer",
 		Tags: []string{"function", "delay", "rate-limit", "timing"},
 	})
 	if err != nil {

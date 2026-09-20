@@ -235,7 +235,7 @@ func init() {
 			},
 		},
 		Help: "**TLS material** for nodes that talk to servers over TLS (`http request`, `mqtt-broker`). Certificate, key and CA can be file paths, PEM text or environment variable names, depending on *Source*.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg>`,
+		Icon: "lock",
 		Tags: []string{"config", "tls", "ssl", "certificate"},
 	})
 	if err != nil {

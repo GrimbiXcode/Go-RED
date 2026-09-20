@@ -163,7 +163,7 @@ func init() {
 			Required: []string{"url"},
 		},
 		Help: "**Shared proxy settings** for `http request` nodes. Create one proxy node and reference it from the request node's *Proxy* field.\n\nHosts listed under *Bypass proxy for* are contacted directly.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v12H4zM2 18h20v2H2zM9 8h6v4H9z"/></svg>`,
+		Icon: "shield",
 		Tags: []string{"config", "http", "proxy"},
 	})
 	if err != nil {

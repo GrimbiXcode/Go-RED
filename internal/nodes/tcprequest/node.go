@@ -201,7 +201,7 @@ func init() {
 			Required: []string{"host", "port"},
 		},
 		Help: "**Sends `msg.payload` over TCP and waits for the reply**, which becomes the outgoing `msg.payload`.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v16H4zM8 9l3 3-3 3M13 15h4"/></svg>`,
+		Icon: "arrow-left-right",
 		Tags: []string{"network", "tcp", "request"},
 	})
 	if err != nil {

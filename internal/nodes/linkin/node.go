@@ -41,7 +41,7 @@ func init() {
 		},
 		ConfigSchema: registry.Schema{},
 		Help:         "**Receives messages from `link out` nodes** without a visible wire. Select this node in the link out node's list.",
-		Icon:         `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#607D8B"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4z"/></svg>`,
+		Icon:         "log-in",
 		Tags:         []string{"flow-control", "link"},
 	})
 	if err != nil {

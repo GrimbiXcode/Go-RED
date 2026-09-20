@@ -242,7 +242,7 @@ func init() {
 			},
 		},
 		Help: "**Converts between CSV text and objects.** A CSV string becomes an array of objects; an array of objects becomes CSV text.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M3 3h18v2H3zm0 8h18v2H3zm0 8h18v2H3zM3 3v18h2V3zm7 0v18h2V3zm7 0v18h2V3z"/></svg>`,
+		Icon: "table",
 		Tags: []string{"parser", "csv"},
 	})
 	if err != nil {

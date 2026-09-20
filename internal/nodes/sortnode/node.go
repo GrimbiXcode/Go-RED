@@ -304,7 +304,7 @@ func init() {
 			},
 		},
 		Help: "**Sorts an array** at the chosen property (numbers numerically, everything else as strings).",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M3 6h12v2H3zm0 5h9v2H3zm0 5h6v2H3zm14-9l4 4h-3v6h-2v-6h-3z"/></svg>`,
+		Icon: "arrow-down-a-z",
 		Tags: []string{"flow-control", "sort", "sequence"},
 	})
 	if err != nil {

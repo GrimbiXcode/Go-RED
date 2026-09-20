@@ -263,7 +263,7 @@ func init() {
 			Required: []string{"filename"},
 		},
 		Help: "**Reads a file** into `msg.payload`: as raw bytes, as text, or as one message per line.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M6 2h9l5 5v15H6zm8 1.5V8h4.5zM8 12h8v2H8zm0 4h8v2H8z"/></svg>`,
+		Icon: "file-input",
 		Tags: []string{"storage", "file", "read"},
 	})
 	if err != nil {

@@ -238,7 +238,7 @@ func init() {
 			},
 		},
 		Help: "**Sends one value, waits, then sends another.** Useful for timeouts and watchdogs. Leave the second value's type empty to send nothing after the delay.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm1 15h-2v-2h2zm0-4h-2V7h2z"/></svg>`,
+		Icon: "alarm-clock",
 		Tags: []string{"function", "trigger", "timing"},
 	})
 	if err != nil {

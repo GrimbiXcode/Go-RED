@@ -99,7 +99,7 @@ func init() {
 			},
 		},
 		Help: "**Converts between JSON text and objects** in `msg.payload`: a string is parsed, anything else is serialised.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M5 3h2v2H5v5a2 2 0 01-2 2 2 2 0 012 2v5h2v2H5c-1.07-.27-2-.9-2-2v-4a2 2 0 00-2-2H0v-2h1a2 2 0 002-2V5a2 2 0 012-2m14 0a2 2 0 012 2v4a2 2 0 002 2h1v2h-1a2 2 0 00-2 2v4a2 2 0 01-2 2h-2v-2h2v-5a2 2 0 012-2 2 2 0 01-2-2V5h-2V3z"/></svg>`,
+		Icon: "braces",
 		Tags: []string{"parser", "json"},
 	})
 	if err != nil {

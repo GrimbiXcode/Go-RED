@@ -308,7 +308,7 @@ func init() {
 			},
 		},
 		Help: "**Extracts elements from HTML** in `msg.payload` with a CSS selector and returns their HTML, text or an attribute.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M3 2l1.6 18L12 22l7.4-2L21 2H3zm14.8 6.3H8.6l.2 2.2h8.8l-.6 6.8-4.9 1.4-5-1.4-.3-3.7h2.2l.2 1.9 2.9.8 2.9-.8.3-3.1H6.7l-.6-6.3h11.9z"/></svg>`,
+		Icon: "code-xml",
 		Tags: []string{"parser", "html", "selector"},
 	})
 	if err != nil {

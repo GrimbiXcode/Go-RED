@@ -327,7 +327,7 @@ func init() {
 			Required: []string{"filename", "action"},
 		},
 		Help: "**Writes `msg.payload` to a file**, appending or overwriting, or deletes the file. The file name can come from the message.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M6 2h9l5 5v15H6zm8 1.5V8h4.5z"/></svg>`,
+		Icon: "save",
 		Tags: []string{"storage", "file", "write"},
 	})
 	if err != nil {

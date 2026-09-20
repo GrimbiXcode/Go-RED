@@ -120,7 +120,7 @@ func init() {
 			Required: []string{"server"},
 		},
 		Help: "**Sends `msg.payload` over WebSocket**: to every connected client of a listener, or to the server of a client connection.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v16H4zM8 9l3 3-3 3M13 15h4"/></svg>`,
+		Icon: "plug-zap",
 		Tags: []string{"network", "websocket", "publish"},
 	})
 	if err != nil {

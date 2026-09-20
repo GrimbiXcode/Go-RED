@@ -58,9 +58,10 @@ func init() {
 				},
 			},
 		},
-		Help: "**A note on the canvas.** Comments have no ports and do nothing at runtime.",
-		Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#FFC107"><path d="M3 3h18v14H5.17L3 19.17V3z"/></svg>`,
-		Tags: []string{"flow-control", "comment", "annotation"},
+		Help:  "**A note on the canvas.** Comments have no ports and do nothing at runtime.",
+		Icon:  "message-square",
+		Color: "#FEF3C7",
+		Tags:  []string{"flow-control", "comment", "annotation"},
 	})
 	if err != nil {
 		panic(err)
