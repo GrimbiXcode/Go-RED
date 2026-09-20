@@ -47,6 +47,7 @@ export interface Flow {
   id: string;
   name: string;
   description: string;
+  order?: number;
   nodes: Record<string, Node>;
   connections: Connection[];
   status: FlowStatus;
@@ -61,6 +62,7 @@ export interface FlowSummary {
   id: string;
   name: string;
   description?: string;
+  order?: number;
   status: FlowStatus;
   nodeCount: number;
   createdAt: string;
@@ -77,6 +79,7 @@ export interface FlowCreateRequest {
 export interface FlowUpdateRequest {
   name?: string;
   description?: string;
+  order?: number;
   nodes?: Record<string, Node>;
   connections?: Connection[];
   config?: FlowConfig;

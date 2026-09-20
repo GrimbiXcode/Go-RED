@@ -91,6 +91,7 @@ type Flow struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
+	Order       int             `json:"order,omitempty"`
 	Nodes       map[string]Node `json:"nodes"`
 	Connections []Connection    `json:"connections"`
 	Status      FlowStatus      `json:"status"`
@@ -107,6 +108,7 @@ type FlowSummary struct {
 	ID          string     `json:"id"`
 	Name        string     `json:"name"`
 	Description string     `json:"description,omitempty"`
+	Order       int        `json:"order,omitempty"`
 	Status      FlowStatus `json:"status"`
 	NodeCount   int        `json:"nodeCount"`
 	CreatedAt   string     `json:"createdAt"`
@@ -126,8 +128,10 @@ type FlowCreateRequest struct {
 // flow:update WebSocket message. All fields are optional; only fields
 // present in the request are applied (see ApplyTo).
 type FlowUpdateRequest struct {
-	Name        *string         `json:"name,omitempty"`
-	Description *string         `json:"description,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	// Order moves the flow's tab; the editor sends it when tabs are reordered.
+	Order       *int            `json:"order,omitempty"`
 	Nodes       map[string]Node `json:"nodes,omitempty"`
 	Connections []Connection    `json:"connections,omitempty"`
 	Config      *FlowConfig     `json:"config,omitempty"`

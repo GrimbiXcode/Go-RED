@@ -95,6 +95,7 @@ func ToWire(f *engine.Flow) Flow {
 		ID:          f.ID,
 		Name:        f.Name,
 		Description: f.Description,
+		Order:       f.Order,
 		Nodes:       nodes,
 		Connections: connections,
 		Status:      FlowStatusFromEngine(f.Status),
@@ -133,6 +134,7 @@ func ToWireSummary(f *engine.Flow) FlowSummary {
 		ID:          f.ID,
 		Name:        f.Name,
 		Description: f.Description,
+		Order:       f.Order,
 		Status:      FlowStatusFromEngine(f.Status),
 		NodeCount:   len(f.Nodes),
 		CreatedAt:   f.CreatedAt.Format(time.RFC3339),
@@ -148,6 +150,13 @@ func ToWireSummary(f *engine.Flow) FlowSummary {
 // what a PUT of the editor's working copy means. Config fields are merged
 // into the existing FlowConfig.
 func (req *FlowUpdateRequest) ApplyTo(f *engine.Flow) {
+	if req.Order != nil {
+		f.Order = *req.Order
+	}
+	if req.Name == nil && req.Description == nil && req.Nodes == nil && req.Connections == nil && req.Config == nil {
+		// Moving a tab is not an edit of the flow.
+		return
+	}
 	if req.Name != nil && *req.Name != "" {
 		f.Name = *req.Name
 	}

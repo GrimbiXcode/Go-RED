@@ -895,12 +895,27 @@ func (e *FlowEngine) GetAllFlows() []*Flow {
 		flows = append(flows, def.Clone())
 	}
 	sort.Slice(flows, func(i, j int) bool {
+		if flows[i].Order != flows[j].Order {
+			return flows[i].Order < flows[j].Order
+		}
 		if !flows[i].CreatedAt.Equal(flows[j].CreatedAt) {
 			return flows[i].CreatedAt.Before(flows[j].CreatedAt)
 		}
 		return flows[i].ID < flows[j].ID
 	})
 	return flows
+}
+
+// nextOrderLocked returns an Order that puts a new flow after every
+// existing one. Must be called with e.mu held.
+func (e *FlowEngine) nextOrderLocked() int {
+	next := 0
+	for _, def := range e.flows {
+		if def.Order >= next {
+			next = def.Order + 1
+		}
+	}
+	return next
 }
 
 // GetFlowStatus returns the status of a known flow.
@@ -976,6 +991,7 @@ func (e *FlowEngine) CreateFlow(id, name, description string) (*Flow, error) {
 	}
 
 	flow := NewFlow(id, name)
+	flow.Order = e.nextOrderLocked()
 	flow.Description = description
 
 	if err := e.persistLocked(flow); err != nil {
@@ -1006,6 +1022,9 @@ func (e *FlowEngine) AddFlow(flow *Flow) error {
 	}
 
 	flow.Status = FlowStatusInactive
+	if flow.Order == 0 {
+		flow.Order = e.nextOrderLocked()
+	}
 	if err := e.persistLocked(flow); err != nil {
 		return err
 	}

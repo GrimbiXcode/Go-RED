@@ -108,6 +108,9 @@ type Flow struct {
 	// Description provides additional information about the flow.
 	Description string `json:"description"`
 
+	// Order is the position of the flow's tab in the editor (ascending).
+	Order int `json:"order"`
+
 	// Nodes contains all nodes in the flow, keyed by their ID.
 	Nodes map[string]*Node `json:"nodes"`
 
@@ -298,6 +301,7 @@ func (f *Flow) Clone() *Flow {
 		ID:          f.ID,
 		Name:        f.Name,
 		Description: f.Description,
+		Order:       f.Order,
 		Nodes:       make(map[string]*Node),
 		Connections: make([]NodeConnection, len(f.Connections)),
 		Config:      f.Config,
