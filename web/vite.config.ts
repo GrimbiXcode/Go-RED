@@ -1,16 +1,31 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import fs from 'node:fs';
 import path from 'path';
 
+const outDir = path.resolve(__dirname, '../internal/webui/dist');
+
+// emptyOutDir wipes the placeholder that keeps the (otherwise ignored) embed
+// directory in git; put it back after every build so `go build` works on a
+// fresh checkout and `git status` stays clean.
+const keepPlaceholder: Plugin = {
+  name: 'go-red-keep-placeholder',
+  closeBundle() {
+    fs.writeFileSync(path.join(outDir, '.gitkeep'), '');
+  },
+};
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), keepPlaceholder],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
   },
   build: {
-    outDir: 'dist',
+    // The Go binary embeds this directory (internal/webui/embed.go).
+    outDir,
+    emptyOutDir: true,
     sourcemap: true,
   },
   server: {

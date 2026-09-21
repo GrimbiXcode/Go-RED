@@ -24,7 +24,8 @@ type Config struct {
 	Port int `yaml:"port"`
 	// DataDir holds the persisted flows (and their backups and quarantine).
 	DataDir string `yaml:"dataDir"`
-	// WebUIDir is the directory with the built editor (web/dist).
+	// WebUIDir, when set, serves the editor from that directory instead of
+	// the build embedded in the binary (a development convenience).
 	WebUIDir string `yaml:"webDir"`
 	// MaxInflight bounds concurrent node executions per flow; a flow's own
 	// maxConcurrency overrides it.
@@ -58,7 +59,6 @@ func defaultConfig() Config {
 	return Config{
 		Port:           8080,
 		DataDir:        "data",
-		WebUIDir:       "web/dist",
 		MaxInflight:    1024,
 		MaxMessages:    1000,
 		MessageLog:     0,
@@ -98,7 +98,7 @@ func loadConfig(args []string, getenv func(string) string) (Config, bool, error)
 	fs.String("config", file, "YAML config file (keys: port, dataDir, webDir, maxInflight, maxMessages, messageLog, logLevel, authToken, allowedOrigins, rateLimit, backupKeep, backupInterval)")
 	fs.IntVar(&cfg.Port, "port", cfg.Port, "Port to listen on")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "Directory for flow data")
-	fs.StringVar(&cfg.WebUIDir, "web-dir", cfg.WebUIDir, "Directory for the built WebUI")
+	fs.StringVar(&cfg.WebUIDir, "web-dir", cfg.WebUIDir, "Serve the editor from this directory instead of the embedded build (development)")
 	fs.IntVar(&cfg.MaxInflight, "max-inflight", cfg.MaxInflight, "Maximum concurrent node executions per flow (a flow's maxConcurrency overrides it)")
 	fs.IntVar(&cfg.MaxMessages, "max-messages", cfg.MaxMessages, "Message queue size per flow")
 	fs.IntVar(&cfg.MessageLog, "message-log", cfg.MessageLog, "Number of routed messages to keep for GET /api/messages (0 disables)")

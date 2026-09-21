@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/GrimbiXcode/Go-RED/internal/dto"
@@ -16,6 +18,7 @@ import (
 	_ "github.com/GrimbiXcode/Go-RED/internal/nodes/function"
 	_ "github.com/GrimbiXcode/Go-RED/internal/nodes/inject"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
+	"github.com/GrimbiXcode/Go-RED/internal/webui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -340,18 +343,43 @@ func TestSPAFallback(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "assets"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets", "app.js"), []byte("console.log(1)"), 0o644))
 
-	h := spaHandler(dir)
-	get := func(target string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
-		return w
-	}
+	for name, fsys := range map[string]fs.FS{
+		"directory": os.DirFS(dir),
+		"in-memory": fstest.MapFS{
+			"index.html":    {Data: []byte("<html>app</html>")},
+			"assets/app.js": {Data: []byte("console.log(1)")},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := spaHandler(fsys)
+			get := func(target string) *httptest.ResponseRecorder {
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+				return w
+			}
 
-	assert.Equal(t, "<html>app</html>", get("/").Body.String())
-	assert.Equal(t, "<html>app</html>", get("/flow/abc").Body.String(), "client-side routes fall back to index.html")
-	assert.Equal(t, "console.log(1)", get("/assets/app.js").Body.String())
-	assert.Equal(t, http.StatusNotFound, get("/assets/missing.js").Code, "missing assets are a real 404")
-	assert.Equal(t, "<html>app</html>", get("/../../etc/passwd").Body.String(), "traversal attempts stay inside the web dir")
+			assert.Equal(t, "<html>app</html>", get("/").Body.String())
+			assert.Equal(t, "<html>app</html>", get("/flow/abc").Body.String(), "client-side routes fall back to index.html")
+			assert.Equal(t, "console.log(1)", get("/assets/app.js").Body.String())
+			assert.Equal(t, http.StatusNotFound, get("/assets/missing.js").Code, "missing assets are a real 404")
+			assert.Equal(t, "<html>app</html>", get("/../../etc/passwd").Body.String(), "traversal attempts stay inside the web dir")
+		})
+	}
+}
+
+func TestEmbeddedEditorOrHint(t *testing.T) {
+	e, _ := newTestServer(t)
+	h := newRouter(e, registry.GetGlobalRegistry(), nil, routerOptions{})
+	w := serve(h, request(http.MethodGet, "/flow/abc", nil))
+	if _, built := webui.Dist(); built {
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), "<div id=\"root\">")
+	} else {
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code, "a binary without the editor says so")
+		assert.Contains(t, w.Body.String(), "npm run build")
+		assert.Equal(t, http.StatusNotFound, serve(h, request(http.MethodGet, "/assets/app.js", nil)).Code)
+	}
+	assert.Equal(t, http.StatusOK, serve(h, request(http.MethodGet, "/api/health", nil)).Code, "the API works either way")
 }
 
 func TestFlowValidation(t *testing.T) {

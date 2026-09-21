@@ -25,7 +25,7 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
   },
   webServer: {
-    command: `cd .. && go build -o bin/go-red-e2e ./cmd/go-red && bin/go-red-e2e -port ${port} -data-dir "${dataDir}" -web-dir web/dist -log-level warn`,
+    command: `cd .. && go build -o bin/go-red-e2e ./cmd/go-red && bin/go-red-e2e -port ${port} -data-dir "${dataDir}" -log-level warn`,
     url: `http://localhost:${port}/api/health`,
     reuseExistingServer: false,
     timeout: 240_000,

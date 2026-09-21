@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,6 +26,7 @@ import (
 	"github.com/GrimbiXcode/Go-RED/internal/nodered"
 	"github.com/GrimbiXcode/Go-RED/internal/registry"
 	"github.com/GrimbiXcode/Go-RED/internal/state"
+	"github.com/GrimbiXcode/Go-RED/internal/webui"
 
 	_ "github.com/GrimbiXcode/Go-RED/internal/nodes/batch"
 	_ "github.com/GrimbiXcode/Go-RED/internal/nodes/catch"
@@ -240,22 +241,39 @@ func newRouter(e *engine.FlowEngine, reg *registry.NodeRegistry, ws *websocket.W
 	if ws != nil {
 		mux.HandleFunc("GET /ws", ws.ServeWebSocket)
 	}
-	mux.Handle("/", spaHandler(opts.WebDir))
+	mux.Handle("/", webHandler(opts.WebDir))
 	return corsMiddleware(opts.AllowedOrigins, requireAuth(opts.AuthToken, mux))
 }
 
-// spaHandler serves the built WebUI. Existing files are served as-is;
-// any other extension-less path falls back to index.html so client-side
-// routes survive a reload. Missing files with an extension are a plain 404.
-func spaHandler(dir string) http.Handler {
-	files := http.FileServer(http.Dir(dir))
-	index := filepath.Join(dir, "index.html")
+// webHandler serves the editor: from dir when one is configured (-web-dir,
+// for development), otherwise from the build embedded in the binary. A
+// binary built without the editor gets a hint page instead of a blank one.
+func webHandler(dir string) http.Handler {
+	if dir != "" {
+		return spaHandler(os.DirFS(dir))
+	}
+	fsys, ok := webui.Dist()
+	if !ok {
+		return editorNotBuiltHandler()
+	}
+	return spaHandler(fsys)
+}
+
+// spaHandler serves the built WebUI from fsys. Existing files are served
+// as-is; any other extension-less path falls back to index.html so
+// client-side routes survive a reload. Missing files with an extension are
+// a plain 404.
+func spaHandler(fsys fs.FS) http.Handler {
+	files := http.FileServer(http.FS(fsys))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clean := path.Clean("/" + r.URL.Path)
-		full := filepath.Join(dir, filepath.FromSlash(clean))
+		name := strings.TrimPrefix(clean, "/")
+		if name == "" {
+			name = "."
+		}
 
-		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+		if info, err := fs.Stat(fsys, name); err == nil && !info.IsDir() {
 			files.ServeHTTP(w, r)
 			return
 		}
@@ -264,7 +282,7 @@ func spaHandler(dir string) http.Handler {
 			return
 		}
 
-		f, err := os.Open(index)
+		f, err := fsys.Open("index.html")
 		if err != nil {
 			http.NotFound(w, r)
 			return
@@ -275,11 +293,37 @@ func spaHandler(dir string) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		content, ok := f.(io.ReadSeeker)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
 		// ServeContent (not ServeFile) so the response does not depend on
 		// the request path at all: no "/index.html" redirect and no
 		// rejection of paths containing "..".
 		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeContent(w, r, "index.html", info.ModTime(), f)
+		http.ServeContent(w, r, "index.html", info.ModTime(), content)
+	})
+}
+
+// editorNotBuiltHandler explains how to get the editor when this binary
+// was compiled without a frontend build.
+func editorNotBuiltHandler() http.Handler {
+	const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Go-RED</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#1f2933}code{background:#f0f4f8;padding:.1em .3em;border-radius:3px}</style></head>
+<body><h1>Go-RED is running, but this binary carries no editor</h1>
+<p>The API is up (<code>/api/health</code>). To get the editor: use a release binary or the Docker image, or run
+<code>npm run build</code> in <code>web/</code> before <code>go build</code> so the build is embedded, or start the server with
+<code>-web-dir</code> pointing at a built editor.</p></body></html>`
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if path.Ext(r.URL.Path) != "" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(page))
 	})
 }
 

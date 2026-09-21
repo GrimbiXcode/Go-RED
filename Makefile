@@ -59,6 +59,7 @@ test-all: test test-frontend
 clean:
 	@echo "Cleaning..."
 	rm -rf $(BIN_DIR)
+	find internal/webui/dist -mindepth 1 ! -name .gitkeep -exec rm -rf {} +
 
 # Download dependencies
 deps:
@@ -82,13 +83,13 @@ check-types: generate-types
 	@git diff --exit-code -- web/src/types/generated.ts || \
 		(echo "web/src/types/generated.ts is stale -- run 'make generate-types' and commit the result" && exit 1)
 
-# Build WebUI
+# Build the editor into internal/webui/dist, where the Go binary embeds it.
 build-web:
 	@echo "Building WebUI..."
-	cd web && npm install && npm run build
+	cd web && npm ci --no-audit --no-fund && npm run build
 
-# Build everything
-build-all: build build-web
+# Build everything: the editor first, then the binary that embeds it.
+build-all: build-web build
 
 # Run frontend dev server
 run-frontend:

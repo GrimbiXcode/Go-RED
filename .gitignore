@@ -4,10 +4,10 @@
 *.test
 *.out
 
-# Build outputs
-bin/
-build/
-dist/
+# Build outputs (root-level only; internal/webui/dist is handled below)
+/bin/
+/build/
+/dist/
 
 # IDE
 .idea/
@@ -30,10 +30,13 @@ data/
 # Plugins (loaded at runtime)
 plugins/go/*.so
 
-# Web dependencies
+# Web dependencies and the built editor (embedded into the binary from
+# internal/webui/dist; only the placeholder is tracked)
 web/node_modules/
 web/dist/
 web/.cache/
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
 
 # Environment
 .env
