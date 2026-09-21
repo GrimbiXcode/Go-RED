@@ -538,6 +538,23 @@ Browser-WebSockets keine Header setzen können und ein Token auf allen Wegen gle
   Beschreibungen nie gebauter Architektur); `docs/ARCHITECTURE.md` mit echten Diagrammen
   (Engine-Lifecycle, Event-Fluss, Schema v2).
 
+**Status: umgesetzt.** Ein Artefakt: Vite baut nach `internal/webui/dist`, `internal/webui`
+bettet das Verzeichnis per `go:embed` ein, der Server liefert den Editor standardmäßig aus dem
+Binary (`-web-dir` bleibt als Entwickler-Override; ein Binary ohne Frontend-Build zeigt eine
+Hinweisseite statt einer leeren, die API läuft trotzdem). Dockerfile liefert nur noch das Binary,
+Playwright testet den eingebetteten Stand, `make build-all` baut Editor und Binary in der richtigen
+Reihenfolge. Releases: `.goreleaser.yaml` (Linux/macOS/Windows, amd64/arm64, Editor im
+`before`-Hook gebaut und eingebettet, Archive, Checksummen, Changelog nach Conventional-Commit-
+Typen, Multi-Arch-Image auf GHCR über `Dockerfile.goreleaser`) und `.github/workflows/release.yml`
+auf Tags `v*`. README neu: Screenshots Light/Dark (`docs/screenshots/`, aus dem gebauten Binary
+mit deployed Demo-Flow aufgenommen), 60-Sekunden-Quickstart (Release-Binary, Docker, Quelle),
+Feature-Matrix gegen Node-RED, Konfiguration, Doku-Karte. `docs/ARCHITECTURE.md` hat Mermaid-
+Diagramme für Komponenten, Dispatch, Flow-Lifecycle, Event-Fluss und Schema v2. Die 13
+`AGENTS.md` wurden gegen den Code neu geschrieben (von 11.560 auf 1.657 Zeilen), die Phasen-Blockquotes sind in
+den Text eingearbeitet. Abweichungen: das Docker-Image konnte in dieser Umgebung nicht gebaut
+werden (kein Daemon), der CI-Job baut es; das GoReleaser-Setup ist mit `goreleaser check`
+validiert, aber bis zum ersten Tag nicht gelaufen; Lighthouse (DoD) wurde nicht gemessen.
+
 ---
 
 ## 4. Reihenfolge, Aufwand, Abhängigkeiten
@@ -551,7 +568,7 @@ Browser-WebSockets keine Header setzen können und ein Token auf allen Wegen gle
 | 4 | Visuelles Redesign, Tokens v2, Icons, Dark Mode — **erledigt** | 2 Wochen | 1, 3 |
 | 5 | Editor-Ergonomie, Node-RED-Import — **erledigt** | 1–2 Wochen | 1, 4 |
 | 6 | Backend-Reife — **erledigt** | 2 Wochen | 0 (parallel) |
-| 7 | Auslieferung, Doku | 1 Woche | alle |
+| 7 | Auslieferung, Doku — **erledigt** | 1 Woche | alle |
 
 Gesamt: ca. 11–13 Personenwochen bis zu einem Stand, den man öffentlich zeigen kann. Phasen 0+1+2
 (3–4 Wochen) liefern bereits ein funktionierendes, ehrliches Produkt; Phase 4 macht es
