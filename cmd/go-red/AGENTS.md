@@ -1,10 +1,8 @@
 # cmd/go-red
 
-The HTTP server: it wires the flow engine, the node registry, the file state
-manager, the REST API, the WebSocket hub and the built editor into one
-binary. This file describes what is in this directory today. The wire
-contract (every route, payload and WebSocket message) lives in
-`docs/PROTOCOL.md` and is not repeated here.
+The HTTP server: flow engine, node registry, file state manager, REST API,
+WebSocket hub and the built editor in one binary. The wire contract (every
+route, payload and WebSocket message) is in `docs/PROTOCOL.md`.
 
 ## Files
 
@@ -67,9 +65,8 @@ the origin policy first, then the token check, then the mux. Inside the mux,
 
 - `corsMiddleware`: same-origin requests and static files pass untouched. A
   cross-origin request (Origin host != request Host) to `/api/*`, `/ws` or
-  `/metrics` is refused with 403 unless its origin is in the allowed list or
-  the list contains `*`; allowed ones get CORS headers and their preflight
-  answered with 204.
+  `/metrics` is refused with 403 unless its origin is allowed (or the list
+  is `*`); allowed ones get CORS headers and a 204 preflight.
 - `requireAuth`: with an empty token it returns `next` unchanged. Otherwise
   `isProtectedPath` (`/api/*` except health and version, `/ws`, `/metrics`)
   requires the token, compared in constant time, else 401 with
@@ -91,11 +88,10 @@ levels, malformed tokens (`^[A-Za-z0-9._~-]{16,}$`) and origins that are not
 `scheme://host[:port]`. `-version` prints `main.version` (set with
 `-ldflags "-X main.version=..."`) and exits.
 
-Keys and flags: port, dataDir, webDir, maxInflight, maxMessages, messageLog,
-logLevel, authToken, allowedOrigins, rateLimit, backupKeep, backupInterval
-(table in the root README). Adding a setting means touching `Config`,
-`defaultConfig`, `applyEnv`, the flag list, `validate` when it can be
-invalid, `config_test.go` and the README table.
+Keys: port, dataDir, webDir, maxInflight, maxMessages, messageLog, logLevel,
+authToken, allowedOrigins, rateLimit, backupKeep, backupInterval (table in
+the root README). A new setting touches `Config`, `defaultConfig`,
+`applyEnv`, the flag list, `validate`, `config_test.go` and that table.
 
 ## The editor
 
@@ -130,9 +126,9 @@ user-facing except `engine.ErrPersist`, which becomes `"failed to save flow"`.
 applied to flow name and description on create, update and import (the name
 is also trimmed and required) and, through `sanitizeNodes` and the update
 handler, to every node's `Type`, `Name` and `Description`. Node `config`
-maps are passed through as sent. Imported flows always get a fresh UUID;
-the original id is echoed back as `originalId`. Flow ids are validated by
-the engine (`ErrInvalidFlowID`), so path traversal never reaches storage.
+maps are passed through as sent. Imported flows always get a fresh UUID
+(the original id is echoed back as `originalId`); flow ids are validated by
+the engine (`ErrInvalidFlowID`).
 
 ## WebSocket
 
@@ -140,6 +136,8 @@ One `WebSocketMessage{type, data, timestamp, requestId?}` per frame; inbound
 frames capped at 512 KiB; 256 buffered outbound messages per client; pings
 every 30 s with a 60 s pong deadline. A full send buffer drops the message
 (logged) rather than blocking the hub; the hub's broadcast channel holds 1024.
+`Hub.CheckOrigin` is set by `main` from the allowed-origins list (default
+`sameOrigin`); the upgrader selects the `gored` subprotocol.
 
 Message types (`MessageType` in `hub.go`; `AllMessageTypes` must list every
 constant because `cmd/gentypes` enumerates it by reflection):
@@ -158,9 +156,6 @@ constant because `cmd/gentypes` enumerates it by reflection):
 - `message:send` injects a payload at a node (`engine.InjectMessage`).
 - `error` carries `{error: <short code>, message, ...fields}`; unknown types
   get one too. A panic in a handler is recovered in `Client.dispatch`.
-
-`Hub.CheckOrigin` is set by `main` from the allowed-origins list (default
-`sameOrigin`); the upgrader selects the `gored` subprotocol.
 
 ## Tests
 

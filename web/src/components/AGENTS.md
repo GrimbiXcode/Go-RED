@@ -97,8 +97,9 @@ in `test/editTray.test.tsx` and show it in `pages/StyleGuide.tsx`.
    the metadata and the current output ports (`schema/ports.outputPortsFor`,
    so a switch with three rules shows three handles).
 3. xyflow renders the node with the component from the type map
-   (`NodeComponent`, `InjectNode` or `DebugNode`), each of which composes
-   `NodeShell` (look, status line from `useRuntimeStore`) and `NodeHandles`.
+   (`NodeComponent`, `InjectNode` or `DebugNode`), each of which reads its
+   runtime status with `selectNodeStatus` and composes `NodeShell` (look,
+   status line) and `NodeHandles`.
 4. Store updates (autosave results, server events) are folded in with
    `mergeCanvasNodes`, which keeps the on-screen position of a node being
    dragged and the current selection.
