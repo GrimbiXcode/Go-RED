@@ -7,7 +7,7 @@
 // recursive properties/items/oneOf/allOf, unlike this file's previous
 // hand-written PropertySchema, which described a shape the backend never
 // produced).
-export type { NodeMetadata, Port, Property as PropertySchema, Schema } from './generated';
+export type { NodeMetadata, Port, Property as PropertySchema, Schema, Option, TypedInputOptions, Condition, OutputsFrom } from './generated';
 
 import type { NodeMetadata } from './generated';
 

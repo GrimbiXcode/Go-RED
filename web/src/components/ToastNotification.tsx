@@ -1,149 +1,79 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { CircleCheck, CircleX, Info, TriangleAlert, X } from 'lucide-react';
+import { useNotificationStore, type Toast, type ToastType } from '../store/notificationStore';
 
-export type ToastType = 'success' | 'error' | 'info' | 'warning';
-
-interface ToastMessage {
-  id: string;
-  type: ToastType;
-  message: string;
-  duration?: number;
-}
-
-interface ToastNotificationProps {
-  message: ToastMessage;
-  onDismiss: (id: string) => void;
-}
+export type { ToastType };
 
 const toastStyles: Record<ToastType, { border: string; icon: string }> = {
-  success: { border: 'border-gr-blue-500', icon: 'text-gr-blue-500' },
-  info: { border: 'border-slate-400', icon: 'text-slate-500' },
-  warning: { border: 'border-gr-fuchsia-300', icon: 'text-gr-fuchsia-400' },
-  error: { border: 'border-gr-fuchsia-600', icon: 'text-gr-fuchsia-600' },
+  success: { border: 'border-accent', icon: 'text-accent' },
+  info: { border: 'border-line-strong', icon: 'text-muted' },
+  warning: { border: 'border-warn', icon: 'text-warn' },
+  error: { border: 'border-danger', icon: 'text-danger-text' },
 };
 
 function ToastIcon({ type }: { type: ToastType }) {
-  const props = {
-    viewBox: '0 0 24 24',
-    fill: 'none' as const,
-    stroke: 'currentColor',
-    strokeWidth: 2,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-    className: 'w-4 h-4 shrink-0',
-  };
+  const className = 'w-4 h-4 shrink-0';
   switch (type) {
     case 'success':
-      return (
-        <svg {...props} aria-hidden="true">
-          <circle cx="12" cy="12" r="9" />
-          <polyline points="8 12 11 15 16 9" />
-        </svg>
-      );
+      return <CircleCheck className={className} aria-hidden="true" />;
     case 'error':
-      return (
-        <svg {...props} aria-hidden="true">
-          <circle cx="12" cy="12" r="9" />
-          <line x1="9" y1="9" x2="15" y2="15" />
-          <line x1="15" y1="9" x2="9" y2="15" />
-        </svg>
-      );
+      return <CircleX className={className} aria-hidden="true" />;
     case 'warning':
-      return (
-        <svg {...props} aria-hidden="true">
-          <path d="M12 3 2 20h20L12 3z" />
-          <line x1="12" y1="10" x2="12" y2="15" />
-          <circle cx="12" cy="17.5" r="0.75" fill="currentColor" stroke="none" />
-        </svg>
-      );
-    case 'info':
+      return <TriangleAlert className={className} aria-hidden="true" />;
     default:
-      return (
-        <svg {...props} aria-hidden="true">
-          <circle cx="12" cy="12" r="9" />
-          <line x1="12" y1="11" x2="12" y2="16" />
-          <circle cx="12" cy="7.5" r="0.75" fill="currentColor" stroke="none" />
-        </svg>
-      );
+      return <Info className={className} aria-hidden="true" />;
   }
 }
 
-function ToastNotification({ message, onDismiss }: ToastNotificationProps) {
+function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string) => void }) {
+  const { t } = useTranslation();
+
   useEffect(() => {
-    const timer = setTimeout(() => {
-      onDismiss(message.id);
-    }, message.duration || 3000);
-
+    const timer = setTimeout(() => onDismiss(toast.id), toast.duration);
     return () => clearTimeout(timer);
-  }, [message.id, message.duration, onDismiss]);
+  }, [toast.id, toast.duration, onDismiss]);
 
-  const style = toastStyles[message.type];
+  const style = toastStyles[toast.type];
 
   return (
     <div
-      className={`w-80 bg-white rounded shadow-lg border-l-4 ${style.border} px-3 py-2 flex items-start gap-2 animate-slide-in-right`}
+      role={toast.type === 'error' ? 'alert' : 'status'}
+      className={`w-80 bg-panel rounded-md shadow-float border border-line border-l-4 ${style.border} px-3 py-2 flex items-start gap-2 animate-slide-in-right`}
     >
       <span className={`mt-0.5 ${style.icon}`}>
-        <ToastIcon type={message.type} />
+        <ToastIcon type={toast.type} />
       </span>
-      <span className="text-xs text-gray-700 flex-1">{message.message}</span>
+      <span className="text-xs text-fg flex-1">{toast.message}</span>
       <button
-        className="text-gray-400 hover:text-gray-600 shrink-0"
-        onClick={() => onDismiss(message.id)}
-        aria-label="Schließen"
+        className="text-faint hover:text-muted shrink-0"
+        onClick={() => onDismiss(toast.id)}
+        aria-label={t('common.close')}
       >
-        ✕
+        <X className="w-3.5 h-3.5" aria-hidden="true" />
       </button>
     </div>
   );
 }
 
-interface ToastProviderProps {
-  children: React.ReactNode;
-}
-
-export interface ToastContextType {
-  showToast: (type: ToastType, message: string, duration?: number) => void;
-}
-
-let toastId = 0;
-
-const ToastContext = React.createContext<ToastContextType | undefined>(undefined);
-
-export function ToastProvider({ children }: ToastProviderProps) {
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
-  const showToast = useCallback((type: ToastType, message: string, duration?: number) => {
-    const id = String(++toastId);
-    setToasts((prev) => [...prev, { id, type, message, duration }]);
-  }, []);
-
-  const dismissToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id));
-  }, []);
+/** Renders the toasts held by the notification store. Mount once, near the root. */
+export function ToastHost() {
+  const toasts = useNotificationStore((state) => state.toasts);
+  const dismiss = useNotificationStore((state) => state.dismiss);
 
   return (
-    <ToastContext.Provider value={{ showToast }}>
-      {children}
-      {/* Bottom-right (above the status bar), not top-right: the header's
-          hamburger menu also opens top-right, and a toast sitting on top
-          of it would block clicks on the menu items underneath. */}
-      <div className="fixed bottom-8 right-4 z-50 flex flex-col-reverse gap-2 items-end">
-        {toasts.map((toast) => (
-          <ToastNotification
-            key={toast.id}
-            message={toast}
-            onDismiss={dismissToast}
-          />
-        ))}
-      </div>
-    </ToastContext.Provider>
+    // Bottom-right (above the status bar), not top-right: the header's
+    // menu also opens top-right and a toast there would cover it.
+    <div className="fixed bottom-8 right-4 z-50 flex flex-col-reverse gap-2 items-end">
+      {toasts.map((toast) => (
+        <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />
+      ))}
+    </div>
   );
 }
 
+/** Convenience hook: `showToast(type, message, duration?)`. */
 export function useToast() {
-  const context = React.useContext(ToastContext);
-  if (context === undefined) {
-    throw new Error('useToast must be used within a ToastProvider');
-  }
-  return context;
+  const showToast = useNotificationStore((state) => state.notify);
+  return { showToast };
 }

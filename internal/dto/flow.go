@@ -28,24 +28,31 @@ type Position struct {
 	Y float64 `json:"y"`
 }
 
-// NodeStatus is the runtime status of a node, as shown in the UI.
+// NodeStatus is the small status indicator a node shows in the editor
+// (Node-RED's node.status({fill, shape, text})). It is runtime state,
+// pushed as node:status events and in flow:snapshot; it is not part of the
+// flow definition.
 type NodeStatus struct {
-	State           string `json:"state"`
-	Message         string `json:"message,omitempty"`
-	Timestamp       string `json:"timestamp,omitempty"`
-	ProcessingCount int    `json:"processingCount,omitempty"`
-	ErrorCount      int    `json:"errorCount,omitempty"`
+	// Fill is the indicator color: red, green, yellow, blue or grey.
+	Fill string `json:"fill,omitempty"`
+	// Shape is "dot" or "ring".
+	Shape string `json:"shape,omitempty"`
+	// Text is the short label next to the indicator.
+	Text      string `json:"text,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
 }
 
-// Node is the wire representation of a flow node.
+// Node is the wire representation of a flow node (definition only; runtime
+// status travels separately as NodeStatus events).
 type Node struct {
-	ID       string                 `json:"id"`
-	Type     string                 `json:"type"`
-	Name     string                 `json:"name,omitempty"`
-	Position Position               `json:"position"`
-	Config   map[string]interface{} `json:"config"`
-	Status   NodeStatus             `json:"status"`
-	Disabled bool                   `json:"disabled"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+	// Description is the user's own note on this node instance (Markdown).
+	Description string                 `json:"description,omitempty"`
+	Position    Position               `json:"position"`
+	Config      map[string]interface{} `json:"config"`
+	Disabled    bool                   `json:"disabled"`
 }
 
 // Connection is the wire representation of a connection between two nodes.
@@ -84,12 +91,14 @@ type Flow struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
+	Order       int             `json:"order,omitempty"`
 	Nodes       map[string]Node `json:"nodes"`
 	Connections []Connection    `json:"connections"`
 	Status      FlowStatus      `json:"status"`
 	Config      FlowConfig      `json:"config"`
 	CreatedAt   string          `json:"createdAt"`
 	UpdatedAt   string          `json:"updatedAt"`
+	DeployedAt  string          `json:"deployedAt,omitempty"`
 	Version     string          `json:"version"`
 }
 
@@ -99,10 +108,12 @@ type FlowSummary struct {
 	ID          string     `json:"id"`
 	Name        string     `json:"name"`
 	Description string     `json:"description,omitempty"`
+	Order       int        `json:"order,omitempty"`
 	Status      FlowStatus `json:"status"`
 	NodeCount   int        `json:"nodeCount"`
 	CreatedAt   string     `json:"createdAt"`
 	UpdatedAt   string     `json:"updatedAt"`
+	DeployedAt  string     `json:"deployedAt,omitempty"`
 }
 
 // FlowCreateRequest is the request body for POST /api/flows and the
@@ -117,9 +128,26 @@ type FlowCreateRequest struct {
 // flow:update WebSocket message. All fields are optional; only fields
 // present in the request are applied (see ApplyTo).
 type FlowUpdateRequest struct {
-	Name        *string         `json:"name,omitempty"`
-	Description *string         `json:"description,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	// Order moves the flow's tab; the editor sends it when tabs are reordered.
+	Order       *int            `json:"order,omitempty"`
 	Nodes       map[string]Node `json:"nodes,omitempty"`
 	Connections []Connection    `json:"connections,omitempty"`
 	Config      *FlowConfig     `json:"config,omitempty"`
+}
+
+// DeployResponse is the response body of POST /api/flows/{id}/deploy and
+// POST /api/flows/{id}/undeploy: the flow's status after the operation.
+type DeployResponse struct {
+	FlowID     string     `json:"flowId"`
+	Status     FlowStatus `json:"status"`
+	UpdatedAt  string     `json:"updatedAt,omitempty"`
+	DeployedAt string     `json:"deployedAt,omitempty"`
+	Message    string     `json:"message,omitempty"`
+}
+
+// ErrorResponse is the JSON body every REST error carries.
+type ErrorResponse struct {
+	Error string `json:"error"`
 }

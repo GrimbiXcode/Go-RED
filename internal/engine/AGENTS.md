@@ -1,545 +1,162 @@
-# Go-RED Flow Engine Guidelines
-
-This file contains **engine-specific** guidelines that apply when working with the flow execution engine in `internal/engine/`.
-
----
-
-## Package Overview
-
-The `engine/` package is the **core** of Go-RED, responsible for:
-
-1. **Flow Lifecycle Management**: Create, Deploy, Undeploy, Delete flows
-2. **Message Processing**: Routing and execution of messages through node networks
-3. **Concurrency Control**: Worker pools, goroutine management
-4. **State Tracking**: Flow status, message logging, debugging
-
----
-
-## Key Components
-
-### Type Hierarchy
-
-```
-FlowEngine (Singleton-like)
-├── flows: map[string]*ActiveFlow
-├── registry: *NodeRegistry
-├── msgChan: chan Message (main message queue)
-├── wg: sync.WaitGroup (goroutine tracking)
-├── ctx: context.Context (lifetime management)
-└── messageLog: []Message (debugging)
-
-ActiveFlow (Per-deployed-flow)
-├── Flow: *Flow (definition)
-├── Status: FlowStatus
-├── msgChan: chan Message (flow-specific queue)
-├── nodeExecutors: map[string]NodeExecutor
-├── ctx: context.Context (flow lifetime)
-└── wg: sync.WaitGroup
-
-Flow (Definition)
-├── ID, Name, Description
-├── Nodes: map[string]*Node
-├── Connections: []NodeConnection
-├── Config: FlowConfig
-├── Status: FlowStatus
-├── CreatedAt, UpdatedAt: time.Time
-└── Version: string
-
-Message (Data unit)
-├── ID: string
-├── FlowID: string
-├── Payload: map[string]interface{}
-├── Path: []string (node traversal history)
-├── Context: context.Context
-├── Timestamp: time.Time
-└── Metadata: map[string]string
-```
-
----
-
-## Core Principles
-
-### 1. Message-Driven Architecture
-- **All processing happens via Message passing**
-- **Nodes are stateless** - they receive a message, process it, emit new messages
-- **Flows are directed graphs** - messages follow connections between nodes
-- **Asynchronous by default** - non-blocking message processing
-
-### 2. Concurrency Model
-- **Worker Pool Pattern**: Fixed number of goroutines process messages
-- **Fan-out**: One message can be sent to multiple nodes
-- **Parallel Execution**: Multiple nodes in a flow can execute concurrently
-- **Ordered Processing**: Messages from the same source maintain order
-
-### 3. Error Handling
-- **Continue on Error**: One node failure doesn't stop the entire flow
-- **Retry Mechanism**: Configurable retry policy with backoff
-- **Error Output**: Errors can be routed to error handling nodes
-- **Logging**: All errors are logged with context
-
----
-
-## Development Guidelines
-
-### Adding New Flow Features
-
-1. **Add to Flow type** (`flow.go`):
-   - New fields for flow-level configuration
-   - Update `NewFlow()` constructor
-   - Update `Validate()` method
-
-2. **Add to FlowConfig** (`flow.go`):
-   - New configuration options
-   - Set sensible defaults
-
-3. **Update FlowEngine** (`engine.go`):
-   - Modify `Deploy()` to handle new configuration
-   - Update `processMessage()` for new message types
-   - Add new public methods if needed
-
-4. **Add Tests** (`*_test.go`):
-   - Unit tests for new functionality
-   - Integration tests for flow lifecycle
-   - Performance tests if applicable
-
-### Modifying Message Processing
-
-**Before changing message processing logic:**
-
-1. Understand the current flow:
-   ```
-   SubmitMessage() → msgChan → worker() → processMessage()
-                                        ↓
-                                findTargetNodes() → nodeExecutors
-                                        ↓
-                                Execute() → submitMessage() (recursive)
-   ```
-
-2. Consider thread safety:
-   - Which mutexes protect which data?
-   - Are you accessing shared state?
-   - Could this cause deadlocks?
-
-3. Consider performance:
-   - Are you adding blocking operations?
-   - Could this cause memory growth?
-   - Are channels properly sized?
-
-4. Update tests:
-   - Existing tests may break
-   - Add new test cases for changed behavior
-
-### Adding Flow Statuses
-
-1. **Define new status** in `flow.go`:
-   ```go
-   type FlowStatus string
-   const (
-       FlowStatusInactive   FlowStatus = "inactive"
-       FlowStatusActive     FlowStatus = "active"
-       FlowStatusError      FlowStatus = "error"
-       FlowStatusDeploying  FlowStatus = "deploying"
-       FlowStatusUndeploying FlowStatus = "undeploying"
-       // Add new status here
-       FlowStatusPaused     FlowStatus = "paused"
-   )
-   ```
-
-2. **Update state transitions**:
-   - When can a flow enter this state?
-   - When does it exit?
-   - What triggers the transition?
-
-3. **Update frontend conversion** in `cmd/go-red/main.go`:
-   ```go
-   func convertFlowStatusAPI(status engine.FlowStatus) string {
-       switch status {
-       case engine.FlowStatusPaused:
-           return "paused"
-       // ...
-       }
-   }
-   ```
-
----
-
-## Message Processing Deep Dive
-
-### Message Lifecycle
-
-```
-1. Creation
-   ├── NewMessage() - from scratch
-   ├── NewMessageWithContext() - with parent context
-   └── Clone() - copy existing message
-
-2. Submission
-   ├── SubmitMessage() - public API
-   └── submitMessage() - internal (adds ID, handles full channel)
-
-3. Routing
-   ├── worker() - receives from msgChan
-   └── processMessage() - main processing logic
-
-4. Target Selection
-   ├── findTargetNodes() - determine which nodes receive the message
-   ├── findRootNodes() - for new messages (empty path)
-   └── findConnectedNodes() - for subsequent messages
-
-5. Node Execution
-   ├── executor.Execute(ctx, input) - node processes message
-   └── output sent via submitMessage() (recursive)
-
-6. Completion
-   └── Message added to messageLog for debugging
-```
-
-### Message Path Tracking
-- **Path**: Array of node IDs the message has traversed
-- **Purpose**: Prevent infinite loops, debugging, flow visualization
-- **Usage**: `msg.AddToPath(nodeID)` before node execution
-- **Loop Prevention**: Check if node is already in path (future enhancement)
-
----
-
-## Configuration
-
-### EngineConfig
-
-```go
-type EngineConfig struct {
-    WorkerPoolSize    int           // Number of message processing goroutines
-    MessageBufferSize int           // Size of message channel buffers
-    DefaultTimeout    time.Duration // Default timeout for node execution
-    MaxRetries        int           // Maximum retry attempts for failed messages
-    RetryBackoff      time.Duration // Backoff duration between retries
-}
-```
-
-**Tuning Guidelines:**
-- `WorkerPoolSize`: Start with CPU cores × 2, adjust based on workload
-- `MessageBufferSize`: Should be large enough to handle bursts, but not unbounded
-- `DefaultTimeout`: Most nodes should complete within this time
-- `MaxRetries`: 3 is a good default for transient errors
-- `RetryBackoff`: Exponential backoff recommended
-
----
-
-## Testing Engine Code
-
-### Test Categories
-
-1. **Unit Tests** - Individual methods
-2. **Flow Tests** - Complete flow execution
-3. **Concurrency Tests** - Parallel message processing
-4. **Performance Tests** - Throughput and latency
-5. **Error Tests** - Error handling and recovery
-
-### Test Helpers
-
-```go
-// Create a test engine
-func setupTestEngine() *FlowEngine {
-    registry := registry.NewNodeRegistry()
-    // Register test nodes
-    registry.RegisterNodeType("test-input", metadata, factory)
-    
-    engine := NewFlowEngine(EngineConfig{
-        WorkerPoolSize:    10,
-        MessageBufferSize: 100,
-        DefaultTimeout:    time.Second,
-    }, registry)
-    
-    engine.SetStateManager(&MockStateManager{})
-    return engine
-}
-
-// Create a test flow
-func createTestFlow() *Flow {
-    flow := NewFlow("test-flow", "Test Flow")
-    flow.Nodes["input"] = &Node{
-        ID:   "input",
-        Type: "test-input",
-        X:    0, Y: 0,
-    }
-    flow.Nodes["output"] = &Node{
-        ID:   "output",
-        Type: "debug",
-        X:    100, Y: 0,
-    }
-    flow.Connections = append(flow.Connections, NodeConnection{
-        ID:          "conn-1",
-        SourceNode:  "input",
-        TargetNode:  "output",
-    })
-    return flow
-}
-```
-
-### Important Test Cases
-
-```go
-// Test flow deployment and message processing
-func TestFlowEngine_EndToEnd(t *testing.T) {
-    engine := setupTestEngine()
-    engine.Start()
-    defer engine.Stop()
-    
-    flow := createTestFlow()
-    require.NoError(t, engine.Deploy(flow))
-    defer engine.Undeploy(flow.ID)
-    
-    // Inject message
-    err := engine.InjectMessage(flow.ID, "input", map[string]interface{}{
-        "payload": "test",
-    })
-    require.NoError(t, err)
-    
-    // Wait for processing
-    time.Sleep(100 * time.Millisecond)
-    
-    // Verify message was processed
-    messages := engine.GetMessageLogForFlow(flow.ID)
-    assert.Len(t, messages, 1)
-}
-
-// Test concurrent message processing
-func TestFlowEngine_ConcurrentMessages(t *testing.T) {
-    engine := setupTestEngine()
-    engine.Start()
-    defer engine.Stop()
-    
-    flow := createTestFlow()
-    require.NoError(t, engine.Deploy(flow))
-    defer engine.Undeploy(flow.ID)
-    
-    // Send many messages concurrently
-    var wg sync.WaitGroup
-    for i := 0; i < 1000; i++ {
-        wg.Add(1)
-        go func(idx int) {
-            defer wg.Done()
-            engine.InjectMessage(flow.ID, "input", map[string]interface{}{
-                "index": idx,
-            })
-        }(i)
-    }
-    wg.Wait()
-    
-    // All messages should be processed
-    messages := engine.GetMessageLogForFlow(flow.ID)
-    assert.Len(t, messages, 1000)
-}
-```
-
----
-
-## Performance Optimization
-
-### Hot Paths
-
-1. **Message Submission**: `submitMessage()` is called for every message
-2. **Target Finding**: `findTargetNodes()` is called for every message
-3. **Node Execution**: `executor.Execute()` is the actual work
-4. **Message Logging**: `AddMessageToLog()` adds overhead
-
-### Optimization Techniques
-
-1. **Channel Buffering**: Appropriate buffer sizes prevent blocking
-2. **Worker Pool**: Right-size the pool for your workload
-3. **Batching**: Consider batching small messages (future enhancement)
-4. **Caching**: Cache flow structures that don't change often
-5. **Circular Buffer**: Use circular buffer for message log (current implementation)
-
-### Benchmarking
-
-```go
-func BenchmarkMessageProcessing(b *testing.B) {
-    engine := setupTestEngine()
-    engine.Start()
-    defer engine.Stop()
-    
-    flow := createTestFlow()
-    engine.Deploy(flow)
-    defer engine.Undeploy(flow.ID)
-    
-    b.ResetTimer()
-    for i := 0; i < b.N; i++ {
-        engine.InjectMessage(flow.ID, "input", map[string]interface{}{
-            "data": i,
-        })
-    }
-}
-
-func BenchmarkConcurrentMessageProcessing(b *testing.B) {
-    engine := setupTestEngine()
-    engine.config.WorkerPoolSize = 100
-    engine.Start()
-    defer engine.Stop()
-    
-    flow := createTestFlow()
-    engine.Deploy(flow)
-    defer engine.Undeploy(flow.ID)
-    
-    b.ResetTimer()
-    b.RunParallel(func(pb *testing.PB) {
-        for i := 0; pb.Next(); i++ {
-            engine.InjectMessage(flow.ID, "input", map[string]interface{}{
-                "data": i,
-            })
-        }
-    })
-}
-```
-
----
-
-## Debugging Engine Issues
-
-### Common Problems
-
-#### 1. Messages Not Processing
-- **Check**: Is the engine started? (`engine.Start()` called)
-- **Check**: Are workers running? (log should show "FlowEngine started")
-- **Check**: Is the flow deployed? (`engine.GetFlow(flowID)`)
-- **Check**: Are node executors initialized? (in `ActiveFlow.nodeExecutors`)
-
-#### 2. Goroutine Leaks
-- **Check**: Are all `wg.Add(1)` matched with `wg.Done()`?
-- **Check**: Are contexts being cancelled properly?
-- **Check**: Use `runtime.NumGoroutine()` to track goroutine count
-- **Tool**: `go test -race` to detect race conditions
-
-#### 3. Deadlocks
-- **Check**: Mutex acquisition order
-- **Check**: Are you holding a mutex while sending to a channel?
-- **Tool**: Use `go vet` and manual code review
-- **Symptom**: Test hangs indefinitely
-
-#### 4. Message Loss
-- **Check**: Channel buffer sizes (`MessageBufferSize`)
-- **Check**: Are channels full? (log shows "Message channel full")
-- **Check**: Is `submitMessage()` dropping messages?
-- **Fix**: Increase buffer size or add backpressure
-
-### Debug Logging
-
-Enable verbose logging:
-```go
-// In main.go or test setup
-log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile | log.Lmicroseconds)
-log.SetOutput(os.Stdout)
-
-// Or add debug logging to specific functions
-func (e *FlowEngine) processMessage(msg Message) {
-    log.Printf("DEBUG: Processing message %s for flow %s, path: %v", 
-        msg.ID, msg.FlowID, msg.Path)
-    // ... rest of function
-}
-```
-
----
-
-## WebSocket Integration
-
-The engine communicates with the frontend via WebSocket through the hub in `cmd/go-red/websocket/`.
-
-### Message Flow to Frontend
-```
-FlowEngine events → Hub.Broadcast() → All connected clients
-```
-
-### Key Integration Points
-- Flow CRUD operations trigger broadcasts
-- Flow status changes are pushed to clients
-- Message logging can be streamed (future enhancement)
-
-### Frontend-Backend Contract
-- REST API endpoints use `/api/*` prefix; WebSocket endpoint is `/ws`.
-- The canonical wire contract lives in `internal/dto` (+ `internal/registry` for
-  node metadata, + `cmd/go-red/websocket` for the envelope/enum) — **not** in
-  `internal/engine`. Engine types (`Flow`, `Node`, `Message`, `FlowConfig`, ...)
-  are the internal representation and use `time.Duration`/the internal
-  `FlowStatus` enum; `internal/dto.ToWire`/`FromWire`-style conversions are the
-  only place that translates between internal and wire shapes.
-- TypeScript types are generated from the Go DTOs into
-  `web/src/types/generated.ts` via `go generate ./internal/dto/...` (or
-  `make generate-types`) — do not hand-describe the wire shape here or in TS.
-  CI fails if `generated.ts` drifts from the Go structs.
-- See the "Interface-Verifikation" section below for the required steps
-  whenever you touch anything under `internal/dto/`, `internal/registry`, or
-  `cmd/go-red/websocket`.
-
----
-
-## Future Enhancements
-
-### Planned Features
-- Message prioritization (QOS levels)
-- Flow versioning and rollback
-- Hot reloading of node types
-- Dynamic worker pool resizing
-- Message persistence for recovery
-- Distributed flow execution
-
-### Architecture Decisions
-- **Single Engine**: Current design uses one engine instance
-- **Per-Flow Isolation**: Each flow has its own goroutines and channels
-- **In-Memory State**: Flows are kept in memory when active
-- **File Persistence**: Default state manager uses JSON files
-
----
-
-## Checklist for Engine Changes
-
-Before committing changes to the engine:
-
-- [ ] All existing tests pass (`go test ./internal/engine/...`)
-- [ ] No race conditions detected (`go test -race ./internal/engine/...`)
-- [ ] Memory usage is bounded (no unbounded growth)
-- [ ] Goroutines are properly cleaned up
-- [ ] Mutex usage is correct (same order, no nested locking)
-- [ ] Channel operations won't deadlock
-- [ ] Error handling is comprehensive
-- [ ] Logging provides useful debugging info
-- [ ] Frontend integration still works (manual test)
-- [ ] Performance hasn't degraded (benchmark if changed hot paths)
-
----
-
-*Last updated: 2026-06-21*
-*Overrides: None (extends internal/AGENTS.md and root AGENTS.md)*
-
----
-
-## Interface-Verifikation (PFLICHT bei Änderungen an Interfaces)
-
-Trigger: Diese Schritte IMMER ausführen, bevor eine Änderung als fertig gilt, wenn eine der
-folgenden Dateien/Verzeichnisse angefasst wurde:
-- `internal/dto/**`
-- `internal/registry/registry.go` (NodeMetadata/Port/Property/Schema)
-- `cmd/go-red/websocket/hub.go` (WebSocketMessage/MessageType)
-- irgendeine Datei unter `web/src/types/**`
-
-Schritte (in dieser Reihenfolge, nach jeder Interface-Änderung):
-1. `go build ./...` und `go vet ./...` — stellt sicher, dass die Go-Seite kompiliert.
-2. `go generate ./internal/dto/...` — regeneriert `web/src/types/generated.ts` aus den
-   aktuellen Go-DTOs.
-3. `git diff --exit-code -- web/src/types/generated.ts` — falls dieser Befehl NICHT sauber
-   durchläuft (also ein Diff zeigt), bedeutet das: die generierte Datei war vor der Änderung
-   veraltet oder wurde von Hand editiert. Den Diff committen, NIEMALS `generated.ts` von Hand
-   anpassen.
-4. `cd web && npx tsc --noEmit` — deckt Call-Sites auf, die nach einer Schema-Änderung
-   angepasst werden müssen (umbenannte/entfernte Felder etc.). Alle daraus resultierenden
-   Fehler im selben Change beheben, nicht auf später verschieben.
-5. `cd web && npm test` — stellt sicher, dass `types.test.ts` und alle anderen Tests weiterhin
-   gegen die aktuelle Form bestehen.
-6. Bei Änderungen, die REST- oder WebSocket-Payloads betreffen: kurzer manueller Smoke-Test
-   (`go run cmd/go-red/main.go` + `npm run dev`, Flow erstellen/deployen/Message injizieren)
-   um Laufzeitverhalten zu bestätigen, das ein Compiler nicht prüfen kann.
-
-Nicht erlaubt: eine neue Wire-Form (Struct-Feld, Enum-Wert, WS-Message-Typ) einführen, ohne
-dass sie durch `internal/dto` (bzw. `internal/registry`/`cmd/go-red/websocket` für deren
-jeweilige Scan-Ziele) läuft und in `generated.ts` auftaucht. Handschriftliche TS-Interfaces,
-die eine Backend-Form beschreiben, statt sie aus `generated.ts` zu re-exportieren, sind ein
-Rückfall in den alten, driftanfälligen Zustand und müssen vermieden werden.
+# internal/engine — flow engine
+
+The engine owns flow definitions, deploys them into per-flow runtimes, routes messages
+between nodes and publishes runtime events. It imports `internal/registry` and nothing
+else from `internal/` (node packages appear only in `_test.go` files).
+
+## Files
+
+| File | Contents |
+|---|---|
+| `engine.go` | `EngineConfig`, `StateManager`, `FlowEngine`, `ActiveFlow`, sentinel errors, `ValidateFlowID`, lifecycle, dispatch, routing, message log |
+| `flow.go` | `Flow`, `Node`, `NodeConnection`, `FlowConfig`, `RetryPolicy`, `FlowStatus`, `NewFlow`, `Validate`, `Clone` |
+| `message.go` | `Message`, `NewMessage`, `NewMessageWithContext`, `Clone`, `AddToPath` |
+| `events.go` | `Event` types, the event hub, debug log, node status, counters, `/metrics` helpers |
+| `engine_test.go`, `flow_test.go`, `events_test.go`, `dispatch_test.go`, `eagerly_ready_test.go`, `order_test.go` | unit tests |
+| `phase0_test.go` … `phase6_network_test.go`, `flow_integration_test.go` | end-to-end tests with real nodes |
+| `bench_test.go` | benchmarks behind `docs/PERFORMANCE.md` |
+
+## Two views of a flow
+
+`FlowEngine.flows` holds the editable definition of every known flow (deployed or not);
+`FlowEngine.active` holds an `ActiveFlow` per deployed flow. `deployLocked` takes
+`def.Clone()` as the runtime snapshot; `ActiveFlow.Flow` is never mutated afterwards.
+Editing a definition (`UpdateFlow`) does not touch the running flow until `DeployFlow`
+is called again. `Deploy` on a running flow is the redeploy: the old runtime is stopped
+first. `Flow.UpdatedAt` later than `Flow.DeployedAt` means "has undeployed changes".
+
+`GetFlow`/`GetAllFlows` return clones. `Deploy` and `AddFlow` take ownership of the
+pointer; callers must not mutate it afterwards.
+
+## Public API (all on `*FlowEngine`)
+
+- Construction: `NewFlowEngine(config, registry)`, `DefaultEngineConfig()`,
+  `SetStateManager`/`GetStateManager`, `Start` (event dispatcher + metrics loop),
+  `Stop` (stops every flow, idempotent).
+- Definitions: `CreateFlow(id, name, description)`, `AddFlow(flow)`,
+  `UpdateFlow(id, func(*Flow) error)`, `DeleteFlow`, `GetFlow`, `GetAllFlows` (sorted by
+  `Order`, `CreatedAt`, ID), `GetFlowStatus`, `LoadAllFlows` (redeploys flows that were
+  `FlowStatusActive` when saved; failures become `FlowStatusError`).
+- Runtime: `Deploy(flow)`, `DeployFlow(id)`, `Undeploy(id)`, `IsDeployed`,
+  `InjectMessage(flowID, nodeID, payload)`, `SubmitMessage(msg)`, `GetFlowContext`
+  (a running flow's `ContextStore` and `EventBus`), `GlobalContext`.
+- Observability: `SubscribeEvents`, `GetDebugLog`/`ClearDebugLog`, `GetNodeStatuses`,
+  `GetMetrics`, `NodeStats`, `FlowCounts`, `EventsDropped`, `MessagesDropped`,
+  `AddMessageToLog`/`GetMessageLog`/`GetMessageLogForFlow`/`ClearMessageLog`/
+  `SetMaxMessageLog`.
+
+Sentinel errors: `ErrFlowNotFound`, `ErrFlowExists`, `ErrFlowNotDeployed`,
+`ErrInvalidFlowID`, `ErrInvalidFlow`, `ErrNodeInit`, `ErrPersist`. Return them wrapped
+(`fmt.Errorf("%w: %s", ErrFlowNotFound, id)`); `cmd/go-red/main.go` maps them to HTTP
+status codes with `errors.Is` in `statusForError`. `ErrPersist` may wrap file-system
+details and is never echoed to clients. `ValidateFlowID` enforces
+`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$` because IDs become file names and URLs.
+
+## Locking
+
+- `e.mu` (RWMutex) protects `flows` and `active`. Functions with the `Locked` suffix
+  (`deployLocked`, `stopActiveLocked`, `persistLocked`, `nextOrderLocked`) require it
+  held; everything else takes it.
+- `persistLocked` calls the state manager under `e.mu` so nothing mutates the flow while
+  it is serialized. Persist failures are logged and returned as `ErrPersist`.
+- `messageLogMu`, `debugMu`, `statusMu` and `stopMu` are independent and never nested
+  with `e.mu` inside a node execution.
+- Node counters are atomics; `ActiveFlow.lastMetrics` is touched only by `metricsLoop`.
+
+## Dispatch (per flow, no engine-wide pool)
+
+`deployLocked` creates per flow: `msgChan` (capacity `EngineConfig.MessageBufferSize`,
+default 1000), `slots` (capacity `FlowConfig.MaxConcurrency`, or
+`EngineConfig.MaxInflightPerFlow` = 1024 when 0), a `ContextStore`, an `EventBus`, a
+`nodeCounter` per node, a context derived from the engine context, and one dispatcher
+goroutine (`processFlowMessages`). Nodes are instantiated with
+`registry.InitializeNode` (factory → `SetConfig` → `Validate`); the first failure closes
+already-created `Closeable` nodes, sets `FlowStatusError`, persists, publishes a
+`FlowStatusEvent` and a `DebugEvent`, and returns `ErrNodeInit`. Disabled nodes are
+neither instantiated, started nor routed to.
+
+`processMessage` looks up the targets (`findTargetNodes`: root nodes for an empty
+`Path`, otherwise the connections leaving the last node in `Path`, filtered by
+`Message.OutputPort` when set), takes a slot per target (waiting on the slot or the flow
+context), and runs each target in its own goroutine tracked by `ActiveFlow.inflight`.
+Each execution gets `context.WithTimeout(activeFlow.ctx, EngineConfig.DefaultTimeout)`
+with a `registry.NodeRuntime` attached via `registry.WithRuntime`; a message never
+inherits the context of the node that produced it.
+
+`executeNode` calls `ExecuteMulti` for `registry.MultiOutputExecutor` nodes (one
+submitted message per non-nil port, `OutputPort` set) and `Execute` otherwise (single
+output, every outgoing connection). Errors go to `handleNodeError` (counter, `slog`,
+`DebugEvent` with `DebugLevelError`, `EventBus.PublishError`); success to
+`handleNodeComplete` (`EventBus.PublishComplete`).
+
+`submitMessage` never blocks: a stopped flow or a full queue drops the message and
+counts it (`MessagesDropped`, `ActiveFlow.dropped`). `InjectMessage` returns an error
+on a full queue instead.
+
+`startEmittingNodes` runs `Start(ctx, emit)` of every `registry.EmittingNode` in its
+own goroutine tracked by `ActiveFlow.wg`. For nodes that also implement
+`registry.EagerlyReadyNode`, Deploy waits until they call `registry.SignalReady` (or
+`eagerReadyTimeout` = 2 s) so a message injected right after `Deploy` cannot race ahead
+of a Catch/Status/Complete subscription. `NodeRuntime.SubmitToNode` and `linkout` go
+through `submitToFlowNode`, which enqueues a message whose `Path` ends at the target
+node (same flow only).
+
+Undeploy (`stopActiveLocked`): cancel the flow context, wait for the dispatcher and
+`Start` goroutines, wait up to `DefaultTimeout + 1s` for in-flight executions
+(`waitTimeout`, warns if they ignore cancellation), then `Close()` every
+`registry.Closeable`, then remove from `active`. `Undeploy` on a known but not running
+flow is a no-op; on an unknown flow returns `ErrFlowNotFound`.
+
+`EngineConfig.MaxRetries`/`RetryBackoff` and `FlowConfig.RetryPolicy`/`Timeout` exist in
+the structs and on disk but nothing in the engine reads them; there is no retry logic.
+
+## Runtime events (`events.go`)
+
+`Event` is implemented by `FlowStatusEvent` (deployed/undeployed/deploy failure),
+`NodeStatusEvent` (`NodeStatus{Fill, Shape, Text, Timestamp}`), `DebugEvent`
+(`DebugLevelDebug|Warn|Error`, from Debug nodes via `NodeRuntime.Debug` and from node
+errors) and `FlowMetricsEvent` (per-node `NodeMetrics{Messages, Errors}`, published at
+most once per second while counters change). Publishing goes through a bounded queue
+(`eventQueueSize` = 4096) drained by one dispatcher goroutine; a full queue drops and
+counts (`EventsDropped`). Subscribers (`SubscribeEvents`) run on the dispatcher
+goroutine and must not block. The WebSocket hub in `cmd/go-red/websocket` is the main
+subscriber; it re-reads `GetNodeStatuses`/`GetDebugLog`/`GetMetrics` on subscribe
+because the stream may drop.
+
+Debug entries are kept per flow in a ring of `debugLogSize` = 200. Node statuses
+reported through `NodeRuntime.ReportStatus` are turned into `NodeStatus` by
+`fillForStatus` (keyword heuristics for the colour) and remembered until undeploy.
+
+The message log (`GET /api/messages`) is a fixed-size ring, off by default
+(`EngineConfig.MessageLogSize` = 0); with size 0 `AddMessageToLog` returns before taking
+any lock.
+
+## Testing patterns in this package
+
+- `createTestEngine()` (`engine_test.go`) uses the global registry with the real
+  `inject`/`function`/`debug` nodes; `newTestEngine(reg)` (`phase0_test.go`) takes an
+  isolated `registry.NewNodeRegistry()` populated with mock nodes (`passthroughNode`,
+  `captureSinkNode`, `routerNode`; `blockingNode`/`contextProbeNode` in
+  `dispatch_test.go`). Register the same pointer you inspect later.
+- `memoryStateManager` (`engine_test.go`) is the in-memory `StateManager` for
+  lifecycle and `LoadAllFlows` tests.
+- `phaseN_*_test.go` deploy real node chains and assert on a capture node, the debug
+  log or events; `events_test.go` subscribes with `SubscribeEvents` and collects.
+- `dispatch_test.go` checks the slot bound, that undeploy waits for in-flight
+  executions, that a full queue drops and counts, and that redeploy cycles leak no
+  goroutines (`runtime.NumGoroutine`). Keep those green when touching dispatch.
+- Benchmarks: `BenchmarkFunctionChain`, `BenchmarkInjectFunctionDebug`,
+  `BenchmarkSwitchFanout`, `BenchmarkSplitJoin`. Update `docs/PERFORMANCE.md` from
+  `go test -bench . -run ^$ ./internal/engine` when the hot path changes.
+- Run `go test -race ./internal/engine/...` before committing.
+
+## Rules
+
+- No engine-wide lock, channel or log line on the per-message path.
+- Do not add fields to `Flow`/`Message` that the wire needs without going through
+  `internal/dto` (see `internal/AGENTS.md`, wire contract). `Message.Context` and
+  `Message.OutputPort` are `json:"-"` engine-only state.
+- New optional node capabilities are interfaces in `internal/registry` that the engine
+  type-asserts; do not make the engine depend on concrete node packages.
+- Undeploy must always terminate: anything a node can block on must watch the flow
+  context, and cleanup must be best-effort (`closeNodeExecutors` logs, never returns).

@@ -1,6 +1,24 @@
 import '@testing-library/jest-dom';
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
+import '../i18n';
+
+// @xyflow/react measures nodes with ResizeObserver, which jsdom lacks.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  Object.defineProperty(globalThis, 'ResizeObserver', { value: ResizeObserverStub });
+}
+
+// CodeMirror measures text with Range client rects, which jsdom does not implement.
+const emptyRect = () => ({ x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}) });
+if (typeof Range !== 'undefined') {
+  if (!Range.prototype.getClientRects) Range.prototype.getClientRects = () => ({ length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] }) as unknown as DOMRectList;
+  if (!Range.prototype.getBoundingClientRect) Range.prototype.getBoundingClientRect = emptyRect as unknown as () => DOMRect;
+}
 
 // Runs after each test
 afterEach(() => {

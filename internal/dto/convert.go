@@ -30,26 +30,27 @@ func FlowStatusFromEngine(s engine.FlowStatus) FlowStatus {
 // NodeToWire converts an engine Node to its canonical wire representation.
 func NodeToWire(n *engine.Node) Node {
 	return Node{
-		ID:       n.ID,
-		Type:     n.Type,
-		Name:     n.Name,
-		Position: Position{X: n.X, Y: n.Y},
-		Config:   n.Config,
-		Status:   NodeStatus{State: "idle"},
-		Disabled: n.Disabled,
+		ID:          n.ID,
+		Type:        n.Type,
+		Name:        n.Name,
+		Description: n.Description,
+		Position:    Position{X: n.X, Y: n.Y},
+		Config:      n.Config,
+		Disabled:    n.Disabled,
 	}
 }
 
 // NodeFromWire converts a wire Node back to an engine Node, given its map key ID.
 func NodeFromWire(id string, n Node) *engine.Node {
 	return &engine.Node{
-		ID:       id,
-		Type:     n.Type,
-		Name:     n.Name,
-		Config:   n.Config,
-		X:        n.Position.X,
-		Y:        n.Position.Y,
-		Disabled: n.Disabled,
+		ID:          id,
+		Type:        n.Type,
+		Name:        n.Name,
+		Description: n.Description,
+		Config:      n.Config,
+		X:           n.Position.X,
+		Y:           n.Position.Y,
+		Disabled:    n.Disabled,
 	}
 }
 
@@ -94,6 +95,7 @@ func ToWire(f *engine.Flow) Flow {
 		ID:          f.ID,
 		Name:        f.Name,
 		Description: f.Description,
+		Order:       f.Order,
 		Nodes:       nodes,
 		Connections: connections,
 		Status:      FlowStatusFromEngine(f.Status),
@@ -108,10 +110,19 @@ func ToWire(f *engine.Flow) Flow {
 			},
 			Environment: f.Config.Environment,
 		},
-		CreatedAt: f.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: f.UpdatedAt.Format(time.RFC3339),
-		Version:   f.Version,
+		CreatedAt:  f.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:  f.UpdatedAt.Format(time.RFC3339),
+		DeployedAt: formatOptionalTime(f.DeployedAt),
+		Version:    f.Version,
 	}
+}
+
+// formatOptionalTime renders a zero time as "" (omitted on the wire).
+func formatOptionalTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }
 
 // ToWireSummary converts an engine Flow to its canonical wire summary
@@ -123,23 +134,29 @@ func ToWireSummary(f *engine.Flow) FlowSummary {
 		ID:          f.ID,
 		Name:        f.Name,
 		Description: f.Description,
+		Order:       f.Order,
 		Status:      FlowStatusFromEngine(f.Status),
 		NodeCount:   len(f.Nodes),
 		CreatedAt:   f.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   f.UpdatedAt.Format(time.RFC3339),
+		DeployedAt:  formatOptionalTime(f.DeployedAt),
 	}
 }
 
 // ApplyTo applies the request's fields onto an existing engine Flow.
-// Only fields present in the request are applied: nodes are merged
-// (existing nodes not mentioned in the request are left untouched;
-// mentioned nodes are created or updated), connections fully replace the
-// flow's connection list when provided, and config fields are merged into
-// the existing FlowConfig. This mirrors the merge semantics main.go's
-// handleUpdateFlow implemented by hand; it replaces that hand-parsing plus
-// websocket/integration.go's handleFlowUpdate (which previously, and
-// inconsistently, cleared all nodes on every update).
+// Only fields present in the request are applied. Nodes and connections are
+// documents: when present they replace the flow's node map / connection
+// list completely (a node missing from the request is deleted), which is
+// what a PUT of the editor's working copy means. Config fields are merged
+// into the existing FlowConfig.
 func (req *FlowUpdateRequest) ApplyTo(f *engine.Flow) {
+	if req.Order != nil {
+		f.Order = *req.Order
+	}
+	if req.Name == nil && req.Description == nil && req.Nodes == nil && req.Connections == nil && req.Config == nil {
+		// Moving a tab is not an edit of the flow.
+		return
+	}
 	if req.Name != nil && *req.Name != "" {
 		f.Name = *req.Name
 	}
@@ -147,17 +164,11 @@ func (req *FlowUpdateRequest) ApplyTo(f *engine.Flow) {
 		f.Description = *req.Description
 	}
 	if req.Nodes != nil {
+		nodes := make(map[string]*engine.Node, len(req.Nodes))
 		for id, n := range req.Nodes {
-			if existing, ok := f.Nodes[id]; ok {
-				existing.Type = n.Type
-				existing.Config = n.Config
-				existing.X = n.Position.X
-				existing.Y = n.Position.Y
-				existing.Disabled = n.Disabled
-			} else {
-				f.Nodes[id] = NodeFromWire(id, n)
-			}
+			nodes[id] = NodeFromWire(id, n)
 		}
+		f.Nodes = nodes
 	}
 	if req.Connections != nil {
 		conns := make([]engine.NodeConnection, len(req.Connections))

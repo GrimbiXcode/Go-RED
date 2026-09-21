@@ -12,116 +12,134 @@
 package tcpout
 
 import (
-    "encoding/json"
-    "fmt"
-    "net"
-    "strconv"
-    "time"
+	"context"
+	"fmt"
+	"net"
+	"strconv"
+	"time"
 
-    "github.com/GrimbiXcode/Go-RED/internal/registry"
+	"github.com/GrimbiXcode/Go-RED/internal/nodes/base"
+	"github.com/GrimbiXcode/Go-RED/internal/registry"
 )
 
 const dialTimeout = 10 * time.Second
 
 // Node holds a TCP-out node's configuration.
 type Node struct {
-    Host string
-    Port int
+	Host string
+	Port int
 }
 
 // Execute dials Host:Port, writes input's payload, and closes the
-// connection.
+// connection. The dial and the write are both bounded by the per-message
+// context: its deadline becomes the connection's write deadline, and its
+// cancellation closes the connection so a stalled write returns.
 func (n *Node) Execute(ctx interface{}, input map[string]interface{}) (map[string]interface{}, error) {
-    data, err := toBytes(input["payload"])
-    if err != nil {
-        return nil, fmt.Errorf("tcp out: %w", err)
-    }
+	c := base.Context(ctx)
 
-    addr := net.JoinHostPort(n.Host, strconv.Itoa(n.Port))
-    conn, err := net.DialTimeout("tcp", addr, dialTimeout)
-    if err != nil {
-        return nil, fmt.Errorf("tcp out: %w", err)
-    }
-    defer conn.Close()
+	data, err := base.ToBytes(input["payload"])
+	if err != nil {
+		return nil, fmt.Errorf("tcp out: %w", err)
+	}
 
-    if _, err := conn.Write(data); err != nil {
-        return nil, fmt.Errorf("tcp out: %w", err)
-    }
-    return input, nil
+	addr := net.JoinHostPort(n.Host, strconv.Itoa(n.Port))
+	dialer := &net.Dialer{Timeout: dialTimeout}
+	conn, err := dialer.DialContext(c, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("tcp out: %w", wrapCtxErr(c, err))
+	}
+	defer conn.Close()
+
+	if d, ok := c.Deadline(); ok {
+		_ = conn.SetDeadline(d)
+	}
+	stop := context.AfterFunc(c, func() { conn.Close() })
+	defer stop()
+
+	if _, err := conn.Write(data); err != nil {
+		return nil, fmt.Errorf("tcp out: %w", wrapCtxErr(c, err))
+	}
+	return input, nil
 }
 
-func toBytes(payload interface{}) ([]byte, error) {
-    switch v := payload.(type) {
-    case []byte:
-        return v, nil
-    case string:
-        return []byte(v), nil
-    case nil:
-        return []byte{}, nil
-    case bool, float64:
-        return []byte(fmt.Sprint(v)), nil
-    default:
-        encoded, err := json.Marshal(v)
-        if err != nil {
-            return nil, fmt.Errorf("payload cannot be encoded: %w", err)
-        }
-        return encoded, nil
-    }
+// wrapCtxErr attaches the context's own error (context.Canceled or
+// context.DeadlineExceeded) to a network error that was caused by that
+// context ending, so callers can errors.Is against the context error.
+func wrapCtxErr(ctx context.Context, err error) error {
+	if cerr := ctx.Err(); cerr != nil {
+		return fmt.Errorf("%w: %w", cerr, err)
+	}
+	return err
 }
 
 func (n *Node) Validate() error {
-    if n.Host == "" {
-        return fmt.Errorf("tcp out: host is required")
-    }
-    if n.Port <= 0 || n.Port > 65535 {
-        return fmt.Errorf("tcp out: port must be between 1 and 65535")
-    }
-    return nil
+	if n.Host == "" {
+		return fmt.Errorf("tcp out: host is required")
+	}
+	if n.Port <= 0 || n.Port > 65535 {
+		return fmt.Errorf("tcp out: port must be between 1 and 65535")
+	}
+	return nil
 }
 
 func (n *Node) GetConfig() map[string]interface{} {
-    return map[string]interface{}{"host": n.Host, "port": float64(n.Port)}
+	return map[string]interface{}{"host": n.Host, "port": float64(n.Port)}
 }
 
 func (n *Node) SetConfig(config map[string]interface{}) error {
-    if v, ok := config["host"].(string); ok {
-        n.Host = v
-    }
-    if v, ok := config["port"].(float64); ok {
-        n.Port = int(v)
-    }
-    return n.Validate()
+	if v, ok := config["host"].(string); ok {
+		n.Host = v
+	}
+	if v, ok := config["port"].(float64); ok {
+		n.Port = int(v)
+	}
+	return n.Validate()
 }
 
 func init() {
-    reg := registry.GetGlobalRegistry()
-    err := reg.RegisterFactory("tcp out", func() registry.NodeExecutor {
-        return &Node{}
-    }, registry.NodeMetadata{
-        ID:          "tcp out",
-        Type:        "tcp out",
-        Name:        "TCP out",
-        Description: "Connects out to host:port and writes msg.payload (a new connection per message)",
-        Category:    "network",
-        Inputs: []registry.Port{
-            {ID: "input", Name: "Input", Description: "Message to send", Required: true},
-        },
-        Outputs: []registry.Port{
-            {ID: "output", Name: "Output", Description: "Message after a successful send", Required: true},
-        },
-        ConfigSchema: registry.Schema{
-            Properties: map[string]registry.Property{
-                "host": {Type: "string", Description: "Remote host", Default: ""},
-                "port": {Type: "number", Description: "Remote port", Default: float64(0), Min: floatPtr(1), Max: floatPtr(65535)},
-            },
-            Required: []string{"host", "port"},
-        },
-        Icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00ADD8"><path d="M4 4h16v16H4zM8 9l3 3-3 3M13 15h4"/></svg>`,
-        Tags: []string{"network", "tcp", "client"},
-    })
-    if err != nil {
-        panic(err)
-    }
+	reg := registry.GetGlobalRegistry()
+	err := reg.RegisterFactory("tcp out", func() registry.NodeExecutor {
+		return &Node{}
+	}, registry.NodeMetadata{
+		ID:          "tcp out",
+		Type:        "tcp out",
+		Name:        "TCP out",
+		Description: "Connects out to host:port and writes msg.payload (a new connection per message)",
+		Category:    "network",
+		Inputs: []registry.Port{
+			{ID: "input", Name: "Input", Description: "Message to send", Required: true},
+		},
+		Outputs: []registry.Port{
+			{ID: "output", Name: "Output", Description: "Message after a successful send", Required: true},
+		},
+		ConfigSchema: registry.Schema{
+			Properties: map[string]registry.Property{
+				"host": {
+					Type:        "string",
+					Description: "Remote host",
+					Default:     "",
+					Label:       "Host",
+					Order:       1,
+					Widget:      "text",
+				},
+				"port": {
+					Type:        "number",
+					Description: "Remote port",
+					Default:     float64(0),
+					Min:         base.FloatPtr(1),
+					Max:         base.FloatPtr(65535),
+					Label:       "Port",
+					Order:       2,
+					Widget:      "number",
+				},
+			},
+			Required: []string{"host", "port"},
+		},
+		Help: "**Sends `msg.payload` over a TCP connection** to the given host and port.",
+		Icon: "cable",
+		Tags: []string{"network", "tcp", "client"},
+	})
+	if err != nil {
+		panic(err)
+	}
 }
-
-func floatPtr(f float64) *float64 { return &f }

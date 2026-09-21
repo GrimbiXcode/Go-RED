@@ -1,14 +1,20 @@
 package engine
 
 import (
-    "context"
-    "errors"
-    "log"
-    "sync"
-    "time"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
-    "github.com/GrimbiXcode/Go-RED/internal/registry"
-    "github.com/google/uuid"
+	"github.com/GrimbiXcode/Go-RED/internal/registry"
+	"github.com/google/uuid"
 )
 
 // eagerReadyTimeout bounds how long Deploy waits for a single
@@ -19,282 +25,348 @@ import (
 // node that shouldn't have implemented the marker) can't hang Deploy.
 const eagerReadyTimeout = 2 * time.Second
 
+// Sentinel errors returned by the engine's flow lifecycle methods. Callers
+// (REST/WebSocket handlers) use errors.Is on these to pick a status code
+// and a public message, instead of parsing error strings.
+var (
+	// ErrFlowNotFound means no flow with that ID is known to the engine.
+	ErrFlowNotFound = errors.New("flow not found")
+	// ErrFlowExists means a flow with that ID already exists.
+	ErrFlowExists = errors.New("flow already exists")
+	// ErrFlowNotDeployed means the flow is known but not currently running.
+	ErrFlowNotDeployed = errors.New("flow is not deployed")
+	// ErrInvalidFlowID means the ID does not match the allowed pattern.
+	ErrInvalidFlowID = errors.New("invalid flow ID")
+	// ErrInvalidFlow means the flow definition failed validation.
+	ErrInvalidFlow = errors.New("invalid flow")
+	// ErrNodeInit means a node could not be initialized from its config.
+	ErrNodeInit = errors.New("failed to initialize node")
+	// ErrPersist means the state manager could not save or delete a flow.
+	// Unlike the other errors it may wrap file system details, so handlers
+	// must not echo it to clients verbatim.
+	ErrPersist = errors.New("failed to persist flow")
+)
+
+// flowIDPattern is the only shape a flow ID may have. IDs end up in file
+// names (internal/state), URLs and log lines, so anything outside this
+// alphabet (path separators, dots, whitespace, control characters) is
+// rejected before it reaches any of those.
+var flowIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+
+// ValidateFlowID reports whether id is a well-formed flow ID.
+func ValidateFlowID(id string) error {
+	if !flowIDPattern.MatchString(id) {
+		return fmt.Errorf("%w: %q", ErrInvalidFlowID, id)
+	}
+	return nil
+}
+
 // EngineConfig contains configuration options for the FlowEngine.
 type EngineConfig struct {
-    // WorkerPoolSize is the number of worker goroutines to spawn.
-    WorkerPoolSize int
-    
-    // MessageBufferSize is the size of the message channel buffer.
-    MessageBufferSize int
-    
-    // DefaultTimeout is the default timeout for node execution.
-    DefaultTimeout time.Duration
-    
-    // MaxRetries is the default maximum number of retries for failed messages.
-    MaxRetries int
-    
-    // RetryBackoff is the default backoff duration between retries.
-    RetryBackoff time.Duration
+	// MessageBufferSize is the size of every deployed flow's message queue.
+	// A message that finds the queue full is dropped and counted.
+	MessageBufferSize int
+
+	// MaxInflightPerFlow bounds how many node executions of one flow may run
+	// at the same time; a flow's own FlowConfig.MaxConcurrency, when set,
+	// takes precedence. The dispatcher waits for a free slot, so the queue
+	// (MessageBufferSize) is the only buffer between producers and this cap.
+	MaxInflightPerFlow int
+
+	// MessageLogSize is how many routed messages the engine keeps for
+	// GET /api/messages. 0 disables the log, which also takes its lock off
+	// the hot path.
+	MessageLogSize int
+
+	// DefaultTimeout is the default timeout for node execution.
+	DefaultTimeout time.Duration
+
+	// MaxRetries is the default maximum number of retries for failed messages.
+	MaxRetries int
+
+	// RetryBackoff is the default backoff duration between retries.
+	RetryBackoff time.Duration
 }
 
 // DefaultEngineConfig returns a default EngineConfig.
 func DefaultEngineConfig() EngineConfig {
-    return EngineConfig{
-        WorkerPoolSize:    100,
-        MessageBufferSize: 1000,
-        DefaultTimeout:    30 * time.Second,
-        MaxRetries:        3,
-        RetryBackoff:      1 * time.Second,
-    }
+	return EngineConfig{
+		MessageBufferSize:  1000,
+		MaxInflightPerFlow: 1024,
+		MessageLogSize:     0,
+		DefaultTimeout:     30 * time.Second,
+		MaxRetries:         3,
+		RetryBackoff:       1 * time.Second,
+	}
 }
 
 // StateManager interface for persisting flows.
 // This allows for different storage backends (file system, database, etc.)
 type StateManager interface {
-    SaveFlow(flow *Flow) error
-    LoadFlow(flowID string) (*Flow, error)
-    LoadAllFlows() ([]*Flow, error)
-    DeleteFlow(flowID string) error
+	SaveFlow(flow *Flow) error
+	LoadFlow(flowID string) (*Flow, error)
+	LoadAllFlows() ([]*Flow, error)
+	DeleteFlow(flowID string) error
 }
 
 // FlowEngine is the core component that orchestrates flow execution.
-// It manages active flows, processes messages, and coordinates node execution.
+//
+// It keeps two separate views of every flow:
+//
+//   - flows holds the editable definition of every flow the engine knows
+//     about, deployed or not. This is what the editor reads and mutates
+//     (always through engine methods, under mu) and what gets persisted.
+//   - active holds the runtime of every currently deployed flow. Each
+//     ActiveFlow works on a snapshot taken at deploy time, so editing a
+//     definition never affects the running flow until it is redeployed.
 type FlowEngine struct {
-    // flows contains all active flows.
-    flows map[string]*ActiveFlow
-    
-    // registry contains all available node types.
-    registry *registry.NodeRegistry
-    
-    // msgChan is the channel for incoming messages.
-    msgChan chan Message
-    
-    // wg is used to wait for all goroutines to complete.
-    wg sync.WaitGroup
-    
-    // ctx and cancel are used for graceful shutdown.
-    ctx    context.Context
-    cancel context.CancelFunc
+	// flows contains every known flow definition, keyed by flow ID.
+	flows map[string]*Flow
 
-    // stopped prevents Stop from being called multiple times.
-    stopped bool
-    stopMu  sync.Mutex
+	// active contains the runtime state of every deployed flow.
+	active map[string]*ActiveFlow
 
-    // config contains the engine configuration.
-    config EngineConfig
-    
-    // mu protects access to flows map.
-    mu sync.RWMutex
-    
-    // stateManager is used for persisting flows.
-    stateManager StateManager
-    
-    // messageIDCounter is used to generate unique message IDs.
-    messageIDCounter uint64
-    // messageIDMu protects messageIDCounter.
-    messageIDMu sync.Mutex
+	// registry contains all available node types.
+	registry *registry.NodeRegistry
 
-    // messageLog stores recent messages for debugging and monitoring.
-    // This is thread-safe and has a maximum size to prevent memory issues.
-    messageLog    []Message
-    messageLogMu  sync.RWMutex
-    maxMessageLog int
+	// wg tracks the engine-wide goroutines (event dispatcher, metrics loop).
+	wg sync.WaitGroup
 
-    // globalStore is the "global" context (flow.get/set's global-scoped
-    // counterpart), shared by every flow deployed on this engine.
-    globalStore *registry.ContextStore
+	// droppedMessages counts messages dropped because a flow queue was full.
+	droppedMessages atomic.Uint64
+
+	// ctx and cancel are used for graceful shutdown.
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	// stopped prevents Stop from being called multiple times.
+	stopped bool
+	stopMu  sync.Mutex
+
+	// config contains the engine configuration.
+	config EngineConfig
+
+	// mu protects flows and active.
+	mu sync.RWMutex
+
+	// stateManager is used for persisting flows.
+	stateManager StateManager
+
+	// messageIDCounter is used to generate unique message IDs.
+	messageIDCounter atomic.Uint64
+
+	// messageLog is a ring buffer of recently routed messages (GET
+	// /api/messages). messageLogSize == 0 disables it entirely; it is atomic
+	// so the hot path can check it without the lock.
+	messageLog     []Message
+	messageLogPos  int
+	messageLogLen  int
+	messageLogMu   sync.RWMutex
+	messageLogSize atomic.Int64
+
+	// globalStore is the "global" context (flow.get/set's global-scoped
+	// counterpart), shared by every flow deployed on this engine.
+	globalStore *registry.ContextStore
+
+	// events fans runtime events out to subscribers (see events.go).
+	events *eventHub
+
+	// debugLogs keeps the recent debug sidebar entries per flow.
+	debugMu   sync.Mutex
+	debugLogs map[string][]DebugEvent
+
+	// nodeStatus keeps the latest reported status per flow and node.
+	statusMu   sync.RWMutex
+	nodeStatus map[string]map[string]NodeStatus
 }
 
-// ActiveFlow represents an active (deployed) flow.
+// ActiveFlow is the runtime of a deployed flow.
 type ActiveFlow struct {
-    // flow is the flow definition.
-    Flow *Flow
-    
-    // status is the current status of the flow.
-    Status FlowStatus
-    
-    // msgChan is the channel for messages specific to this flow.
-    msgChan chan Message
-    
-    // wg is used to wait for all flow goroutines to complete.
-    wg sync.WaitGroup
-    
-    // ctx and cancel are used for flow-specific cancellation.
-    ctx    context.Context
-    cancel context.CancelFunc
-    
-    // nodeExecutors contains initialized node executors for this flow.
-    nodeExecutors map[string]registry.NodeExecutor
+	// Flow is the deploy-time snapshot of the flow definition this runtime
+	// executes. It is never mutated after Deploy.
+	Flow *Flow
 
-    // ContextStore is this flow's private key-value context (flow.get/set).
-    ContextStore *registry.ContextStore
+	// Status is the runtime status of the flow.
+	Status FlowStatus
 
-    // EventBus carries error/status/complete events for this flow's nodes,
-    // consumed by Catch/Status/Complete-style nodes
-    // (docs/NODE_PALETTE_PLAN.md, Phase 1).
-    EventBus *registry.EventBus
+	// msgChan is the flow's message queue: everything a node emits or the
+	// editor injects goes through it to the flow's dispatcher.
+	msgChan chan Message
+
+	// slots bounds the number of concurrently running node executions
+	// (see EngineConfig.MaxInflightPerFlow).
+	slots chan struct{}
+
+	// wg tracks the dispatcher and the EmittingNode.Start goroutines of this
+	// flow; inflight tracks running node executions.
+	wg       sync.WaitGroup
+	inflight sync.WaitGroup
+
+	// dropped counts messages that found msgChan full.
+	dropped atomic.Uint64
+
+	// ctx and cancel are used for flow-specific cancellation.
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	// nodeExecutors contains initialized node executors for this flow.
+	nodeExecutors map[string]registry.NodeExecutor
+
+	// ContextStore is this flow's private key-value context (flow.get/set).
+	ContextStore *registry.ContextStore
+
+	// EventBus carries error/status/complete events for this flow's nodes,
+	// consumed by Catch/Status/Complete-style nodes
+	// (docs/NODE_PALETTE_PLAN.md, Phase 1).
+	EventBus *registry.EventBus
+
+	// counters holds per-node message/error counters (see events.go).
+	counters map[string]*nodeCounter
+	// lastMetrics is the last published counter snapshot; only the
+	// metrics loop touches it.
+	lastMetrics map[string]NodeMetrics
 }
 
 // NewFlowEngine creates a new FlowEngine with the given configuration and registry.
 func NewFlowEngine(config EngineConfig, nodeRegistry *registry.NodeRegistry) *FlowEngine {
-    ctx, cancel := context.WithCancel(context.Background())
+	if config.MaxInflightPerFlow <= 0 {
+		config.MaxInflightPerFlow = DefaultEngineConfig().MaxInflightPerFlow
+	}
+	if config.MessageLogSize < 0 {
+		config.MessageLogSize = 0
+	}
+	if config.MessageBufferSize <= 0 {
+		config.MessageBufferSize = DefaultEngineConfig().MessageBufferSize
+	}
+	if config.DefaultTimeout <= 0 {
+		config.DefaultTimeout = DefaultEngineConfig().DefaultTimeout
+	}
 
-    return &FlowEngine{
-        flows:       make(map[string]*ActiveFlow),
-        registry:    nodeRegistry,
-        msgChan:     make(chan Message, config.MessageBufferSize),
-        ctx:         ctx,
-        cancel:      cancel,
-        config:      config,
-        messageIDCounter: 0,
-        messageLog:   make([]Message, 0),
-        maxMessageLog: 1000, // Store last 1000 messages
-        globalStore:  registry.NewContextStore(),
-    }
+	ctx, cancel := context.WithCancel(context.Background())
+
+	e := &FlowEngine{
+		flows:       make(map[string]*Flow),
+		active:      make(map[string]*ActiveFlow),
+		registry:    nodeRegistry,
+		ctx:         ctx,
+		cancel:      cancel,
+		config:      config,
+		messageLog:  make([]Message, config.MessageLogSize),
+		globalStore: registry.NewContextStore(),
+		events:      newEventHub(),
+		debugLogs:   make(map[string][]DebugEvent),
+		nodeStatus:  make(map[string]map[string]NodeStatus),
+	}
+	e.messageLogSize.Store(int64(config.MessageLogSize))
+	return e
 }
 
 // GlobalContext returns the engine-wide context store shared by every flow
 // (the global.get/set counterpart to each flow's own ContextStore).
 func (e *FlowEngine) GlobalContext() *registry.ContextStore {
-    return e.globalStore
+	return e.globalStore
 }
 
 // SetStateManager sets the state manager for the engine.
 func (e *FlowEngine) SetStateManager(sm StateManager) {
-    e.stateManager = sm
+	e.stateManager = sm
 }
 
 // GetStateManager returns the state manager for the engine.
 func (e *FlowEngine) GetStateManager() StateManager {
-    return e.stateManager
+	return e.stateManager
 }
 
-// Start starts the FlowEngine.
-// This spawns the worker pool and starts processing messages.
+// Start starts the runtime event dispatcher and the metrics loop. Message
+// routing needs no engine-wide goroutines: every deployed flow runs its own
+// dispatcher (see processFlowMessages).
 func (e *FlowEngine) Start() error {
-    log.Println("Starting FlowEngine...")
-    
-    // Start worker pool
-    for i := 0; i < e.config.WorkerPoolSize; i++ {
-        e.wg.Add(1)
-        go e.worker()
-    }
-    
-    // Start message processor
-    e.wg.Add(1)
-    go e.processMessages()
-    
-    log.Println("FlowEngine started")
-    return nil
+	e.wg.Add(2)
+	go func() {
+		defer e.wg.Done()
+		e.events.dispatch(e.ctx)
+	}()
+	go e.metricsLoop()
+	slog.Info("flow engine started", "maxInflightPerFlow", e.config.MaxInflightPerFlow, "queue", e.config.MessageBufferSize)
+	return nil
 }
 
-// Stop stops the FlowEngine and waits for all goroutines to complete.
+// Stop stops every deployed flow, then the engine goroutines, and waits for
+// all of them to finish. Flow definitions keep their persisted status
+// so that flows which were running are deployed again on the next start.
 func (e *FlowEngine) Stop() error {
-    e.stopMu.Lock()
-    defer e.stopMu.Unlock()
-    
-    if e.stopped {
-        return nil
-    }
-    e.stopped = true
-    
-    log.Println("Stopping FlowEngine...")
-    
-    // Cancel the main context
-    e.cancel()
-    
-    // Close the message channel
-    close(e.msgChan)
-    
-    // Wait for all goroutines to complete
-    e.wg.Wait()
-    
-    log.Println("FlowEngine stopped")
-    return nil
+	e.stopMu.Lock()
+	defer e.stopMu.Unlock()
+
+	if e.stopped {
+		return nil
+	}
+	e.stopped = true
+
+	e.cancel()
+
+	e.mu.Lock()
+	for _, af := range e.active {
+		e.stopActiveLocked(af)
+	}
+	e.mu.Unlock()
+
+	e.wg.Wait()
+
+	slog.Info("flow engine stopped")
+	return nil
 }
 
-// worker processes messages from the message channel.
-func (e *FlowEngine) worker() {
-    defer e.wg.Done()
-    
-    for msg := range e.msgChan {
-        e.wg.Add(1)
-        go func(m Message) {
-            defer e.wg.Done()
-            e.processMessage(m)
-        }(msg)
-    }
-}
+// processMessage routes one message of activeFlow to the nodes connected to
+// the last node in its path and runs each of them in its own goroutine,
+// bounded by the flow's execution slots: when every slot is taken the
+// dispatcher waits here (and the flow queue fills up) instead of spawning
+// without limit. It returns false once the flow is stopping.
+func (e *FlowEngine) processMessage(activeFlow *ActiveFlow, msg Message) bool {
+	e.AddMessageToLog(msg)
 
-// processMessages processes messages from the main message channel.
-func (e *FlowEngine) processMessages() {
-    defer e.wg.Done()
-    
-    for {
-        select {
-        case msg := <-e.msgChan:
-            e.wg.Add(1)
-            go func(m Message) {
-                defer e.wg.Done()
-                e.processMessage(m)
-            }(msg)
-        case <-e.ctx.Done():
-            return
-        }
-    }
-}
+	targetNodes := e.findTargetNodes(activeFlow.Flow, msg)
 
-// processMessage processes a single message.
-func (e *FlowEngine) processMessage(msg Message) {
-    // Add message to log for debugging
-    e.AddMessageToLog(msg)
+	for _, nodeID := range targetNodes {
+		executor, exists := activeFlow.nodeExecutors[nodeID]
+		if !exists {
+			slog.Warn("message routed to unknown node", "flow", msg.FlowID, "node", nodeID)
+			continue
+		}
 
-    log.Printf("[DEBUG] Processing message %s for flow %s, path: %v", msg.ID, msg.FlowID, msg.Path)
+		select {
+		case activeFlow.slots <- struct{}{}:
+		case <-activeFlow.ctx.Done():
+			return false
+		}
 
-    e.mu.RLock()
-    activeFlow, exists := e.flows[msg.FlowID]
-    e.mu.RUnlock()
-    
-    if !exists {
-        log.Printf("Flow %s not found, dropping message", msg.FlowID)
-        return
-    }
-    
-    // Find the target nodes for this message
-    targetNodes := e.findTargetNodes(activeFlow.Flow, msg)
+		var nodeType string
+		if node, ok := activeFlow.Flow.Nodes[nodeID]; ok {
+			nodeType = node.Type
+		}
 
-    // Process each target node
-    for _, nodeID := range targetNodes {
-        // Get the node executor
-        executor, exists := activeFlow.nodeExecutors[nodeID]
-        if !exists {
-            log.Printf("Node %s not found in flow %s", nodeID, msg.FlowID)
-            continue
-        }
+		// Every execution gets its own timeout under the flow's context (so
+		// undeploy cancels it) and the NodeRuntime (flow/global context
+		// store, error/status reporting) the node retrieves via
+		// registry.RuntimeFromContext. The timeout is per node: a message
+		// never inherits the context of the node that produced it.
+		ctx, cancel := context.WithTimeout(activeFlow.ctx, e.config.DefaultTimeout)
+		ctx = registry.WithRuntime(ctx, e.newNodeRuntime(activeFlow, nodeID, nodeType))
 
-        var nodeType string
-        if node, ok := activeFlow.Flow.Nodes[nodeID]; ok {
-            nodeType = node.Type
-        }
+		activeFlow.inflight.Add(1)
+		go func(nodeID, nodeType string, exec registry.NodeExecutor, nodeCtx context.Context) {
+			defer activeFlow.inflight.Done()
+			defer func() { <-activeFlow.slots }()
+			defer cancel()
 
-        // Create a new message context with timeout, and embed the
-        // NodeRuntime (flow/global context store, error/status reporting)
-        // the node can retrieve via registry.RuntimeFromContext.
-        ctx, cancel := context.WithTimeout(msg.Context, e.config.DefaultTimeout)
-        ctx = registry.WithRuntime(ctx, e.newNodeRuntime(activeFlow, nodeID, nodeType))
+			newMsg := msg.Clone()
+			newMsg.AddToPath(nodeID)
+			newMsg.Context = nodeCtx
 
-        // Execute the node in a goroutine
-        go func(nodeID, nodeType string, exec registry.NodeExecutor, nodeCtx context.Context) {
-            defer cancel()
-
-            // Add node to path
-            newMsg := msg.Clone()
-            newMsg.AddToPath(nodeID)
-            newMsg.Context = nodeCtx
-
-            e.executeNode(activeFlow, nodeID, nodeType, exec, nodeCtx, newMsg)
-        }(nodeID, nodeType, executor, ctx)
-    }
+			e.executeNode(activeFlow, nodeID, nodeType, exec, nodeCtx, newMsg)
+		}(nodeID, nodeType, executor, ctx)
+	}
+	return true
 }
 
 // executeNode runs a single node against msg (whose Path already includes
@@ -304,112 +376,124 @@ func (e *FlowEngine) processMessage(msg Message) {
 // original behavior of a single implicit output followed by every outgoing
 // connection regardless of port.
 func (e *FlowEngine) executeNode(activeFlow *ActiveFlow, nodeID, nodeType string, exec registry.NodeExecutor, nodeCtx context.Context, msg Message) {
-    if multi, ok := exec.(registry.MultiOutputExecutor); ok {
-        outputs, err := multi.ExecuteMulti(nodeCtx, msg.Payload)
-        if err != nil {
-            e.handleNodeError(activeFlow, nodeID, nodeType, msg, err)
-            return
-        }
+	activeFlow.countMessage(nodeID)
 
-        sent := 0
-        for port, payload := range outputs {
-            if payload == nil {
-                continue
-            }
-            portMsg := msg.Clone()
-            portMsg.Payload = payload
-            portMsg.OutputPort = port
-            e.submitMessage(portMsg)
-            e.handleNodeComplete(activeFlow, nodeID, nodeType, payload)
-            sent++
-        }
-        if sent == 0 {
-            // A MultiOutputExecutor that sent on no port (e.g. Link Out, or
-            // a future RBE suppressing a duplicate) still finished
-            // successfully - Complete-style nodes care about that too.
-            e.handleNodeComplete(activeFlow, nodeID, nodeType, msg.Payload)
-        }
-        return
-    }
+	if multi, ok := exec.(registry.MultiOutputExecutor); ok {
+		outputs, err := multi.ExecuteMulti(nodeCtx, msg.Payload)
+		if err != nil {
+			e.handleNodeError(activeFlow, nodeID, nodeType, msg, err)
+			return
+		}
 
-    output, err := exec.Execute(nodeCtx, msg.Payload)
-    if err != nil {
-        e.handleNodeError(activeFlow, nodeID, nodeType, msg, err)
-        return
-    }
+		sent := 0
+		for port, payload := range outputs {
+			if payload == nil {
+				continue
+			}
+			portMsg := msg.Clone()
+			portMsg.Payload = payload
+			portMsg.OutputPort = port
+			portMsg.Context = activeFlow.ctx
+			e.submitMessage(activeFlow, portMsg)
+			e.handleNodeComplete(activeFlow, nodeID, nodeType, payload)
+			sent++
+		}
+		if sent == 0 {
+			// A MultiOutputExecutor that sent on no port (e.g. Link Out, or
+			// a future RBE suppressing a duplicate) still finished
+			// successfully - Complete-style nodes care about that too.
+			e.handleNodeComplete(activeFlow, nodeID, nodeType, msg.Payload)
+		}
+		return
+	}
 
-    msg.Payload = output
-    msg.OutputPort = ""
-    e.submitMessage(msg)
-    e.handleNodeComplete(activeFlow, nodeID, nodeType, output)
+	output, err := exec.Execute(nodeCtx, msg.Payload)
+	if err != nil {
+		e.handleNodeError(activeFlow, nodeID, nodeType, msg, err)
+		return
+	}
+
+	msg.Payload = output
+	msg.OutputPort = ""
+	msg.Context = activeFlow.ctx
+	e.submitMessage(activeFlow, msg)
+	e.handleNodeComplete(activeFlow, nodeID, nodeType, output)
 }
 
 // handleNodeComplete publishes a NodeCompleteEvent if the flow has an
 // EventBus, so Complete-style nodes (docs/NODE_PALETTE_PLAN.md, Phase 1)
 // can react to a node finishing successfully.
 func (e *FlowEngine) handleNodeComplete(activeFlow *ActiveFlow, nodeID, nodeType string, payload map[string]interface{}) {
-    if activeFlow.EventBus == nil {
-        return
-    }
-    activeFlow.EventBus.PublishComplete(registry.NodeCompleteEvent{
-        FlowID:    activeFlow.Flow.ID,
-        NodeID:    nodeID,
-        NodeType:  nodeType,
-        Payload:   payload,
-        Timestamp: time.Now().UTC(),
-    })
+	if activeFlow.EventBus == nil {
+		return
+	}
+	activeFlow.EventBus.PublishComplete(registry.NodeCompleteEvent{
+		FlowID:    activeFlow.Flow.ID,
+		NodeID:    nodeID,
+		NodeType:  nodeType,
+		Payload:   payload,
+		Timestamp: time.Now().UTC(),
+	})
 }
 
 // handleNodeError logs a node execution failure and, if the flow has an
 // EventBus, publishes it so Catch-style nodes (docs/NODE_PALETTE_PLAN.md,
 // Phase 1) can react to it.
 func (e *FlowEngine) handleNodeError(activeFlow *ActiveFlow, nodeID, nodeType string, msg Message, err error) {
-    log.Printf("Node %s in flow %s failed: %v", nodeID, msg.FlowID, err)
+	slog.Warn("node execution failed", "flow", msg.FlowID, "node", nodeID, "type", nodeType, "err", err)
 
-    if activeFlow.EventBus == nil {
-        return
-    }
-    activeFlow.EventBus.PublishError(registry.NodeErrorEvent{
-        FlowID:    msg.FlowID,
-        NodeID:    nodeID,
-        NodeType:  nodeType,
-        Err:       err,
-        Payload:   msg.Payload,
-        Timestamp: time.Now().UTC(),
-    })
+	activeFlow.countError(nodeID)
+	e.recordDebug(DebugEvent{
+		FlowID:   msg.FlowID,
+		NodeID:   nodeID,
+		NodeName: activeFlow.nodeName(nodeID),
+		NodeType: nodeType,
+		Level:    DebugLevelError,
+		Payload:  err.Error(),
+	})
+
+	if activeFlow.EventBus == nil {
+		return
+	}
+	activeFlow.EventBus.PublishError(registry.NodeErrorEvent{
+		FlowID:    msg.FlowID,
+		NodeID:    nodeID,
+		NodeType:  nodeType,
+		Err:       err,
+		Payload:   msg.Payload,
+		Timestamp: time.Now().UTC(),
+	})
 }
 
 // findTargetNodes finds all nodes that should receive the message.
 // This is based on the connections in the flow.
 func (e *FlowEngine) findTargetNodes(flow *Flow, msg Message) []string {
-    // If this is a new message (empty path), find nodes with no incoming connections
-    if len(msg.Path) == 0 {
-        return e.findRootNodes(flow)
-    }
+	// If this is a new message (empty path), find nodes with no incoming connections
+	if len(msg.Path) == 0 {
+		return e.findRootNodes(flow)
+	}
 
-    // Otherwise, find nodes connected to the last node in the path
-    lastNodeID := msg.Path[len(msg.Path)-1]
-    return e.findConnectedNodes(flow, lastNodeID, msg.OutputPort)
+	// Otherwise, find nodes connected to the last node in the path
+	lastNodeID := msg.Path[len(msg.Path)-1]
+	return e.findConnectedNodes(flow, lastNodeID, msg.OutputPort)
 }
 
 // findRootNodes finds nodes that have no incoming connections (root nodes).
 func (e *FlowEngine) findRootNodes(flow *Flow) []string {
-    var rootNodes []string
-    
-    // Create a set of all target nodes
-    targetNodes := make(map[string]bool)
-    for _, conn := range flow.Connections {
-        targetNodes[conn.TargetNode] = true
-    }
-    
-    // Find nodes that are not targets
-    for nodeID := range flow.Nodes {
-        if !targetNodes[nodeID] {
-            rootNodes = append(rootNodes, nodeID)
-        }
-    }
-    
-    return rootNodes
+	var rootNodes []string
+
+	targetNodes := make(map[string]bool)
+	for _, conn := range flow.Connections {
+		targetNodes[conn.TargetNode] = true
+	}
+
+	for nodeID, node := range flow.Nodes {
+		if !targetNodes[nodeID] && !node.Disabled {
+			rootNodes = append(rootNodes, nodeID)
+		}
+	}
+
+	return rootNodes
 }
 
 // findConnectedNodes finds nodes connected to the given node's outputs.
@@ -420,113 +504,254 @@ func (e *FlowEngine) findRootNodes(flow *Flow) []string {
 // case), every outgoing connection is followed regardless of port, exactly
 // like before per-port routing existed.
 func (e *FlowEngine) findConnectedNodes(flow *Flow, nodeID string, sourcePort string) []string {
-    var connectedNodes []string
+	var connectedNodes []string
 
-    for _, conn := range flow.Connections {
-        if conn.SourceNode != nodeID {
-            continue
-        }
-        if sourcePort != "" && conn.SourcePort != "" && conn.SourcePort != sourcePort {
-            continue
-        }
-        connectedNodes = append(connectedNodes, conn.TargetNode)
-    }
+	for _, conn := range flow.Connections {
+		if conn.SourceNode != nodeID {
+			continue
+		}
+		if sourcePort != "" && conn.SourcePort != "" && conn.SourcePort != sourcePort {
+			continue
+		}
+		if target, ok := flow.Nodes[conn.TargetNode]; ok && target.Disabled {
+			continue
+		}
+		connectedNodes = append(connectedNodes, conn.TargetNode)
+	}
 
-    return connectedNodes
+	return connectedNodes
 }
 
-// submitMessage submits a message to the message channel.
-func (e *FlowEngine) submitMessage(msg Message) {
-    e.messageIDMu.Lock()
-    e.messageIDCounter++
-    msg.ID = "msg-" + string(rune(e.messageIDCounter))
-    e.messageIDMu.Unlock()
-    
-    select {
-    case e.msgChan <- msg:
-        // Message submitted successfully
-    default:
-        // Message channel is full, drop the message
-        log.Printf("Message channel full, dropping message %s", msg.ID)
-    }
+// submitMessage queues msg for activeFlow's dispatcher. It never blocks and
+// is safe to call at any time, including while the flow or the engine is
+// stopping: a stopped flow or a full queue drops the message; drops are
+// counted (MessagesDropped) and logged sparingly.
+func (e *FlowEngine) submitMessage(activeFlow *ActiveFlow, msg Message) {
+	msg.ID = "msg-" + strconv.FormatUint(e.messageIDCounter.Add(1), 10)
+
+	if activeFlow.ctx.Err() != nil {
+		return
+	}
+
+	select {
+	case activeFlow.msgChan <- msg:
+	default:
+		e.droppedMessages.Add(1)
+		if n := activeFlow.dropped.Add(1); n == 1 || n%1000 == 0 {
+			slog.Warn("flow queue full, dropping messages", "flow", msg.FlowID, "dropped", n, "queue", cap(activeFlow.msgChan))
+		}
+	}
 }
 
-// SubmitMessage submits a message to the engine for processing.
-// This is the public method for submitting messages.
+// SubmitMessage queues a message for the running flow named by msg.FlowID,
+// as if the last node in msg.Path had just emitted it. Messages for flows
+// that are not deployed are dropped.
 func (e *FlowEngine) SubmitMessage(msg Message) {
-    e.submitMessage(msg)
+	e.mu.RLock()
+	activeFlow, ok := e.active[msg.FlowID]
+	e.mu.RUnlock()
+	if !ok {
+		slog.Debug("dropping message for flow that is not deployed", "flow", msg.FlowID)
+		return
+	}
+	e.submitMessage(activeFlow, msg)
 }
 
-// Deploy deploys a flow, making it active and ready to process messages.
+// MessagesDropped returns how many messages were dropped because a flow
+// queue was full since the engine started.
+func (e *FlowEngine) MessagesDropped() uint64 {
+	return e.droppedMessages.Load()
+}
+
+// inflightLimit is how many node executions of flow may run at once.
+func (e *FlowEngine) inflightLimit(flow *Flow) int {
+	if flow.Config.MaxConcurrency > 0 {
+		return flow.Config.MaxConcurrency
+	}
+	return e.config.MaxInflightPerFlow
+}
+
+// Deploy registers flow as the definition for flow.ID (replacing any
+// existing definition with that ID) and deploys it. If the flow is already
+// running, the old runtime is stopped first and the new definition takes
+// over, so Deploy is also the redeploy operation. The engine takes
+// ownership of flow; callers must not mutate it afterwards.
 func (e *FlowEngine) Deploy(flow *Flow) error {
-    e.mu.Lock()
-    defer e.mu.Unlock()
-    
-    log.Printf("[ENGINE] Deploying flow %s with %d nodes and %d connections", flow.ID, len(flow.Nodes), len(flow.Connections))
-    
-    // Validate the flow
-    if err := flow.Validate(); err != nil {
-        log.Printf("[ENGINE] Flow %s validation failed: %v", flow.ID, err)
-        return errors.New("invalid flow: " + err.Error())
-    }
-    log.Printf("[ENGINE] Flow %s validation passed", flow.ID)
-    
-    // Check if flow is already deployed
-    if _, exists := e.flows[flow.ID]; exists {
-        log.Printf("[ENGINE] Flow %s is already deployed", flow.ID)
-        return errors.New("flow " + flow.ID + " is already deployed")
-    }
-    
-    // Create active flow
-    activeFlow := &ActiveFlow{
-        Flow:         flow,
-        Status:       FlowStatusActive,
-        msgChan:      make(chan Message, e.config.MessageBufferSize),
-        nodeExecutors: make(map[string]registry.NodeExecutor),
-        ContextStore: registry.NewContextStore(),
-        EventBus:     registry.NewEventBus(),
-    }
-    
-    // Update flow status to active
-    flow.Status = FlowStatusActive
-    
-    // Create context for this flow
-    activeFlow.ctx, activeFlow.cancel = context.WithCancel(e.ctx)
-    
-    // Initialize all nodes in the flow
-    log.Printf("[DEBUG] [ENGINE] Initializing %d nodes for flow %s", len(flow.Nodes), flow.ID)
-    log.Printf("[ENGINE] Initializing %d nodes for flow %s", len(flow.Nodes), flow.ID)
-    for nodeID, node := range flow.Nodes {
-        log.Printf("[DEBUG] [ENGINE] Initializing node %s of type %s with config: %v", nodeID, node.Type, node.Config)
-        log.Printf("[ENGINE] Initializing node %s of type %s", nodeID, node.Type)
-        executor, err := e.registry.InitializeNode(node.Type, node.Config)
-        if err != nil {
-            // Release any resources already-initialized nodes in this flow
-            // acquired (e.g. an earlier node opened a connection) before
-            // bailing out, then cancel the flow context.
-            closeNodeExecutors(activeFlow.nodeExecutors)
-            activeFlow.cancel()
-            log.Printf("[ENGINE] Failed to initialize node %s: %v", nodeID, err)
-            return errors.New("failed to initialize node " + nodeID + ": " + err.Error())
-        }
-        activeFlow.nodeExecutors[nodeID] = executor
-        log.Printf("[DEBUG] [ENGINE] Node %s initialized successfully", nodeID)
-        log.Printf("[ENGINE] Node %s initialized successfully", nodeID)
-    }
+	if flow == nil {
+		return errors.New("flow is nil")
+	}
+	if err := ValidateFlowID(flow.ID); err != nil {
+		return err
+	}
 
-    // Start flow message processor
-    e.wg.Add(1)
-    go e.processFlowMessages(activeFlow)
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-    // Start nodes that originate their own messages (EmittingNode), e.g. a
-    // TCP listener or file watcher, rather than only reacting to input.
-    e.startEmittingNodes(activeFlow)
+	if err := e.deployLocked(flow); err != nil {
+		return err
+	}
+	e.flows[flow.ID] = flow
+	return nil
+}
 
-    // Add to active flows
-    e.flows[flow.ID] = activeFlow
+// DeployFlow deploys (or redeploys) the known flow with the given ID from
+// its current definition.
+func (e *FlowEngine) DeployFlow(flowID string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-    log.Printf("[ENGINE] Flow %s deployed successfully with %d initialized nodes", flow.ID, len(activeFlow.nodeExecutors))
-    return nil
+	def, ok := e.flows[flowID]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrFlowNotFound, flowID)
+	}
+	return e.deployLocked(def)
+}
+
+// deployLocked validates def, stops a running instance of it if there is
+// one, and starts a new runtime from a snapshot of def. Must be called with
+// e.mu held. On failure def's status is set to FlowStatusError and the flow
+// is left undeployed; on success it is FlowStatusActive. Either way the new
+// status is persisted.
+func (e *FlowEngine) deployLocked(def *Flow) error {
+	if err := def.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidFlow, err)
+	}
+
+	if old, running := e.active[def.ID]; running {
+		slog.Info("redeploying flow", "flow", def.ID)
+		e.stopActiveLocked(old)
+	}
+
+	snapshot := def.Clone()
+	activeFlow := &ActiveFlow{
+		Flow:          snapshot,
+		Status:        FlowStatusActive,
+		msgChan:       make(chan Message, e.config.MessageBufferSize),
+		slots:         make(chan struct{}, e.inflightLimit(snapshot)),
+		nodeExecutors: make(map[string]registry.NodeExecutor),
+		ContextStore:  registry.NewContextStore(),
+		EventBus:      registry.NewEventBus(),
+		counters:      make(map[string]*nodeCounter, len(snapshot.Nodes)),
+	}
+	activeFlow.ctx, activeFlow.cancel = context.WithCancel(e.ctx)
+	for nodeID := range snapshot.Nodes {
+		activeFlow.counters[nodeID] = &nodeCounter{}
+	}
+
+	// Statuses nodes report through NodeRuntime.ReportStatus become editor
+	// events (and are remembered for clients that connect later).
+	activeFlow.EventBus.OnStatus(func(evt registry.NodeStatusEvent) {
+		e.setNodeStatus(evt.FlowID, evt.NodeID, evt.NodeType, NodeStatus{
+			Fill:      fillForStatus(evt.Status),
+			Shape:     "dot",
+			Text:      strings.TrimSpace(evt.Status + " " + evt.Detail),
+			Timestamp: evt.Timestamp,
+		})
+	})
+
+	// A fresh runtime starts without statuses from the previous one.
+	e.clearNodeStatus(def.ID)
+
+	for nodeID, node := range snapshot.Nodes {
+		if node.Disabled {
+			// A disabled node is part of the definition but not of the
+			// runtime: it is neither started nor routed to.
+			continue
+		}
+		executor, err := e.registry.InitializeNode(node.Type, node.Config)
+		if err != nil {
+			// Release any resources already-initialized nodes in this flow
+			// acquired (e.g. an earlier node opened a connection) before
+			// bailing out, then cancel the flow context.
+			closeNodeExecutors(activeFlow.nodeExecutors)
+			activeFlow.cancel()
+			def.Status = FlowStatusError
+			e.persistLocked(def)
+			deployErr := fmt.Errorf("%w %s: %v", ErrNodeInit, nodeID, err)
+			e.publishFlowStatus(def, deployErr.Error())
+			e.recordDebug(DebugEvent{
+				FlowID:   def.ID,
+				NodeID:   nodeID,
+				NodeName: node.Name,
+				NodeType: node.Type,
+				Level:    DebugLevelError,
+				Payload:  deployErr.Error(),
+			})
+			slog.Warn("flow deploy failed", "flow", def.ID, "node", nodeID, "type", node.Type, "err", err)
+			return deployErr
+		}
+		activeFlow.nodeExecutors[nodeID] = executor
+	}
+
+	activeFlow.wg.Add(1)
+	go e.processFlowMessages(activeFlow)
+
+	// Start nodes that originate their own messages (EmittingNode), e.g. a
+	// TCP listener or file watcher, rather than only reacting to input.
+	e.startEmittingNodes(activeFlow)
+
+	e.active[def.ID] = activeFlow
+	def.Status = FlowStatusActive
+	def.DeployedAt = time.Now().UTC()
+	snapshot.Status = FlowStatusActive
+	snapshot.DeployedAt = def.DeployedAt
+	e.persistLocked(def)
+	e.publishFlowStatus(def, "")
+
+	slog.Info("flow deployed", "flow", def.ID, "nodes", len(activeFlow.nodeExecutors), "connections", len(snapshot.Connections))
+	return nil
+}
+
+// stopActiveLocked cancels a runtime, waits for its emitting nodes, releases
+// node resources and removes it from e.active. Must be called with e.mu
+// held. It does not touch the flow definition's status.
+func (e *FlowEngine) stopActiveLocked(activeFlow *ActiveFlow) {
+	activeFlow.cancel()
+
+	// Wait for the dispatcher and the EmittingNode.Start goroutines to
+	// observe cancellation, then for node executions still in flight (their
+	// contexts are cancelled too), before releasing node resources under
+	// them. A node that ignores its context is not waited on forever.
+	activeFlow.wg.Wait()
+	if !waitTimeout(&activeFlow.inflight, e.config.DefaultTimeout+time.Second) {
+		slog.Warn("node executions still running after undeploy", "flow", activeFlow.Flow.ID)
+	}
+
+	closeNodeExecutors(activeFlow.nodeExecutors)
+
+	delete(e.active, activeFlow.Flow.ID)
+}
+
+// waitTimeout waits for wg, giving up after d. It reports whether wg was
+// done in time.
+func waitTimeout(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// persistLocked saves def through the state manager, if one is configured.
+// Must be called with e.mu held so nothing mutates def while it is
+// serialized. Failures are logged and returned.
+func (e *FlowEngine) persistLocked(def *Flow) error {
+	if e.stateManager == nil {
+		return nil
+	}
+	if err := e.stateManager.SaveFlow(def); err != nil {
+		slog.Error("failed to persist flow", "flow", def.ID, "err", err)
+		return fmt.Errorf("%w: %v", ErrPersist, err)
+	}
+	return nil
 }
 
 // startEmittingNodes launches a goroutine per node implementing
@@ -534,62 +759,62 @@ func (e *FlowEngine) Deploy(flow *Flow) error {
 // them to observe context cancellation and return before node resources are
 // closed.
 func (e *FlowEngine) startEmittingNodes(activeFlow *ActiveFlow) {
-    // readyWG holds Deploy open until every registry.EagerlyReadyNode in
-    // this flow has actually run the synchronous setup part of its Start
-    // (typically an EventBus subscription) - see EagerlyReadyNode's doc
-    // comment for why: without this, a message injected right after
-    // Deploy returns could race ahead of a Catch/Status/Complete node's
-    // subscription and have its event silently dropped. Nodes that don't
-    // implement the marker aren't waited on at all, so they add no
-    // latency to Deploy.
-    var readyWG sync.WaitGroup
+	// readyWG holds Deploy open until every registry.EagerlyReadyNode in
+	// this flow has actually run the synchronous setup part of its Start
+	// (typically an EventBus subscription) - see EagerlyReadyNode's doc
+	// comment for why: without this, a message injected right after
+	// Deploy returns could race ahead of a Catch/Status/Complete node's
+	// subscription and have its event silently dropped. Nodes that don't
+	// implement the marker aren't waited on at all, so they add no
+	// latency to Deploy.
+	var readyWG sync.WaitGroup
 
-    for nodeID, executor := range activeFlow.nodeExecutors {
-        emitter, ok := executor.(registry.EmittingNode)
-        if !ok {
-            continue
-        }
+	for nodeID, executor := range activeFlow.nodeExecutors {
+		emitter, ok := executor.(registry.EmittingNode)
+		if !ok {
+			continue
+		}
 
-        var nodeType string
-        if node, ok := activeFlow.Flow.Nodes[nodeID]; ok {
-            nodeType = node.Type
-        }
+		var nodeType string
+		if node, ok := activeFlow.Flow.Nodes[nodeID]; ok {
+			nodeType = node.Type
+		}
 
-        nodeCtx := registry.WithRuntime(activeFlow.ctx, e.newNodeRuntime(activeFlow, nodeID, nodeType))
+		nodeCtx := registry.WithRuntime(activeFlow.ctx, e.newNodeRuntime(activeFlow, nodeID, nodeType))
 
-        if _, ok := executor.(registry.EagerlyReadyNode); ok {
-            readyCh := make(chan struct{})
-            var once sync.Once
-            nodeCtx = registry.WithReady(nodeCtx, func() { once.Do(func() { close(readyCh) }) })
+		if _, ok := executor.(registry.EagerlyReadyNode); ok {
+			readyCh := make(chan struct{})
+			var once sync.Once
+			nodeCtx = registry.WithReady(nodeCtx, func() { once.Do(func() { close(readyCh) }) })
 
-            readyWG.Add(1)
-            go func(nodeID string) {
-                defer readyWG.Done()
-                select {
-                case <-readyCh:
-                case <-time.After(eagerReadyTimeout):
-                    log.Printf("[ENGINE] Node %s did not call SignalReady within %s - proceeding without waiting further", nodeID, eagerReadyTimeout)
-                }
-            }(nodeID)
-        }
+			readyWG.Add(1)
+			go func(nodeID string) {
+				defer readyWG.Done()
+				select {
+				case <-readyCh:
+				case <-time.After(eagerReadyTimeout):
+					slog.Warn("node did not signal ready in time, proceeding", "flow", activeFlow.Flow.ID, "node", nodeID, "timeout", eagerReadyTimeout)
+				}
+			}(nodeID)
+		}
 
-        activeFlow.wg.Add(1)
-        go func(nodeID string, emitter registry.EmittingNode, nodeCtx context.Context) {
-            defer activeFlow.wg.Done()
+		activeFlow.wg.Add(1)
+		go func(nodeID string, emitter registry.EmittingNode, nodeCtx context.Context) {
+			defer activeFlow.wg.Done()
 
-            emit := func(payload map[string]interface{}) {
-                msg := NewMessageWithContext(nodeCtx, payload, activeFlow.Flow.ID)
-                msg.AddToPath(nodeID)
-                e.submitMessage(msg)
-            }
+			emit := func(payload map[string]interface{}) {
+				msg := NewMessageWithContext(activeFlow.ctx, payload, activeFlow.Flow.ID)
+				msg.AddToPath(nodeID)
+				e.submitMessage(activeFlow, msg)
+			}
 
-            if err := emitter.Start(nodeCtx, emit); err != nil {
-                log.Printf("[ENGINE] Node %s Start() returned error: %v", nodeID, err)
-            }
-        }(nodeID, emitter, nodeCtx)
-    }
+			if err := emitter.Start(nodeCtx, emit); err != nil {
+				slog.Warn("emitting node stopped with error", "flow", activeFlow.Flow.ID, "node", nodeID, "err", err)
+			}
+		}(nodeID, emitter, nodeCtx)
+	}
 
-    readyWG.Wait()
+	readyWG.Wait()
 }
 
 // newNodeRuntime builds the registry.NodeRuntime a node reaches via
@@ -597,21 +822,41 @@ func (e *FlowEngine) startEmittingNodes(activeFlow *ActiveFlow) {
 // flow/global context, error/status/complete event reporting and
 // subscription, and same-flow message delivery for Link nodes.
 func (e *FlowEngine) newNodeRuntime(activeFlow *ActiveFlow, nodeID, nodeType string) *registry.NodeRuntime {
-    return registry.NewNodeRuntime(
-        activeFlow.Flow.ID,
-        nodeID,
-        nodeType,
-        activeFlow.ContextStore,
-        e.globalStore,
-        activeFlow.EventBus,
-        func(targetNodeID string, payload map[string]interface{}) {
-            e.submitToFlowNode(activeFlow, targetNodeID, payload)
-        },
-        func(targetNodeID string) (registry.NodeExecutor, bool) {
-            executor, ok := activeFlow.nodeExecutors[targetNodeID]
-            return executor, ok
-        },
-    )
+	rt := registry.NewNodeRuntime(
+		activeFlow.Flow.ID,
+		nodeID,
+		nodeType,
+		activeFlow.ContextStore,
+		e.globalStore,
+		activeFlow.EventBus,
+		func(targetNodeID string, payload map[string]interface{}) {
+			e.submitToFlowNode(activeFlow, targetNodeID, payload)
+		},
+		func(targetNodeID string) (registry.NodeExecutor, bool) {
+			executor, ok := activeFlow.nodeExecutors[targetNodeID]
+			return executor, ok
+		},
+	)
+	rt.SetDebugSink(func(out registry.DebugOutput) {
+		e.recordDebug(DebugEvent{
+			FlowID:   activeFlow.Flow.ID,
+			NodeID:   nodeID,
+			NodeName: activeFlow.nodeName(nodeID),
+			NodeType: nodeType,
+			Level:    DebugLevel(out.Level),
+			Topic:    out.Topic,
+			Payload:  out.Payload,
+		})
+	})
+	return rt
+}
+
+// nodeName returns the display name of a node in the running snapshot.
+func (af *ActiveFlow) nodeName(nodeID string) string {
+	if node, ok := af.Flow.Nodes[nodeID]; ok {
+		return node.Name
+	}
+	return ""
 }
 
 // submitToFlowNode delivers payload directly to targetNodeID's output within
@@ -620,13 +865,13 @@ func (e *FlowEngine) newNodeRuntime(activeFlow *ActiveFlow, nodeID, nodeType str
 // the same flow without a drawn wire. Cross-flow linking is not supported
 // yet (see the plan doc).
 func (e *FlowEngine) submitToFlowNode(activeFlow *ActiveFlow, targetNodeID string, payload map[string]interface{}) {
-    if _, exists := activeFlow.Flow.Nodes[targetNodeID]; !exists {
-        log.Printf("[ENGINE] SubmitToNode: node %s not found in flow %s", targetNodeID, activeFlow.Flow.ID)
-        return
-    }
-    msg := NewMessageWithContext(activeFlow.ctx, payload, activeFlow.Flow.ID)
-    msg.AddToPath(targetNodeID)
-    e.submitMessage(msg)
+	if _, exists := activeFlow.Flow.Nodes[targetNodeID]; !exists {
+		slog.Warn("SubmitToNode target not found", "flow", activeFlow.Flow.ID, "node", targetNodeID)
+		return
+	}
+	msg := NewMessageWithContext(activeFlow.ctx, payload, activeFlow.Flow.ID)
+	msg.AddToPath(targetNodeID)
+	e.submitMessage(activeFlow, msg)
 }
 
 // closeNodeExecutors calls Close on every executor implementing
@@ -634,285 +879,401 @@ func (e *FlowEngine) submitToFlowNode(activeFlow *ActiveFlow, targetNodeID strin
 // single misbehaving node's cleanup failure shouldn't block undeploying the
 // rest of the flow).
 func closeNodeExecutors(nodeExecutors map[string]registry.NodeExecutor) {
-    for nodeID, executor := range nodeExecutors {
-        closeable, ok := executor.(registry.Closeable)
-        if !ok {
-            continue
-        }
-        if err := closeable.Close(); err != nil {
-            log.Printf("[ENGINE] Node %s Close() returned error: %v", nodeID, err)
-        }
-    }
+	for nodeID, executor := range nodeExecutors {
+		closeable, ok := executor.(registry.Closeable)
+		if !ok {
+			continue
+		}
+		if err := closeable.Close(); err != nil {
+			slog.Warn("node Close returned error", "node", nodeID, "err", err)
+		}
+	}
 }
 
-// processFlowMessages processes messages for a specific flow.
+// processFlowMessages is the flow's dispatcher: it takes messages off the
+// flow queue and hands them to processMessage until the flow stops.
 func (e *FlowEngine) processFlowMessages(activeFlow *ActiveFlow) {
-    defer e.wg.Done()
-    defer activeFlow.cancel()
-    
-    for {
-        select {
-        case msg := <-activeFlow.msgChan:
-            e.processMessage(msg)
-        case <-activeFlow.ctx.Done():
-            return
-        }
-    }
+	defer activeFlow.wg.Done()
+
+	for {
+		select {
+		case msg := <-activeFlow.msgChan:
+			if !e.processMessage(activeFlow, msg) {
+				return
+			}
+		case <-activeFlow.ctx.Done():
+			return
+		}
+	}
 }
 
-// Undeploy undeploys a flow, stopping all message processing.
+// Undeploy stops a running flow. The definition stays known to the engine
+// with status FlowStatusInactive. Undeploying a known flow that is not
+// running is a no-op; an unknown flow returns ErrFlowNotFound.
 func (e *FlowEngine) Undeploy(flowID string) error {
-    e.mu.Lock()
-    defer e.mu.Unlock()
-    
-    activeFlow, exists := e.flows[flowID]
-    if !exists {
-        return errors.New("flow " + flowID + " not found")
-    }
-    
-    // Cancel the flow context
-    activeFlow.cancel()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-    // Wait for EmittingNode.Start goroutines to observe cancellation and
-    // return before releasing node resources under them.
-    activeFlow.wg.Wait()
+	def, known := e.flows[flowID]
+	activeFlow, running := e.active[flowID]
+	if !known && !running {
+		return fmt.Errorf("%w: %s", ErrFlowNotFound, flowID)
+	}
 
-    // Release resources held by nodes implementing registry.Closeable.
-    closeNodeExecutors(activeFlow.nodeExecutors)
-
-    // Remove from active flows
-    delete(e.flows, flowID)
-
-    log.Printf("Flow %s undeployed", flowID)
-    return nil
+	if running {
+		e.stopActiveLocked(activeFlow)
+		e.clearNodeStatus(flowID)
+		slog.Info("flow undeployed", "flow", flowID)
+	}
+	if known {
+		def.Status = FlowStatusInactive
+		e.persistLocked(def)
+		e.publishFlowStatus(def, "")
+	}
+	return nil
 }
 
-// GetFlow returns a flow by ID.
+// IsDeployed reports whether the flow is currently running.
+func (e *FlowEngine) IsDeployed(flowID string) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	_, running := e.active[flowID]
+	return running
+}
+
+// GetFlow returns a copy of a known flow's definition. Mutating the copy has
+// no effect on the engine; use UpdateFlow for that.
 func (e *FlowEngine) GetFlow(flowID string) (*Flow, error) {
-    e.mu.RLock()
-    defer e.mu.RUnlock()
-    
-    activeFlow, exists := e.flows[flowID]
-    if !exists {
-        return nil, errors.New("flow " + flowID + " not found")
-    }
-    
-    return activeFlow.Flow, nil
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	def, exists := e.flows[flowID]
+	if !exists {
+		return nil, fmt.Errorf("%w: %s", ErrFlowNotFound, flowID)
+	}
+	return def.Clone(), nil
 }
 
-// GetAllFlows returns all active flows.
+// GetAllFlows returns copies of every known flow definition, deployed or
+// not, in a stable order (creation time, then ID).
 func (e *FlowEngine) GetAllFlows() []*Flow {
-    e.mu.RLock()
-    defer e.mu.RUnlock()
-    
-    flows := make([]*Flow, 0, len(e.flows))
-    for _, activeFlow := range e.flows {
-        flows = append(flows, activeFlow.Flow)
-    }
-    return flows
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	flows := make([]*Flow, 0, len(e.flows))
+	for _, def := range e.flows {
+		flows = append(flows, def.Clone())
+	}
+	sort.Slice(flows, func(i, j int) bool {
+		if flows[i].Order != flows[j].Order {
+			return flows[i].Order < flows[j].Order
+		}
+		if !flows[i].CreatedAt.Equal(flows[j].CreatedAt) {
+			return flows[i].CreatedAt.Before(flows[j].CreatedAt)
+		}
+		return flows[i].ID < flows[j].ID
+	})
+	return flows
 }
 
-// GetFlowStatus returns the status of a flow.
+// nextOrderLocked returns an Order that puts a new flow after every
+// existing one. Must be called with e.mu held.
+func (e *FlowEngine) nextOrderLocked() int {
+	next := 0
+	for _, def := range e.flows {
+		if def.Order >= next {
+			next = def.Order + 1
+		}
+	}
+	return next
+}
+
+// GetFlowStatus returns the status of a known flow.
 func (e *FlowEngine) GetFlowStatus(flowID string) (FlowStatus, error) {
-    e.mu.RLock()
-    defer e.mu.RUnlock()
-    
-    activeFlow, exists := e.flows[flowID]
-    if !exists {
-        return FlowStatusInactive, errors.New("flow " + flowID + " not found")
-    }
-    
-    return activeFlow.Status, nil
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	def, exists := e.flows[flowID]
+	if !exists {
+		return FlowStatusInactive, fmt.Errorf("%w: %s", ErrFlowNotFound, flowID)
+	}
+	return def.Status, nil
 }
 
-// GetFlowContext returns a flow's private key-value context store
+// GetFlowContext returns a running flow's private key-value context store
 // (flow.get/set) and its EventBus (error/status events for Catch/Status
 // nodes, docs/NODE_PALETTE_PLAN.md Phase 1).
 func (e *FlowEngine) GetFlowContext(flowID string) (*registry.ContextStore, *registry.EventBus, error) {
-    e.mu.RLock()
-    defer e.mu.RUnlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
-    activeFlow, exists := e.flows[flowID]
-    if !exists {
-        return nil, nil, errors.New("flow " + flowID + " not found")
-    }
-
-    return activeFlow.ContextStore, activeFlow.EventBus, nil
+	activeFlow, exists := e.active[flowID]
+	if !exists {
+		return nil, nil, fmt.Errorf("%w: %s", ErrFlowNotDeployed, flowID)
+	}
+	return activeFlow.ContextStore, activeFlow.EventBus, nil
 }
 
-// InjectMessage injects a message into a flow at a specific node.
+// InjectMessage injects a message into a running flow at a specific node.
 func (e *FlowEngine) InjectMessage(flowID, nodeID string, payload map[string]interface{}) error {
-    e.mu.RLock()
-    activeFlow, exists := e.flows[flowID]
-    e.mu.RUnlock()
-    
-    if !exists {
-        return errors.New("flow " + flowID + " not found")
-    }
-    
-    // Check if node exists
-    if _, exists := activeFlow.Flow.Nodes[nodeID]; !exists {
-        return errors.New("node " + nodeID + " not found in flow " + flowID)
-    }
-    
-    // Create message
-    msg := NewMessageWithContext(activeFlow.ctx, payload, flowID)
-    msg.AddToPath(nodeID)
-    
-    // Submit to flow's message channel
-    select {
-    case activeFlow.msgChan <- msg:
-        return nil
-    default:
-        return errors.New("flow message channel full")
-    }
+	e.mu.RLock()
+	activeFlow, exists := e.active[flowID]
+	e.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("%w: %s", ErrFlowNotDeployed, flowID)
+	}
+
+	node, exists := activeFlow.Flow.Nodes[nodeID]
+	if !exists {
+		return fmt.Errorf("node %s not found in flow %s", nodeID, flowID)
+	}
+	if node.Disabled {
+		return fmt.Errorf("node %s is disabled", nodeID)
+	}
+
+	msg := NewMessageWithContext(activeFlow.ctx, payload, flowID)
+	msg.AddToPath(nodeID)
+
+	select {
+	case activeFlow.msgChan <- msg:
+		return nil
+	default:
+		return errors.New("flow message channel full")
+	}
 }
 
-// CreateFlow creates a new flow with the given ID and name.
-// If id is empty, a UUID will be generated.
-func (e *FlowEngine) CreateFlow(id, name string) (*Flow, error) {
-    if id == "" {
-        id = "flow-" + uuid.New().String()
-    }
-    flow := NewFlow(id, name)
-    
-    // Add flow to the engine's flow map
-    e.mu.Lock()
-    e.flows[id] = &ActiveFlow{
-        Flow:         flow,
-        Status:       FlowStatusInactive,
-        msgChan:      make(chan Message, e.config.MessageBufferSize),
-        ContextStore: registry.NewContextStore(),
-        EventBus:     registry.NewEventBus(),
-    }
-    e.mu.Unlock()
-    
-    // If state manager is set, save the flow
-    if e.stateManager != nil {
-        if err := e.stateManager.SaveFlow(flow); err != nil {
-            return nil, errors.New("failed to save flow: " + err.Error())
-        }
-    }
-    
-    return flow, nil
+// CreateFlow creates and persists a new, undeployed flow. If id is empty a
+// UUID-based ID is generated. Returns a copy of the new definition.
+func (e *FlowEngine) CreateFlow(id, name, description string) (*Flow, error) {
+	if id == "" {
+		id = "flow-" + uuid.New().String()
+	}
+	if err := ValidateFlowID(id); err != nil {
+		return nil, err
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if _, exists := e.flows[id]; exists {
+		return nil, fmt.Errorf("%w: %s", ErrFlowExists, id)
+	}
+
+	flow := NewFlow(id, name)
+	flow.Order = e.nextOrderLocked()
+	flow.Description = description
+
+	if err := e.persistLocked(flow); err != nil {
+		return nil, err
+	}
+	e.flows[id] = flow
+
+	slog.Info("flow created", "flow", id, "name", name)
+	return flow.Clone(), nil
 }
 
-// DeleteFlow deletes a flow.
+// AddFlow registers an existing, fully populated definition (e.g. an
+// imported flow) as a new undeployed flow and persists it. The engine takes
+// ownership of flow; callers must not mutate it afterwards.
+func (e *FlowEngine) AddFlow(flow *Flow) error {
+	if flow == nil {
+		return errors.New("flow is nil")
+	}
+	if err := ValidateFlowID(flow.ID); err != nil {
+		return err
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if _, exists := e.flows[flow.ID]; exists {
+		return fmt.Errorf("%w: %s", ErrFlowExists, flow.ID)
+	}
+
+	flow.Status = FlowStatusInactive
+	if flow.Order == 0 {
+		flow.Order = e.nextOrderLocked()
+	}
+	if err := e.persistLocked(flow); err != nil {
+		return err
+	}
+	e.flows[flow.ID] = flow
+	return nil
+}
+
+// UpdateFlow applies mutate to the definition of a known flow under the
+// engine lock, bumps UpdatedAt, persists the result and returns a copy of
+// it. If mutate returns an error nothing is persisted. A running instance of
+// the flow is not affected until it is redeployed.
+func (e *FlowEngine) UpdateFlow(flowID string, mutate func(*Flow) error) (*Flow, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	def, exists := e.flows[flowID]
+	if !exists {
+		return nil, fmt.Errorf("%w: %s", ErrFlowNotFound, flowID)
+	}
+
+	if err := mutate(def); err != nil {
+		return nil, err
+	}
+	def.ID = flowID
+	def.UpdatedAt = time.Now().UTC()
+
+	if err := e.persistLocked(def); err != nil {
+		return nil, err
+	}
+	return def.Clone(), nil
+}
+
+// DeleteFlow stops the flow if it is running and removes its definition
+// from the engine and from persistent storage.
 func (e *FlowEngine) DeleteFlow(flowID string) error {
-    // First undeploy if active
-    e.Undeploy(flowID)
-    
-    // If state manager is set, delete the flow
-    if e.stateManager != nil {
-        if err := e.stateManager.DeleteFlow(flowID); err != nil {
-            return errors.New("failed to delete flow: " + err.Error())
-        }
-    }
-    
-    return nil
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	_, known := e.flows[flowID]
+	activeFlow, running := e.active[flowID]
+	if !known && !running {
+		return fmt.Errorf("%w: %s", ErrFlowNotFound, flowID)
+	}
+
+	if running {
+		e.stopActiveLocked(activeFlow)
+	}
+	delete(e.flows, flowID)
+	e.clearNodeStatus(flowID)
+	e.ClearDebugLog(flowID)
+
+	if e.stateManager != nil {
+		if err := e.stateManager.DeleteFlow(flowID); err != nil && !errors.Is(err, ErrFlowNotFound) {
+			slog.Error("failed to delete persisted flow", "flow", flowID, "err", err)
+			return fmt.Errorf("%w: %v", ErrPersist, err)
+		}
+	}
+
+	slog.Info("flow deleted", "flow", flowID)
+	return nil
 }
 
-// LoadFlow loads a flow from the state manager and deploys it.
-func (e *FlowEngine) LoadFlow(flowID string) error {
-    if e.stateManager == nil {
-        return errors.New("no state manager configured")
-    }
-    
-    flow, err := e.stateManager.LoadFlow(flowID)
-    if err != nil {
-        return errors.New("failed to load flow: " + err.Error())
-    }
-    
-    return e.Deploy(flow)
-}
-
-// LoadAllFlows loads all flows from the state manager and deploys them.
+// LoadAllFlows loads every persisted flow definition into the engine and
+// deploys those that were running when they were last saved. A flow that
+// fails to deploy is kept as a known flow with status FlowStatusError.
 func (e *FlowEngine) LoadAllFlows() error {
-    if e.stateManager == nil {
-        return errors.New("no state manager configured")
-    }
-    
-    log.Printf("[ENGINE] Loading all flows from state manager")
-    
-    flows, err := e.stateManager.LoadAllFlows()
-    if err != nil {
-        log.Printf("[ENGINE] Failed to load flows: %v", err)
-        return errors.New("failed to load flows: " + err.Error())
-    }
-    
-    log.Printf("[ENGINE] Found %d flows to load", len(flows))
-    
-    for _, flow := range flows {
-        log.Printf("[ENGINE] Loading flow %s with %d nodes and %d connections", flow.ID, len(flow.Nodes), len(flow.Connections))
-        // Try to deploy the flow, but if it fails (e.g., validation), log and skip
-        if err := e.Deploy(flow); err != nil {
-            log.Printf("[ENGINE] Failed to deploy flow %s: %v", flow.ID, err)
-            // Don't add to e.flows - let it be loaded on demand via REST API
-            // Continue with other flows
-            continue
-        }
-        log.Printf("[ENGINE] Flow %s loaded and deployed successfully", flow.ID)
-    }
-    
-    log.Printf("[ENGINE] Loaded %d flows", len(flows))
-    return nil
+	if e.stateManager == nil {
+		return errors.New("no state manager configured")
+	}
+
+	flows, err := e.stateManager.LoadAllFlows()
+	if err != nil {
+		return fmt.Errorf("failed to load flows: %w", err)
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	deployed := 0
+	for _, flow := range flows {
+		if err := ValidateFlowID(flow.ID); err != nil {
+			slog.Warn("skipping persisted flow with invalid ID", "flow", flow.ID, "err", err)
+			continue
+		}
+		wasRunning := flow.Status == FlowStatusActive
+		flow.Status = FlowStatusInactive
+		e.flows[flow.ID] = flow
+
+		if !wasRunning {
+			continue
+		}
+		if err := e.deployLocked(flow); err != nil {
+			slog.Error("failed to deploy persisted flow", "flow", flow.ID, "err", err)
+			flow.Status = FlowStatusError
+			e.persistLocked(flow)
+			e.publishFlowStatus(flow, err.Error())
+			continue
+		}
+		deployed++
+	}
+
+	slog.Info("flows loaded", "known", len(e.flows), "deployed", deployed)
+	return nil
 }
 
-// AddMessageToLog adds a message to the message log for debugging.
-// Messages are stored in a circular buffer with maxMessageLog size.
+// AddMessageToLog records a routed message for GET /api/messages. The log
+// is a fixed-size ring; with size 0 (the default) it is disabled and this
+// returns without taking a lock.
 func (e *FlowEngine) AddMessageToLog(msg Message) {
-    e.messageLogMu.Lock()
-    defer e.messageLogMu.Unlock()
-
-    // Append the message
-    e.messageLog = append(e.messageLog, msg)
-    
-    // Trim if we exceed max size
-    if len(e.messageLog) > e.maxMessageLog {
-        e.messageLog = e.messageLog[len(e.messageLog)-e.maxMessageLog:]
-    }
+	if e.messageLogSize.Load() == 0 {
+		return
+	}
+	e.messageLogMu.Lock()
+	defer e.messageLogMu.Unlock()
+	size := len(e.messageLog)
+	if size == 0 {
+		return
+	}
+	e.messageLog[e.messageLogPos] = msg
+	e.messageLogPos = (e.messageLogPos + 1) % size
+	if e.messageLogLen < size {
+		e.messageLogLen++
+	}
 }
 
-// GetMessageLog returns all messages in the log.
-// The returned slice is a copy to prevent external modification.
+// messagesInOrder returns the logged messages oldest first. The caller
+// holds messageLogMu.
+func (e *FlowEngine) messagesInOrder() []Message {
+	size := len(e.messageLog)
+	if size == 0 || e.messageLogLen == 0 {
+		return nil
+	}
+	out := make([]Message, 0, e.messageLogLen)
+	start := (e.messageLogPos - e.messageLogLen + size) % size
+	for i := 0; i < e.messageLogLen; i++ {
+		out = append(out, e.messageLog[(start+i)%size])
+	}
+	return out
+}
+
+// GetMessageLog returns the logged messages, oldest first, as a copy.
 func (e *FlowEngine) GetMessageLog() []Message {
-    e.messageLogMu.RLock()
-    defer e.messageLogMu.RUnlock()
-
-    // Create a copy of the slice
-    messages := make([]Message, len(e.messageLog))
-    copy(messages, e.messageLog)
-    return messages
+	e.messageLogMu.RLock()
+	defer e.messageLogMu.RUnlock()
+	return e.messagesInOrder()
 }
 
-// GetMessageLogForFlow returns messages for a specific flow.
+// GetMessageLogForFlow returns the logged messages of one flow, oldest first.
 func (e *FlowEngine) GetMessageLogForFlow(flowID string) []Message {
-    e.messageLogMu.RLock()
-    defer e.messageLogMu.RUnlock()
+	e.messageLogMu.RLock()
+	defer e.messageLogMu.RUnlock()
 
-    var flowMessages []Message
-    for _, msg := range e.messageLog {
-        if msg.FlowID == flowID {
-            flowMessages = append(flowMessages, msg)
-        }
-    }
-    return flowMessages
+	var flowMessages []Message
+	for _, msg := range e.messagesInOrder() {
+		if msg.FlowID == flowID {
+			flowMessages = append(flowMessages, msg)
+		}
+	}
+	return flowMessages
 }
 
-// ClearMessageLog clears all messages from the log.
+// ClearMessageLog drops every logged message.
 func (e *FlowEngine) ClearMessageLog() {
-    e.messageLogMu.Lock()
-    defer e.messageLogMu.Unlock()
-    e.messageLog = make([]Message, 0)
+	e.messageLogMu.Lock()
+	defer e.messageLogMu.Unlock()
+	e.messageLogPos = 0
+	e.messageLogLen = 0
 }
 
-// SetMaxMessageLog sets the maximum number of messages to keep in the log.
-func (e *FlowEngine) SetMaxMessageLog(max int) {
-    e.messageLogMu.Lock()
-    defer e.messageLogMu.Unlock()
-    e.maxMessageLog = max
-    // Trim existing log if necessary
-    if len(e.messageLog) > e.maxMessageLog {
-        e.messageLog = e.messageLog[len(e.messageLog)-e.maxMessageLog:]
-    }
+// SetMaxMessageLog resizes the message log; 0 disables it. Messages logged
+// so far are dropped.
+func (e *FlowEngine) SetMaxMessageLog(size int) {
+	if size < 0 {
+		size = 0
+	}
+	e.messageLogMu.Lock()
+	defer e.messageLogMu.Unlock()
+	e.messageLog = make([]Message, size)
+	e.messageLogPos = 0
+	e.messageLogLen = 0
+	e.messageLogSize.Store(int64(size))
 }

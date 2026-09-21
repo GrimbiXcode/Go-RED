@@ -1,7 +1,8 @@
-import { useState, useCallback, useRef, ChangeEvent } from 'react';
-import { useToast } from './ToastNotification';
+import { useState, useCallback, useRef, type ChangeEvent } from 'react';
+import { useTranslation } from 'react-i18next';
+import { notify } from '../store/notificationStore';
 import { importFlow } from '../utils/api';
-import type { Flow } from '../types/flow';
+import { useFlowStore } from '../store/flowStore';
 
 interface ImportModalProps {
   isOpen: boolean;
@@ -9,95 +10,120 @@ interface ImportModalProps {
   onFlowImported: (flowId: string) => void;
 }
 
+interface Preview {
+  format: 'go-red' | 'node-red';
+  name: string;
+  description: string;
+  flows: number;
+  nodes: number;
+  connections: number;
+  unsupported: string[];
+}
+
+/** Summarizes a Node-RED export (array of nodes with wires) for the preview. */
+export function previewNodeRed(data: unknown[], knownTypes: Set<string>): Preview {
+  const tabs = data.filter((item) => (item as { type?: string })?.type === 'tab') as { label?: string; info?: string }[];
+  const nodes = data.filter((item) => {
+    const type = (item as { type?: string })?.type;
+    return type && type !== 'tab' && type !== 'group' && type !== 'subflow' && !type.startsWith('subflow:');
+  }) as { type: string; wires?: unknown[][] }[];
+  const unsupported = Array.from(new Set(nodes.map((n) => n.type).filter((type) => !knownTypes.has(type)))).sort();
+  const connections = nodes.reduce((sum, n) => sum + (n.wires || []).reduce((s, targets) => s + (Array.isArray(targets) ? targets.length : 0), 0), 0);
+  return {
+    format: 'node-red',
+    name: tabs.map((tab) => tab.label).filter(Boolean).join(', ') || 'Imported flow',
+    description: tabs[0]?.info || '',
+    flows: Math.max(tabs.length, 1),
+    nodes: nodes.length,
+    connections,
+    unsupported,
+  };
+}
+
 export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProps) {
-  const { showToast } = useToast();
+  const { t } = useTranslation();
   const [isImporting, setIsImporting] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [fileContent, setFileContent] = useState<string>('');
-  const [importedFlow, setImportedFlow] = useState<Flow | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      setError('No file selected');
-      return;
-    }
-
-    // Validate file type
-    if (!file.name.endsWith('.json')) {
-      setError('Please select a JSON file');
-      return;
-    }
-
-    setSelectedFile(file);
-    setError('');
-    
-    // Read and validate file content
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const content = e.target?.result as string;
-        setFileContent(content);
-        const flowData = JSON.parse(content);
-        
-        // Basic validation
-        if (!flowData.name) {
-          setError('Invalid flow file: missing "name" field');
-          return;
-        }
-        
-        setImportedFlow({
-          id: flowData.id || '',
-          name: flowData.name,
-          description: flowData.description || '',
-          nodes: flowData.nodes || {},
-          connections: flowData.connections || [],
-          status: flowData.status || 'draft',
-          config: flowData.config || {},
-          createdAt: flowData.createdAt || new Date().toISOString(),
-          updatedAt: flowData.updatedAt || new Date().toISOString(),
-          version: flowData.version || '1.0',
-        });
-      } catch {
-        setError('Invalid JSON file');
+  const handleFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) {
+        setError(t('import.noFile'));
+        return;
       }
-    };
-    reader.readAsText(file);
-  }, []);
+      if (!file.name.endsWith('.json')) {
+        setError(t('import.notJson'));
+        return;
+      }
+
+      setSelectedFile(file);
+      setError('');
+      setPreview(null);
+
+      const reader = new FileReader();
+      reader.onload = (loadEvent) => {
+        try {
+          const data = JSON.parse(String(loadEvent.target?.result ?? ''));
+          if (Array.isArray(data)) {
+            setPreview(previewNodeRed(data, new Set(useFlowStore.getState().nodeTypes.map((nt) => nt.type))));
+            return;
+          }
+          if (!data || typeof data.name !== 'string' || !data.name) {
+            setError(t('import.missingName'));
+            return;
+          }
+          setPreview({
+            format: 'go-red',
+            name: data.name,
+            description: data.description || '',
+            flows: 1,
+            nodes: data.nodes ? Object.keys(data.nodes).length : 0,
+            connections: Array.isArray(data.connections) ? data.connections.length : 0,
+            unsupported: [],
+          });
+        } catch {
+          setError(t('import.invalidJson'));
+        }
+      };
+      reader.readAsText(file);
+    },
+    [t]
+  );
 
   const handleImport = useCallback(async () => {
-    if (!selectedFile || !fileContent) {
-      setError('No file selected');
+    if (!selectedFile) {
+      setError(t('import.noFile'));
       return;
     }
-
     try {
       setIsImporting(true);
       setError('');
-      
       const result = await importFlow(selectedFile);
-      showToast('success', `Flow '${result.name}' imported successfully!`);
+      if (result.format === 'node-red') notify('success', t('import.successMany', { count: result.flows.length }));
+      else notify('success', t('import.success', { name: result.name }));
+      if (result.warnings.length > 0) {
+        notify('warning', t('import.warningsToast', { count: result.warnings.length, first: result.warnings[0] }), 12000);
+      }
       onFlowImported(result.flowId);
       onClose();
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(errorMessage);
-      showToast('error', `Failed to import flow: ${errorMessage}`);
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      notify('error', t('import.failed', { message }));
     } finally {
       setIsImporting(false);
     }
-  }, [selectedFile, fileContent, onClose, onFlowImported, showToast]);
+  }, [selectedFile, onClose, onFlowImported, t]);
 
   const handleReset = useCallback(() => {
     setSelectedFile(null);
-    setFileContent('');
-    setImportedFlow(null);
+    setPreview(null);
     setError('');
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
 
   if (!isOpen) {
@@ -105,87 +131,85 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded shadow-xl w-full max-w-md">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h3 className="font-semibold text-sm text-gray-800">Import Flow</h3>
-          <button
-            className="text-gray-400 hover:text-gray-600"
-            onClick={onClose}
-            aria-label="Schließen"
-          >
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-label={t('import.title')}>
+      <div className="bg-panel rounded shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+          <h3 className="font-semibold text-sm text-fg">{t('import.title')}</h3>
+          <button className="text-faint hover:text-muted" onClick={onClose} aria-label={t('common.close')}>
             ✕
           </button>
         </div>
 
         <div className="p-4">
-          <p className="text-sm text-gray-600 mb-4">
-            Select a JSON file to import a flow. The file should have been previously exported from Go-RED.
-          </p>
+          <p className="text-sm text-muted mb-4">{t('import.text')}</p>
 
           <div className="mb-4">
-            <label className="block text-xs font-medium text-gray-700 mb-2">
-              Flow File
-            </label>
+            <label className="block text-xs font-medium text-fg mb-2">{t('import.fileLabel')}</label>
             <div className="flex gap-2">
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept=".json"
-                className="flex-1 text-xs"
-                disabled={isImporting}
-              />
+              <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".json" className="flex-1 text-xs" disabled={isImporting} />
               <button
-                className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-xs"
+                className="px-3 py-1.5 bg-sunken text-fg rounded hover:bg-line text-xs"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isImporting}
               >
-                Browse
+                {t('import.browse')}
               </button>
             </div>
           </div>
 
-          {error && (
-            <div className="bg-gr-fuchsia-50 text-gr-fuchsia-700 p-3 rounded mb-4 text-xs">
-              Error: {error}
-            </div>
-          )}
+          {error && <div className="bg-danger-soft text-danger-text p-3 rounded mb-4 text-xs">{t('import.errorPrefix', { message: error })}</div>}
 
-          {importedFlow && (
-            <div className="bg-gr-blue-50 p-3 rounded mb-4">
-              <h4 className="font-medium text-gr-blue-800 mb-2 text-xs">Flow Preview</h4>
-              <div className="text-xs text-gray-700 space-y-1">
-                <div><strong>Name:</strong> {importedFlow.name}</div>
-                <div><strong>Description:</strong> {importedFlow.description || 'None'}</div>
-                <div><strong>Nodes:</strong> {importedFlow.nodes ? Object.keys(importedFlow.nodes).length : 0}</div>
-                <div><strong>Connections:</strong> {importedFlow.connections ? importedFlow.connections.length : 0}</div>
+          {preview && (
+            <div className="bg-accent-soft p-3 rounded mb-4">
+              <h4 className="font-medium text-accent-text mb-2 text-xs">{t('import.preview')}</h4>
+              <div className="text-xs text-fg space-y-1" data-testid="import-preview" data-format={preview.format}>
+                <div>
+                  <strong>{t('import.format')}:</strong> {preview.format === 'node-red' ? t('import.formatNodeRed') : t('import.formatGoRed')}
+                </div>
+                {preview.format === 'node-red' && (
+                  <div>
+                    <strong>{t('import.flows')}:</strong> {preview.flows}
+                  </div>
+                )}
+                <div>
+                  <strong>{t('import.name')}:</strong> {preview.name}
+                </div>
+                <div>
+                  <strong>{t('import.description')}:</strong> {preview.description || t('import.none')}
+                </div>
+                <div>
+                  <strong>{t('import.nodes')}:</strong> {preview.nodes}
+                </div>
+                <div>
+                  <strong>{t('import.connections')}:</strong> {preview.connections}
+                </div>
+                {preview.unsupported.length > 0 && (
+                  <div className="text-warn-text" data-testid="import-unsupported">
+                    <strong>{t('import.unsupported')}:</strong> {preview.unsupported.join(', ')}
+                  </div>
+                )}
               </div>
             </div>
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-gray-200">
-          <button
-            className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
-            onClick={onClose}
-            disabled={isImporting}
-          >
-            Cancel
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-line">
+          <button className="px-3 py-1.5 text-xs text-muted hover:bg-sunken rounded" onClick={onClose} disabled={isImporting}>
+            {t('import.cancel')}
           </button>
           <button
-            className="px-3 py-1.5 text-xs text-gr-fuchsia-600 hover:bg-gr-fuchsia-50 rounded disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            className="px-3 py-1.5 text-xs text-danger-text hover:bg-danger-soft rounded disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
             onClick={handleReset}
             disabled={isImporting || !selectedFile}
           >
-            Clear
+            {t('import.clear')}
           </button>
           <button
-            className="px-3 py-1.5 bg-gr-blue-500 text-white rounded hover:bg-gr-blue-600 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 bg-accent text-accent-fg rounded hover:bg-accent-strong text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleImport}
             disabled={isImporting || !selectedFile || !!error}
           >
-            {isImporting ? 'Importing...' : 'Import Flow'}
+            {isImporting ? t('import.importing') : t('import.action')}
           </button>
         </div>
       </div>

@@ -1,31 +1,24 @@
-
-import { Routes, Route } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { FlowEditor } from './components/FlowEditor';
-import { FlowProvider } from './components/FlowProvider';
-import { ToastProvider } from './components/ToastNotification';
+import { ToastHost } from './components/ToastNotification';
+import { TokenPrompt } from './components/TokenPrompt';
 import { StyleGuide } from './pages/StyleGuide';
-
-function Editor() {
-  return (
-    <FlowProvider>
-      <ToastProvider>
-        <FlowEditor />
-      </ToastProvider>
-    </FlowProvider>
-  );
-}
+import { bindServerEvents } from './store/bindServerEvents';
 
 function App() {
+  useEffect(() => bindServerEvents(), []);
+
   return (
-    <div className="h-screen w-full bg-gray-50">
-      {import.meta.env.DEV ? (
-        <Routes>
-          <Route path="/styleguide" element={<StyleGuide />} />
-          <Route path="*" element={<Editor />} />
-        </Routes>
-      ) : (
-        <Editor />
-      )}
+    <div className="h-screen w-full bg-app text-fg">
+      <Routes>
+        <Route path="/flow/:flowId" element={<FlowEditor />} />
+        <Route path="/" element={<FlowEditor />} />
+        <Route path="/styleguide" element={<StyleGuide />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <ToastHost />
+      <TokenPrompt />
     </div>
   );
 }

@@ -1,34 +1,34 @@
 package registry
 
 import (
-    "context"
-    "testing"
+	"context"
+	"testing"
 
-    "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSignalReady_CallsTheEmbeddedCallback(t *testing.T) {
-    called := false
-    ctx := WithReady(context.Background(), func() { called = true })
+	called := false
+	ctx := WithReady(context.Background(), func() { called = true })
 
-    SignalReady(ctx)
+	SignalReady(ctx)
 
-    assert.True(t, called)
+	assert.True(t, called)
 }
 
 func TestSignalReady_NoCallbackEmbedded_IsANoOp(t *testing.T) {
-    assert.NotPanics(t, func() {
-        SignalReady(context.Background())
-    })
+	assert.NotPanics(t, func() {
+		SignalReady(context.Background())
+	})
 }
 
 func TestSignalReady_SafeToCallMultipleTimes(t *testing.T) {
-    calls := 0
-    ctx := WithReady(context.Background(), func() { calls++ })
+	calls := 0
+	ctx := WithReady(context.Background(), func() { calls++ })
 
-    SignalReady(ctx)
-    SignalReady(ctx)
-    SignalReady(ctx)
+	SignalReady(ctx)
+	SignalReady(ctx)
+	SignalReady(ctx)
 
-    assert.Equal(t, 3, calls, "SignalReady itself doesn't dedupe - callers that need idempotency (like the engine) wrap their own callback in sync.Once")
+	assert.Equal(t, 3, calls, "SignalReady itself doesn't dedupe - callers that need idempotency (like the engine) wrap their own callback in sync.Once")
 }

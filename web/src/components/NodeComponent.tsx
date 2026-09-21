@@ -1,24 +1,14 @@
-import { NodeProps } from 'reactflow';
-import type { FlowNode } from '../types/flow';
-import type { NodeMetadata } from '../types/node';
+import type { NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
 import { NodeHandles } from './NodeHandles';
 import { NodeIcon } from './CategoryIcon';
+import { useRuntimeStore, selectNodeStatus } from '../store/runtimeStore';
+import type { CanvasNode } from './canvasTypes';
 
-interface NodeData {
-  label: string;
-  node: FlowNode;
-  metadata: NodeMetadata | null;
-  flowId?: string;
-}
-
-interface NodeComponentProps extends NodeProps {
-  data: NodeData;
-}
-
-export function NodeComponent({ data, selected }: NodeComponentProps) {
-  const { label, node, metadata } = data;
+export function NodeComponent({ id, data, selected }: NodeProps<CanvasNode>) {
+  const { label, node, metadata, outputs, flowId } = data;
   const category = metadata?.category || 'custom';
+  const status = useRuntimeStore(selectNodeStatus(flowId, id));
 
   return (
     <NodeShell
@@ -26,10 +16,12 @@ export function NodeComponent({ data, selected }: NodeComponentProps) {
       label={label}
       icon={<NodeIcon icon={metadata?.icon} category={category} className="w-4 h-4 shrink-0" />}
       selected={selected}
-      status={node.status}
+      status={status}
+      color={metadata?.color}
+      disabled={node.disabled}
       title={metadata?.description || `Node: ${metadata?.name || node.type}`}
     >
-      <NodeHandles inputPorts={metadata?.inputs || []} outputPorts={metadata?.outputs || []} />
+      <NodeHandles inputPorts={metadata?.inputs || []} outputPorts={outputs} />
     </NodeShell>
   );
 }

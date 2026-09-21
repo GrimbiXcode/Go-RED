@@ -1,150 +1,93 @@
 # Go-RED Project Guidelines
 
-## Overview
-This is **Go-RED**, a Node-RED-inspired flow editor built in Go with a React-based WebUI. This file contains project-wide guidelines that apply to all agents working on this codebase.
+Go-RED is a Node-RED-style flow editor and runtime written in Go, with a React
+editor that is built into the binary. This file applies to the whole
+repository; the `AGENTS.md` in a directory adds what is specific to it.
+Everything here describes code that exists. When a statement here and the
+code disagree, the code wins, and the file gets fixed.
 
----
-
-## Project Structure
+## Layout
 
 ```
-Go-RED/
-├── cmd/
-│   └── go-red/                    # Main application entry point
-│       ├── main.go               # HTTP server, WebSocket hub
-│       └── websocket/            # WebSocket communication layer
-├── internal/
-│   ├── engine/                   # Flow execution engine (core)
-│   │   ├── engine.go             # FlowEngine, ActiveFlow management
-│   │   ├── flow.go               # Flow structure and validation
-│   │   └── message.go            # Message passing infrastructure
-│   ├── nodes/                    # Built-in node implementations
-│   │   ├── debug/                # Debug output node
-│   │   ├── function/             # JavaScript function node
-│   │   └── inject/               # Message injection node
-│   ├── registry/                 # Node type registration system
-│   └── state/                    # Flow persistence (file system)
-├── data/flows/                   # Persisted flow data
-├── web/                         # React WebUI
-│   ├── src/                      # TypeScript source
-│   │   ├── components/           # React components
-│   │   ├── hooks/                # Custom React hooks
-│   │   ├── types/                # TypeScript type definitions
-│   │   ├── utils/                # Utility functions
-│   │   └── test/                 # Frontend tests (Vitest)
-│   └── dist/                     # Built frontend assets
-├── docs/                        # Documentation
-└── go.mod                       # Go module definition
+cmd/go-red/            server: main.go (wiring), config.go (flags/env/YAML),
+                       auth.go (token, origin policy, rate limit), ops.go
+                       (/api/version, /metrics), websocket/ (hub, handlers)
+cmd/gentypes/          go generate: Go DTOs -> web/src/types/generated.ts
+internal/engine/       flows, per-flow dispatch, runtime events, benchmarks
+internal/registry/     node types, schema v2, NodeRuntime, context stores
+internal/nodes/*/      47 built-in nodes, one package each; base/ = shared helpers
+internal/nodered/      Node-RED flows.json import and export
+internal/state/        flow files with schemaVersion, backups, quarantine
+internal/dto/          wire types for REST and WebSocket (source of generated.ts)
+internal/typedvalue/   msg/flow/global/str/num/json typed values and property refs
+internal/webui/        embed of the built editor (Vite writes to webui/dist)
+web/                   React 18 + TypeScript editor (own Go module so `./...` skips it)
+docs/                  PROTOCOL, ARCHITECTURE, NODE_DEVELOPMENT, PERFORMANCE, plans
 ```
 
----
+## Commands
 
-## General Development Guidelines
+| Task | Command |
+|---|---|
+| Everything CI checks | `make check` (gofmt, vet, race tests, generated types, web typecheck/lint/tests/build) |
+| Go tests | `go test -race ./...` |
+| Benchmarks | `go test ./internal/engine -run '^$' -bench . -benchtime 20000x` (numbers in `docs/PERFORMANCE.md`) |
+| Editor checks | `cd web && npm run typecheck && npm run lint && npx vitest run` |
+| End-to-end | `cd web && npm run build && npx playwright test` (real server on port 8081) |
+| Regenerate types | `make generate-types` after changing `internal/dto`, `internal/registry` metadata or WebSocket message types; commit the result |
+| Run it | `make start` (checks Go and Node, installs, builds, runs on :8080; `PORT=` and `DATA_DIR=` override) |
+| Run for development | `make dev` (both servers, Ctrl+C stops them), which is `go run ./cmd/go-red` plus `cd web && npm run dev` (Vite proxies /api and /ws to :8080), or `go run ./cmd/go-red -web-dir internal/webui/dist` after `npm run build` |
+| One binary with the editor | `make build-all` (Node 22 builds the editor, Go 1.25 embeds it) |
 
-### Code Style
-- **Go**: Follow [Effective Go](https://go.dev/doc/effective_go) and use `gofmt`/`goimports`
-- **TypeScript**: Use Prettier + ESLint configuration from `web/package.json`
-- **Naming**: Use descriptive names. Avoid abbreviations unless widely understood (e.g., `config` not `cfg`)
-- **Comments**: Write comments for public APIs, complex algorithms, and non-obvious decisions
+## Rules that hold everywhere
 
-### Git Workflow
-- Use **feature branches** for new features: `feature/[name]`
-- Use **bugfix branches** for fixes: `bugfix/[description]`
-- Use **conventional commits** format
-- Always include tests with new functionality
-- Run `go test ./...` and `npm test` (in web/) before committing
+- **One write path.** The editor changes flows only through REST
+  (`PUT /api/flows/{id}` autosaves the draft; deploy runs a snapshot). The
+  WebSocket carries server events and read-only queries. `docs/PROTOCOL.md`
+  is the contract; change it together with the code and the generated types.
+- **Definition vs. instance.** The engine keeps the editable definition and a
+  deploy-time snapshot apart; editing never touches what runs until the next
+  deploy. Mutate definitions only through engine methods (under its lock).
+- **Dispatch.** Every deployed flow has its own queue and dispatcher; node
+  executions are bounded per flow and tracked so undeploy waits for them. No
+  engine-wide lock or log per message. Nodes honor context cancellation
+  (dial with context, deadlines, `ctx.Done()` in waits) and prove it in a
+  `ctx_test.go`.
+- **Errors.** Engine sentinel errors (`ErrFlowNotFound`, `ErrInvalidFlow`,
+  ...) map to status codes in `cmd/go-red`; anything else is logged in full
+  and answered generically. Never echo internal details to clients.
+- **Input.** Flow IDs match `^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`, bodies are
+  size-capped, user strings are sanitized, HTML rendered in the editor goes
+  through DOMPurify.
+- **Security defaults.** Cross-site browser requests are refused unless the
+  origin is allowed; an optional bearer token guards the API, the WebSocket
+  and `/metrics`; import and deploy are rate limited. Keep new endpoints
+  behind the same middleware (`newRouter`).
+- **Node schemas.** A node's `ConfigSchema` (schema v2: label, widget, order,
+  group, items, visibleWhen, outputsFrom) is what the edit tray renders;
+  `internal/nodes/schema_test.go` checks every registered node.
+- **Persistence.** Flow files carry `schemaVersion`; a shape change needs a
+  migration step in `internal/state/migrate.go` and a test.
+- **Claims.** Throughput numbers come from the benchmarks, not from prose.
 
-### Testing
-- **Backend**: Use Go's `testing` package with `testify` for assertions
-- **Frontend**: Use Vitest with `@testing-library/react`
-- **Coverage**: Aim for >80% test coverage for core functionality
-- **Integration**: Test WebSocket communication between frontend and backend
+## Conventions
 
-### Performance Considerations
-- Backend must handle >100,000 messages/second
-- Use goroutines and channels for concurrent processing
-- Avoid blocking operations in hot paths
-- Frontend should remain responsive with many nodes/flows
+- Go: `gofmt`, `go vet`, godoc on exported identifiers, tests with
+  `testify`, mocks and isolated registries in engine tests.
+- TypeScript: ESLint (`--max-warnings 0`), Prettier, Vitest with Testing
+  Library, Playwright for the real server; UI strings in `web/src/i18n/`
+  (English default, German), colors only through the design tokens.
+- Commits: conventional commits, one concern per commit, tests with every
+  change, docs (`docs/*.md`, the relevant `AGENTS.md`) in the same change.
+- Never commit binaries, `web/node_modules`, `internal/webui/dist` contents
+  (only its `.gitkeep`) or `data/`.
 
----
+## Where to read more
 
-## Architecture Principles
+- `docs/PROTOCOL.md` - REST, WebSocket, schemas, auth, config, persistence format
+- `docs/ARCHITECTURE.md` - components, dispatch, lifecycle, events, editor
+- `docs/NODE_DEVELOPMENT.md` - writing a node, `internal/nodes/base`, cancellation
+- `docs/PERFORMANCE.md` - benchmark results and how to read them
+- `docs/NEXT_LEVEL_PLAN.md` - the phased plan and what each phase changed
 
-### Backend (Go)
-1. **Flow Engine** is the core - manages flow execution, message routing
-2. **Node Registry** enables plugin architecture - nodes can be added without modifying core
-3. **State Manager** abstracts persistence - supports file system, database backends
-4. **WebSocket Hub** provides real-time bidirectional communication
-
-### Frontend (React + TypeScript)
-1. **FlowProvider** manages global flow state using Zustand
-2. **ReactFlow** library for flow visualization and editing
-3. **Custom Hooks** encapsulate WebSocket and flow management logic
-4. **TypeScript** for type safety throughout the application
-
-### Communication
-- **REST API** (`/api/*`) for CRUD operations on flows, nodes
-- **WebSocket** (`/ws`) for real-time updates and message streaming
-- **Message Format**: Follow existing patterns in `internal/engine/message.go`
-
----
-
-## Security
-- Sanitize all user input in API handlers
-- Validate flow definitions before deployment
-- Use DOM sanitization (DOMPurify) for any HTML rendering
-- WebSocket connections should be authenticated in production
-- Never expose internal error details to clients
-
----
-
-## Documentation Standards
-- All public functions should have godoc comments
-- TypeScript interfaces should have JSDoc comments
-- Update `docs/ARCHITECTURE.md` when making architectural changes
-- Keep README.md up to date with setup and usage instructions
-
----
-
-## Build & Deployment
-- **Development**: `go run cmd/go-red/main.go` + `npm run dev` (in web/)
-- **Production**: Build frontend (`npm run build`), then `go build`
-- **Docker**: Use provided Dockerfile for containerization
-- **Port**: Default is 8080, configurable via `-port` flag
-
----
-
-## Agent Instructions
-
-When working in this repository:
-
-1. **Always read existing code** in the target directory before making changes
-2. **Follow existing patterns** - this project uses specific conventions for:
-   - Error handling (wrapping with context)
-   - Concurrency (goroutines with proper WaitGroup usage)
-   - WebSocket message formats
-   - React component structure
-3. **Write tests** for any new functionality
-4. **Update type definitions** when adding new API endpoints or message types
-5. **Respect the layer separation**: Backend (Go) and Frontend (TypeScript) should communicate only via defined APIs
-
----
-
-## Priority Rules
-- **Performance bugs** in the flow engine take highest priority
-- **Security issues** must be addressed immediately
-- **Breaking API changes** require migration guides in docs/
-- **Frontend/Backend sync** - ensure API contracts are consistent
-
----
-
-## Contact & Resources
-- **Primary Contact**: Project maintainer (check GitHub)
-- **Documentation**: See `docs/` directory
-- **Go Version**: 1.25+
-- **Node Version**: 18+
-
----
-
-*Last updated: 2026-06-21*
-*This file applies to all directories unless overridden by local AGENTS.md files*
+Go 1.25+, Node 22 for building the editor (18+ runs the tests).

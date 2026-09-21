@@ -2,7 +2,7 @@
 // cmd/go-red/websocket. DO NOT EDIT — run `go generate ./internal/dto/...`
 // (or `make generate-types`) to regenerate after changing those packages.
 
-export type MessageType = 'flow:list' | 'flow:get' | 'flow:create' | 'flow:update' | 'flow:delete' | 'flow:deploy' | 'flow:undeploy' | 'flow:status' | 'node:add' | 'node:remove' | 'node:update' | 'node:config' | 'node:status' | 'connection:add' | 'connection:remove' | 'message:send' | 'message:log' | 'error' | 'info' | 'ping' | 'pong' | 'state:sync' | '*';
+export type MessageType = 'flow:list' | 'flow:get' | 'flow:delete' | 'flow:status' | 'subscribe' | 'unsubscribe' | 'flow:snapshot' | 'node:status' | 'debug:message' | 'flow:metrics' | 'message:send' | 'error' | 'info' | 'ping' | 'pong' | 'state:sync' | '*';
 
 export type FlowStatus = 'draft' | 'running' | 'error' | 'deploying' | 'undeploying';
 
@@ -11,21 +11,13 @@ export interface Position {
   y: number;
 }
 
-export interface NodeStatus {
-  state: string;
-  message?: string;
-  timestamp?: string;
-  processingCount?: number;
-  errorCount?: number;
-}
-
 export interface Node {
   id: string;
   type: string;
   name?: string;
+  description?: string;
   position: Position;
   config: Record<string, any>;
-  status: NodeStatus;
   disabled: boolean;
 }
 
@@ -55,12 +47,14 @@ export interface Flow {
   id: string;
   name: string;
   description: string;
+  order?: number;
   nodes: Record<string, Node>;
   connections: Connection[];
   status: FlowStatus;
   config: FlowConfig;
   createdAt: string;
   updatedAt: string;
+  deployedAt?: string;
   version: string;
 }
 
@@ -68,10 +62,12 @@ export interface FlowSummary {
   id: string;
   name: string;
   description?: string;
+  order?: number;
   status: FlowStatus;
   nodeCount: number;
   createdAt: string;
   updatedAt: string;
+  deployedAt?: string;
 }
 
 export interface FlowCreateRequest {
@@ -83,6 +79,7 @@ export interface FlowCreateRequest {
 export interface FlowUpdateRequest {
   name?: string;
   description?: string;
+  order?: number;
   nodes?: Record<string, Node>;
   connections?: Connection[];
   config?: FlowConfig;
@@ -97,11 +94,94 @@ export interface Message {
   timestamp: string;
 }
 
+export interface DeployResponse {
+  flowId: string;
+  status: FlowStatus;
+  updatedAt?: string;
+  deployedAt?: string;
+  message?: string;
+}
+
+export interface ErrorResponse {
+  error: string;
+}
+
+export interface FlowStatusEvent {
+  flowId: string;
+  status: FlowStatus;
+  updatedAt?: string;
+  deployedAt?: string;
+  error?: string;
+}
+
+export interface NodeStatus {
+  fill?: string;
+  shape?: string;
+  text?: string;
+  timestamp?: string;
+}
+
+export interface NodeStatusEvent {
+  flowId: string;
+  nodeId: string;
+  status: NodeStatus;
+}
+
+export interface DebugMessage {
+  id: string;
+  flowId: string;
+  nodeId: string;
+  nodeName?: string;
+  nodeType?: string;
+  level: string;
+  topic?: string;
+  payload: any;
+  timestamp: string;
+}
+
+export interface NodeMetrics {
+  messages: number;
+  errors: number;
+}
+
+export interface FlowMetricsEvent {
+  flowId: string;
+  nodes: Record<string, NodeMetrics>;
+  timestamp: string;
+}
+
+export interface FlowSnapshot {
+  flowId: string;
+  status: FlowStatus;
+  nodeStatus: Record<string, NodeStatus>;
+  metrics: Record<string, NodeMetrics>;
+  debug: DebugMessage[];
+}
+
+export interface SubscribeRequest {
+  flowId: string;
+}
+
 export interface Port {
   id: string;
   name: string;
   description: string;
   required: boolean;
+}
+
+export interface Option {
+  value: string;
+  label: string;
+}
+
+export interface TypedInputOptions {
+  types: string[];
+  default?: string;
+}
+
+export interface Condition {
+  property: string;
+  values: string[];
 }
 
 export interface Property {
@@ -112,11 +192,30 @@ export interface Property {
   min?: number;
   max?: number;
   pattern: string;
+  label?: string;
+  placeholder?: string;
+  group?: string;
+  order?: number;
+  widget?: string;
+  language?: string;
+  unit?: string;
+  options?: Option[];
+  typedInput?: TypedInputOptions;
+  items?: Schema;
+  nodeTypes?: string[];
+  multiple?: boolean;
+  visibleWhen?: Condition;
 }
 
 export interface Schema {
   properties: Record<string, Property>;
   required: string[];
+}
+
+export interface OutputsFrom {
+  property: string;
+  label?: string;
+  min?: number;
 }
 
 export interface NodeMetadata {
@@ -130,6 +229,10 @@ export interface NodeMetadata {
   configSchema: Schema;
   icon: string;
   tags: string[];
+  outputsFrom?: OutputsFrom;
+  color?: string;
+  help?: string;
+  defaultName?: string;
 }
 
 export interface WebSocketMessage {

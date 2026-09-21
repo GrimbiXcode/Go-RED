@@ -1,968 +1,184 @@
-# Go-RED Main Application Guidelines
+# cmd/go-red
 
-This file contains **application-specific** guidelines for the main Go-RED application in `cmd/go-red/`.
+The HTTP server: flow engine, node registry, file state manager, REST API,
+WebSocket hub and the built editor in one binary. The wire contract (every
+route, payload and WebSocket message) is in `docs/PROTOCOL.md`.
 
----
+## Files
 
-## Package Overview
+| File | Holds |
+|---|---|
+| `main.go` | `main` (config → logging → registry → state manager → engine → hub → `http.Server`; SIGINT/SIGTERM shutdown with a 30 s deadline), `newRouter`, the REST handlers, `webHandler`/`spaHandler`/`editorNotBuiltHandler`, `sanitizeString`, `writeJSON`/`writeError`/`writeEngineError`/`statusForError`, `decodeJSON` |
+| `config.go` | `Config`, `defaultConfig`, `loadConfig`, `applyEnv`, `loadConfigFile`, `validate` |
+| `auth.go` | `validateToken`, `tokenFromRequest`, `isProtectedPath`, `requireAuth`, `originAllowed`, `corsMiddleware`, `rateLimiter` |
+| `ops.go` | `handleVersion` (`GET /api/version`), `handleMetrics` (`GET /metrics`, Prometheus text format written by hand) |
+| `websocket/hub.go` | `Hub`, `Client`, `WebSocketMessage`, the `MessageType` constants and `AllMessageTypes`, read/write pumps, per-client subscriptions |
+| `websocket/integration.go` | `WebSocketHandler`: forwards engine events to clients, answers client queries, `FlowChanged`/`FlowDeleted` |
+| `main_test.go`, `config_test.go`, `security_test.go`, `ops_test.go`, `websocket/hub_test.go` | tests, see below |
 
-The `cmd/go-red/` directory contains the **main application entry point** and related infrastructure:
+Node packages are registered by the blank imports in `main.go`; a new node
+type must be added to that list or it never reaches the registry. Hot-path
+rules (no per-message logging, no engine-wide locks) are in the root
+`AGENTS.md`.
 
-```
-cmd/go-red/
-├── main.go           # Main entry point, HTTP server, configuration
-└── websocket/        # WebSocket communication layer
-    ├── hub.go         # WebSocket hub - manages all connections
-    └── integration.go # WebSocket message handlers
-```
+## Routes (`newRouter`)
 
-This is the **executable** part of Go-RED - everything that runs when you execute `go run cmd/go-red/main.go` or the built binary.
-
----
-
-## Architecture
-
-### Main Components
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     HTTP Server (main.go)                      │
-├─────────────────────────────────────────────────────────────┤
-│  /api/*           REST API (Flows, Nodes, Messages)             │
-│  /ws              WebSocket connection                         │
-│  /                Static file server (Web UI)                  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        ↓                     ↓                     ↓
-┌─────────────┐      ┌──────────────┐    ┌──────────────────┐
-│ Flow Engine  │◄─────│ WebSocket Hub │    │ Static File Server│
-│ (internal/)  │      │ (websocket/)  │    │ (http.FileServer) │
-└─────────────┘      └──────────────┘    └──────────────────┘
-        ▲
-        │
-┌─────────────────────┐
-│   Node Registry      │
-│  (internal/registry) │
-└─────────────────────┘
-        ▲
-        │
-┌─────────────────────┐
-│   State Manager      │
-│  (internal/state)    │
-└─────────────────────┘
-```
-
-### Request Flow
+Go 1.22 pattern routing on a plain `http.ServeMux`:
 
 ```
-1. HTTP Request → main.go
-2. Route Matching → mux.HandleFunc()
-3. Handler Execution → handle*Flows(), handle*Nodes(), etc.
-4. Engine Interaction → FlowEngine methods
-5. Response → JSON or static files
+GET    /api/health                public, no auth
+GET    /api/version               public, no auth
+GET    /metrics                   Prometheus text format
+GET    /api/flows                 []dto.FlowSummary
+POST   /api/flows                 dto.FlowCreateRequest → 201 dto.Flow
+POST   /api/flows/import          rate limited; Go-RED JSON or Node-RED flows.json
+GET    /api/flows/{id}            dto.Flow
+PUT    /api/flows/{id}            dto.FlowUpdateRequest (partial) → dto.Flow
+DELETE /api/flows/{id}
+POST   /api/flows/{id}/deploy     rate limited → dto.DeployResponse
+POST   /api/flows/{id}/undeploy   → dto.DeployResponse
+GET    /api/flows/{id}/export     ?format=node-red for a Node-RED export
+GET    /api/nodes                 []registry.NodeMetadata
+GET    /api/nodes/{type}
+GET    /api/messages              ?flowId=&limit= (empty unless -message-log > 0)
+GET    /ws                        only when a WebSocketHandler was passed
+/                                 the editor (SPA fallback)
 ```
 
-### WebSocket Flow
-
-```
-1. Connection → wsHandler.ServeWebSocket()
-2. Registration → hub.register()
-3. Message Receive → hub.readPump()
-4. Message Process → hub.handleMessage()
-5. Broadcast → hub.broadcast()
-6. Send to Clients → hub.writePump()
-```
-
----
-
-## Main Application (main.go)
-
-### Command-Line Configuration
-
-The application uses **Go flags** for configuration:
-
-```go
-type Config struct {
-    Port        int    // HTTP server port (default: 8080)
-    DataDir     string // Flow data directory (default: "data")
-    PluginDir   string // Plugin directory (default: "plugins")
-    WebUIDir    string // Web UI directory (default: "web/dist")
-    MaxWorkers  int    // Worker pool size (default: 100)
-    MaxMessages int    // Message buffer size (default: 1000)
-}
-
-func parseFlags() Config {
-    var config Config
-    flag.IntVar(&config.Port, "port", 8080, "Port to listen on")
-    flag.StringVar(&config.DataDir, "data-dir", "data", "Directory for flow data")
-    flag.StringVar(&config.PluginDir, "plugin-dir", "plugins", "Directory for plugins")
-    flag.StringVar(&config.WebUIDir, "web-dir", "web/dist", "Directory for WebUI")
-    flag.IntVar(&config.MaxWorkers, "max-workers", 100, "Maximum number of worker goroutines")
-    flag.IntVar(&config.MaxMessages, "max-messages", 1000, "Maximum message buffer size")
-    flag.Parse()
-    return config
-}
-```
-
-**Usage:**
-```bash
-# Start with default settings
-go run cmd/go-red/main.go
-
-# Start on custom port
-go run cmd/go-red/main.go -port 3000
-
-# Start with custom data directory
-go run cmd/go-red/main.go -data-dir ./my-data
-
-# All flags
-go run cmd/go-red/main.go -port 3000 -data-dir ./data -web-dir ./web/dist
-```
-
-### Application Lifecycle
-
-```go
-func main() {
-    // 1. Parse configuration
-    config := parseFlags()
-    
-    // 2. Initialize logging
-    log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
-    log.Println("Starting Go—RED...")
-    
-    // 3. Initialize node registry (auto-registers built-in nodes)
-    nodeRegistry := registry.GetGlobalRegistry()
-    
-    // 4. Initialize state manager
-    stateManager, err := state.NewFileStateManager(config.DataDir)
-    if err != nil { log.Fatal(...) }
-    
-    // 5. Initialize flow engine
-    flowEngine := engine.NewFlowEngine(engine.EngineConfig{...}, nodeRegistry)
-    flowEngine.SetStateManager(stateManager)
-    
-    // 6. Load existing flows
-    if err := flowEngine.LoadAllFlows(); err != nil { log.Printf("Warning: %v", err) }
-    
-    // 7. Start flow engine
-    if err := flowEngine.Start(); err != nil { log.Fatal(...) }
-    
-    // 8. Initialize WebSocket hub
-    wsHub := websocket.NewHub()
-    wsHandler := websocket.NewWebSocketHandler(wsHub, flowEngine, nodeRegistry)
-    go wsHub.Run()
-    
-    // 9. Setup HTTP server
-    mux := http.NewServeMux()
-    // ... register routes ...
-    
-    // 10. Start HTTP server
-    server := &http.Server{Addr: ":" + strconv.Itoa(config.Port), Handler: mux}
-    go server.ListenAndServe()
-    
-    // 11. Wait for shutdown signal
-    quit := make(chan os.Signal, 1)
-    signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-    <-quit
-    
-    // 12. Graceful shutdown
-    log.Println("Shutting down...")
-    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-    defer cancel()
-    
-    flowEngine.Stop()
-    server.Shutdown(ctx)
-    
-    // 13. Save all active flows
-    activeFlows := flowEngine.GetAllFlows()
-    for _, flow := range activeFlows {
-        stateManager.SaveFlow(flow)
-    }
-    log.Println("Shutdown complete")
-}
-```
-
----
-
-## REST API Endpoints
-
-### Flows
-
-| Method | Endpoint | Description | Handler |
-|--------|----------|-------------|---------|
-| GET | `/api/flows` | List all flows | `handleGetFlows` |
-| POST | `/api/flows` | Create new flow | `handleCreateFlow` |
-| GET | `/api/flows/{id}` | Get specific flow | `handleGetFlow` |
-| PUT | `/api/flows/{id}` | Update flow | `handleUpdateFlow` |
-| DELETE | `/api/flows/{id}` | Delete flow | `handleDeleteFlow` |
-| POST | `/api/flows/{id}/deploy` | Deploy flow | `handleDeployFlow` |
-| POST | `/api/flows/{id}/undeploy` | Undeploy flow | `handleUndeployFlow` |
-| GET | `/api/flows/{id}/export` | Export flow as JSON | `handleExportFlow` |
-| POST | `/api/flows/import` | Import flow from JSON | `handleImportFlow` |
-
-### Nodes
-
-| Method | Endpoint | Description | Handler |
-|--------|----------|-------------|---------|
-| GET | `/api/nodes` | List all node types | `handleGetNodes` |
-| GET | `/api/nodes/{type}` | Get node metadata | `handleGetNode` |
-
-### Messages
-
-| Method | Endpoint | Description | Handler |
-|--------|----------|-------------|---------|
-| GET | `/api/messages` | Get message log | `handleGetMessages` |
-
-### WebSocket
-
-| Method | Endpoint | Description | Handler |
-|--------|----------|-------------|---------|
-| GET | `/ws` | WebSocket connection | `wsHandler.ServeWebSocket` |
-
-### Static Files
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Web UI (index.html) | `http.FileServer` |
-| GET | `/assets/*` | Static assets | `http.FileServer` |
-
----
-
-## API Handler Guidelines
-
-### Handler Structure
-
-All API handlers follow a similar pattern:
-
-```go
-func handleGetFlows(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
-    // 1. Get data
-    flows := e.GetAllFlows()
-    
-    // 2. Transform data for API response
-    type flowResponse struct {
-        ID          string    `json:"id"`
-        Name        string    `json:"name"`
-        Description string    `json:"description"`
-        Status      engine.FlowStatus `json:"status"`
-        CreatedAt   time.Time `json:"createdAt"`
-        UpdatedAt   time.Time `json:"updatedAt"`
-    }
-    response := make([]flowResponse, len(flows))
-    for i, flow := range flows {
-        response[i] = flowResponse{
-            ID: flow.ID, Name: flow.Name, Description: flow.Description,
-            Status: flow.Status, CreatedAt: flow.CreatedAt, UpdatedAt: flow.UpdatedAt,
-        }
-    }
-    
-    // 3. Set headers
-    w.Header().Set("Content-Type", "application/json")
-    
-    // 4. Encode response
-    json.NewEncoder(w).Encode(response)
-}
-```
-
-### Error Handling in Handlers
-
-```go
-func handleGetFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
-    flowID := r.PathValue("id")
-    
-    flow, err := e.GetFlow(flowID)
-    if err != nil {
-        // Return appropriate HTTP status code
-        http.Error(w, err.Error(), http.StatusNotFound)
-        return
-    }
-    
-    // Success
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(flow)
-}
-```
-
-**Error Response Format:**
-```json
-{
-  "error": "Flow not found",
-  "flowId": "non-existent-id"
-}
-```
-
-### Request Validation
-
-```go
-func handleCreateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
-    // 1. Validate method
-    if r.Method != "POST" {
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
-    
-    // 2. Parse request body
-    var request struct {
-        ID          string `json:"id"`
-        Name        string `json:"name"`
-        Description string `json:"description"`
-    }
-    
-    if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
-        return
-    }
-    
-    // 3. Validate required fields
-    if request.Name == "" {
-        http.Error(w, "Name is required", http.StatusBadRequest)
-        return
-    }
-    
-    // 4. Process request
-    flow, err := e.CreateFlow(request.ID, request.Name)
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
-    
-    // 5. Set created flow's description
-    if request.Description != "" {
-        flow.Description = request.Description
-    }
-    
-    // 6. Return success response
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(flow)
-}
-```
-
-### Frontend-Backend Conversion
-
-The backend uses Go types, while the frontend expects specific JSON formats. Use conversion functions:
-
-```go
-// convertFlowToFrontendAPI converts Go flow to frontend-compatible format
-func convertFlowToFrontendAPI(flow *engine.Flow) map[string]interface{} {
-    // Convert nodes
-    nodesMap := make(map[string]interface{})
-    for id, node := range flow.Nodes {
-        nodeMap := map[string]interface{}{
-            "id":       node.ID,
-            "type":     node.Type,
-            "name":     node.Name,
-            "position": map[string]float64{"x": node.X, "y": node.Y},
-            "config":   node.Config,
-            "status":   map[string]interface{}{...},
-            "disabled": node.Disabled,
-        }
-        nodesMap[id] = nodeMap
-    }
-    
-    // Convert connections
-    connectionsList := make([]interface{}, len(flow.Connections))
-    for i, conn := range flow.Connections {
-        connMap := map[string]interface{}{
-            "id":          conn.ID,
-            "sourceNode":  conn.SourceNode,
-            "sourcePort":  conn.SourcePort,
-            "targetNode":  conn.TargetNode,
-            "targetPort":  conn.TargetPort,
-        }
-        connectionsList[i] = connMap
-    }
-    
-    return map[string]interface{}{
-        "id":          flow.ID,
-        "name":        flow.Name,
-        "description": flow.Description,
-        "nodes":       nodesMap,
-        "connections": connectionsList,
-        "status":      convertFlowStatusAPI(flow.Status),
-        "config":      convertFlowConfigAPI(flow.Config),
-        "createdAt":   flow.CreatedAt.Format(time.RFC3339),
-        "updatedAt":   flow.UpdatedAt.Format(time.RFC3339),
-        "version":     flow.Version,
-    }
-}
-
-// convertFlowStatusAPI converts Go flow status to frontend status
-func convertFlowStatusAPI(status engine.FlowStatus) string {
-    switch status {
-    case engine.FlowStatusInactive:
-        return "draft"
-    case engine.FlowStatusActive:
-        return "running"
-    case engine.FlowStatusError:
-        return "error"
-    case engine.FlowStatusDeploying:
-        return "deploying"
-    case engine.FlowStatusUndeploying:
-        return "undeploying"
-    default:
-        return string(status)
-    }
-}
-```
-
----
-
-## WebSocket Implementation
-
-### WebSocket Hub (hub.go)
-
-The hub manages all WebSocket connections and broadcasts messages:
-
-```go
-type Hub struct {
-    // Registered connections
-    clients map[*Client]bool
-    
-    // Inbound messages from clients
-    broadcast chan []byte
-    
-    // Register requests from clients
-    register chan *Client
-    
-    // Unregister requests from clients
-    unregister chan *Client
-    
-    // Flow engine for processing
-    engine *engine.FlowEngine
-    
-    // Node registry
-    registry *registry.NodeRegistry
-}
-
-type Client struct {
-    hub  *Hub
-    conn *websocket.Conn
-    send chan []byte
-}
-```
-
-### Message Flow
-
-```
-Client Connection
-    ↓
-Client Registration (hub.register)
-    ↓
-Client Read Loop (client.readPump)
-    ↓
-Message Received
-    ↓
-hub.handleMessage()
-    ↓
-Process Message (interact with FlowEngine)
-    ↓
-Broadcast Response (hub.broadcast)
-    ↓
-Client Write Loop (client.writePump)
-    ↓
-All Clients Receive Message
-```
-
-### WebSocket Message Types
-
-All messages are JSON with a `type` field:
-
-```json
-{
-  "type": "message-type",
-  "payload": { ... }
-}
-```
-
-**Message Types:**
-
-| Type | Direction | Description | Payload |
-|------|-----------|-------------|---------|
-| `flow:list` | Frontend → Backend | Request flow list | - |
-| `flow:list` | Backend → Frontend | Flow list response | `{flows: [...]}` |
-| `flow:get` | Frontend → Backend | Request specific flow | `{flowId: string}` |
-| `flow:get` | Backend → Frontend | Flow response | `{flow: {...}}` |
-| `flow:create` | Frontend → Backend | Create new flow | `{name: string, description?: string}` |
-| `flow:create` | Backend → Frontend | Created flow | `{flow: {...}}` |
-| `flow:update` | Frontend → Backend | Update flow | `{flowId: string, flow: {...}}` |
-| `flow:delete` | Frontend → Backend | Delete flow | `{flowId: string}` |
-| `flow:deploy` | Frontend → Backend | Deploy flow | `{flowId: string}` |
-| `flow:undeploy` | Frontend → Backend | Undeploy flow | `{flowId: string}` |
-| `flow:status` | Backend → Frontend | Flow status change | `{flowId: string, status: string}` |
-| `node:list` | Frontend → Backend | Request node types | - |
-| `node:list` | Backend → Frontend | Node types list | `{nodes: [...]}` |
-| `message:log` | Backend → Frontend | New message in log | `{flowId: string, message: {...}}` |
-| `error` | Backend → Frontend | Error notification | `{error: string, details?: {...}}` |
-
----
-
-## Configuration Management
-
-### Environment Variables
-
-Consider supporting environment variables for production:
-
-```go
-// In main.go or config loading
-func loadConfigFromEnv() Config {
-    config := Config{}
-    
-    if port := os.Getenv("GO_RED_PORT"); port != "" {
-        if p, err := strconv.Atoi(port); err == nil {
-            config.Port = p
-        }
-    }
-    
-    if dataDir := os.Getenv("GO_RED_DATA_DIR"); dataDir != "" {
-        config.DataDir = dataDir
-    }
-    
-    return config
-}
-```
-
-**Supported Environment Variables:**
-- `GO_RED_PORT` - HTTP server port
-- `GO_RED_DATA_DIR` - Flow data directory
-- `GO_RED_PLUGIN_DIR` - Plugin directory
-- `GO_RED_WEB_DIR` - Web UI directory
-- `GO_RED_MAX_WORKERS` - Maximum worker goroutines
-- `GO_RED_MAX_MESSAGES` - Message buffer size
-
-### Configuration File (Future)
-
-Consider adding YAML/JSON configuration file support:
-
-```yaml
-# config.yaml
-server:
-  port: 8080
-  host: 0.0.0.0
-
-directories:
-  data: ./data
-  plugins: ./plugins
-  web: ./web/dist
-
-engine:
-  max_workers: 100
-  max_messages: 1000
-  default_timeout: 30s
-
-logging:
-  level: info
-  format: text
-```
-
----
-
-## Testing Main Application
-
-### Integration Tests
-
-Test the complete application stack:
-
-```go
-func TestMain_Integration(t *testing.T) {
-    // Setup
-    tmpDir := t.TempDir()
-    
-    // Start server in goroutine
-    cmd := exec.Command("go", "run", "cmd/go-red/main.go", 
-        "-port", "0", // Random port
-        "-data-dir", tmpDir,
-        "-web-dir", "web/dist",
-    )
-    
-    var stderr bytes.Buffer
-    cmd.Stderr = &stderr
-    
-    require.NoError(t, cmd.Start())
-    defer cmd.Process.Kill()
-    
-    // Wait for server to start
-    time.Sleep(2 * time.Second)
-    
-    // Find the port
-    // (This would require parsing the output or using a fixed test port)
-    port := findFreePort()
-    baseURL := fmt.Sprintf("http://localhost:%d", port)
-    
-    // Test API endpoints
-    client := &http.Client{}
-    
-    // Test GET /api/flows
-    resp, err := client.Get(baseURL + "/api/flows")
-    require.NoError(t, err)
-    defer resp.Body.Close()
-    assert.Equal(t, http.StatusOK, resp.StatusCode)
-    
-    // Test GET /api/nodes
-    resp, err = client.Get(baseURL + "/api/nodes")
-    require.NoError(t, err)
-    defer resp.Body.Close()
-    assert.Equal(t, http.StatusOK, resp.StatusCode)
-    
-    // More tests...
-}
-```
-
-### Handler Unit Tests
-
-Test individual handlers in isolation:
-
-```go
-func TestHandleGetFlows(t *testing.T) {
-    // Setup
-    registry := registry.GetGlobalRegistry()
-    engine := NewFlowEngine(DefaultEngineConfig(), registry)
-    
-    // Create test flow
-    engine.CreateFlow("test-1", "Test 1")
-    engine.CreateFlow("test-2", "Test 2")
-    
-    // Create request
-    req := httptest.NewRequest("GET", "/api/flows", nil)
-    w := httptest.NewRecorder()
-    
-    // Call handler
-    handleGetFlows(w, req, engine)
-    
-    // Verify response
-    assert.Equal(t, http.StatusOK, w.Code)
-    assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-    
-    var response []flowResponse
-    json.Unmarshal(w.Body.Bytes(), &response)
-    assert.Len(t, response, 2)
-}
-
-func TestHandleCreateFlow(t *testing.T) {
-    // Setup
-    registry := registry.GetGlobalRegistry()
-    engine := NewFlowEngine(DefaultEngineConfig(), registry)
-    
-    // Create request body
-    body := map[string]interface{}{
-        "name": "New Flow",
-        "description": "A new flow",
-    }
-    bodyJSON, _ := json.Marshal(body)
-    
-    req := httptest.NewRequest("POST", "/api/flows", bytes.NewReader(bodyJSON))
-    w := httptest.NewRecorder()
-    
-    // Call handler
-    handleCreateFlow(w, req, engine)
-    
-    // Verify response
-    assert.Equal(t, http.StatusCreated, w.Code)
-    
-    var response map[string]interface{}
-    json.Unmarshal(w.Body.Bytes(), &response)
-    assert.Equal(t, "New Flow", response["name"])
-    assert.NotEmpty(t, response["id"])
-}
-```
-
-### WebSocket Tests
-
-Test WebSocket communication:
-
-```go
-func TestWebSocket_Connection(t *testing.T) {
-    // Setup
-    registry := registry.GetGlobalRegistry()
-    engine := NewFlowEngine(DefaultEngineConfig(), registry)
-    engine.Start()
-    defer engine.Stop()
-    
-    hub := websocket.NewHub()
-    handler := websocket.NewWebSocketHandler(hub, engine, registry)
-    go hub.Run()
-    
-    // Create test server
-    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        handler.ServeWebSocket(w, r)
-    }))
-    defer server.Close()
-    
-    // Connect WebSocket client
-    u := url.URL{Scheme: "ws", Host: server.Listener.Addr().String(), Path: "/"}
-    conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
-    require.NoError(t, err)
-    defer conn.Close()
-    
-    // Send message
-    message := map[string]interface{}{
-        "type": "node:list",
-    }
-    jsonData, _ := json.Marshal(message)
-    err = conn.WriteMessage(websocket.TextMessage, jsonData)
-    require.NoError(t, err)
-    
-    // Read response
-    _, responseData, err := conn.ReadMessage()
-    require.NoError(t, err)
-    
-    var response map[string]interface{}
-    json.Unmarshal(responseData, &response)
-    assert.Equal(t, "node:list", response["type"])
-    assert.Contains(t, response, "payload")
-}
-```
-
----
-
-## Performance Considerations
-
-### HTTP Server Optimization
-
-1. **Connection Pooling**: Reuse HTTP connections
-2. **Compression**: Enable gzip compression for responses
-3. **Keep-Alive**: Enable HTTP keep-alive
-4. **Timeouts**: Set appropriate timeouts
-
-```go
-// Optimized server configuration
-server := &http.Server{
-    Addr:         ":8080",
-    Handler:      mux,
-    ReadTimeout:  10 * time.Second,
-    WriteTimeout: 10 * time.Second,
-    IdleTimeout:  30 * time.Second,
-    MaxHeaderBytes: 1 << 20, // 1 MB
-}
-```
-
-### WebSocket Optimization
-
-1. **Message Batching**: Batch multiple messages into one
-2. **Compression**: Enable WebSocket compression
-3. **Buffer Sizes**: Configure appropriate buffer sizes
-4. **Ping/Pong**: Configure keep-alive
-
-```go
-// Optimized WebSocket upgrader
-var upgrader = websocket.Upgrader{
-    ReadBufferSize:  1024,
-    WriteBufferSize: 1024,
-    CheckOrigin: func(r *http.Request) bool {
-        return true // Or implement proper origin checking
-    },
-    EnableCompression: true,
-}
-
-// In client struct
-const (
-    writeWait      = 10 * time.Second
-    pongWait       = 60 * time.Second
-    pingPeriod     = (pongWait * 9) / 10
-    maxMessageSize = 512
-)
-```
-
----
-
-## Security Considerations
-
-### WebSocket Security
-
-1. **Origin Checking**: Verify WebSocket connection origins
-2. **Authentication**: Authenticate WebSocket connections
-3. **Rate Limiting**: Prevent abuse
-4. **Message Validation**: Validate all incoming messages
-
-```go
-var upgrader = websocket.Upgrader{
-    CheckOrigin: func(r *http.Request) bool {
-        // Allow connections from specific origins
-        origin := r.Header.Get("Origin")
-        allowedOrigins := []string{"http://localhost:8080", "http://localhost:3000"}
-        for _, allowed := range allowedOrigins {
-            if origin == allowed {
-                return true
-            }
-        }
-        return false
-    },
-    // Or allow all for development
-    // CheckOrigin: func(r *http.Request) bool { return true },
-}
-```
-
-### CORS Configuration
-
-Add CORS headers for development:
-
-```go
-func enableCORS(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        w.Header().Set("Access-Control-Allow-Origin", "*")
-        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-        
-        if r.Method == "OPTIONS" {
-            w.WriteHeader(http.StatusOK)
-            return
-        }
-        
-        next.ServeHTTP(w, r)
-    })
-}
-
-// Usage
-mux.Handle("/api/", enableCORS(http.StripPrefix("/api/", apiHandler)))
-```
-
-### Input Sanitization
-
-Always sanitize user input:
-
-```go
-func sanitizeString(s string) string {
-    // Remove null bytes
-    s = strings.ReplaceAll(s, "\x00", "")
-    // Limit length
-    if len(s) > 10000 {
-        s = s[:10000]
-    }
-    return s
-}
-
-func handleCreateFlow(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
-    var request struct {
-        Name string `json:"name"`
-    }
-    
-    if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
-        return
-    }
-    
-    // Sanitize input
-    request.Name = sanitizeString(request.Name)
-    
-    // Validate
-    if request.Name == "" {
-        http.Error(w, "Name is required", http.StatusBadRequest)
-        return
-    }
-    
-    // ... rest of handler
-}
-```
-
----
-
-## Debugging
-
-### Common Issues
-
-#### Server Won't Start
-**Symptoms**: Application exits immediately or hangs
-
-**Checks:**
-1. Is the port already in use?
-2. Are there permission issues with data directory?
-3. Are required dependencies installed?
-4. Are there panic messages in stderr?
-
-**Solution:**
-```bash
-# Check port usage
-lsof -i :8080
-
-# Run with verbose logging
-go run cmd/go-red/main.go -port 9000
-
-# Check dependencies
-go mod tidy
-go mod download
-```
-
-#### API Not Responding
-**Symptoms**: API endpoints return errors or timeouts
-
-**Checks:**
-1. Is the server running?
-2. Are there errors in the server logs?
-3. Is the database/state manager connected?
-4. Are there panics in the goroutines?
-
-**Solution:**
-```go
-// Add debug logging to handlers
-func handleGetFlows(w http.ResponseWriter, r *http.Request, e *engine.FlowEngine) {
-    log.Println("GET /api/flows called")
-    defer func() {
-        if r := recover(); r != nil {
-            log.Printf("Panic in handleGetFlows: %v", r)
-        }
-    }()
-    // ... rest of handler
-}
-```
-
-#### WebSocket Connection Fails
-**Symptoms**: WebSocket connection cannot be established
-
-**Checks:**
-1. Is the WebSocket endpoint correct?
-2. Are there CORS issues?
-3. Is the origin allowed?
-4. Are there errors in browser console?
-
-**Solution:**
-```javascript
-// Check browser console for WebSocket errors
-const socket = new WebSocket("ws://localhost:8080/ws");
-socket.onerror = (e) => console.error("WebSocket error:", e);
-socket.onclose = (e) => console.log("WebSocket closed:", e.code, e.reason);
-```
-
----
-
-## Future Enhancements
-
-### Planned Features
-- **Configuration file support** (YAML/JSON)
-- **Environment variable support** for all config options
-- **HTTPS support** with automatic certificate management
-- **Authentication** (JWT, OAuth, basic auth)
-- **Rate limiting** for API endpoints
-- **API documentation** (Swagger/OpenAPI)
-- **Metrics endpoint** (Prometheus)
-- **Health check endpoint**
-- **Graceful reload** (SIGHUP to reload config)
-
-### Architecture Improvements
-- **Modular middleware** system for HTTP handlers
-- **Plugin API** for extending the server
-- **Multi-tenancy** support
-- **Cluster mode** for horizontal scaling
-- **API versioning** for backward compatibility
-
----
-
-## Checklist for Main Application Changes
-
-Before committing changes to `cmd/go-red/`:
-
-- [ ] All existing tests pass
-- [ ] HTTP endpoints work correctly
-- [ ] WebSocket communication works
-- [ ] Error handling is consistent
-- [ ] No panics in normal operation
-- [ ] Graceful shutdown works
-- [ ] Configuration changes are documented
-- [ ] Security considerations are addressed
-- [ ] Performance hasn't degraded
-- [ ] Frontend integration still works
-
----
-
-*Last updated: 2026-06-21*
-*Overrides: None (extends root AGENTS.md)*
+The REST API is the only write path. After a successful create, update,
+delete or import the handler calls `Notifier.FlowChanged`/`FlowDeleted`
+(the `WebSocketHandler`, or `noopNotifier` when the router is built without
+one). Deploy and undeploy do not notify; their result reaches clients as the
+engine's `flow:status` event.
+
+Wire types live in `internal/dto` (`ToWire`, `ToWireSummary`,
+`FlowUpdateRequest.ApplyTo`, `PopulateFromWire`); handlers never expose
+`engine.Flow` directly. `go generate ./internal/dto/...` turns those types
+plus `AllMessageTypes` into `web/src/types/generated.ts`.
+
+## Middleware order
+
+`corsMiddleware(allowedOrigins, requireAuth(token, mux))`: a request passes
+the origin policy first, then the token check, then the mux. Inside the mux,
+`POST /api/flows/import` and `POST /api/flows/{id}/deploy` are wrapped by
+`rateLimiter.limit` (429 with `Retry-After: 1`).
+
+- `corsMiddleware`: same-origin requests and static files pass untouched. A
+  cross-origin request (Origin host != request Host) to `/api/*`, `/ws` or
+  `/metrics` is refused with 403 unless its origin is allowed (or the list
+  is `*`); allowed ones get CORS headers and a 204 preflight.
+- `requireAuth`: with an empty token it returns `next` unchanged. Otherwise
+  `isProtectedPath` (`/api/*` except health and version, `/ws`, `/metrics`)
+  requires the token, compared in constant time, else 401 with
+  `WWW-Authenticate`. `tokenFromRequest` reads `Authorization: Bearer`; on
+  `/ws` only it also accepts the `gored.token.<token>` subprotocol and the
+  `access_token` query parameter.
+- `rateLimiter`: token bucket per client IP (`clientKey`), burst
+  `perMinute/4` (at least 3), buckets pruned after 10 minutes of silence.
+  `newRateLimiter(0)` returns nil and `limit` becomes a no-op.
+
+## Configuration (`loadConfig`)
+
+Precedence, lowest to highest: `defaultConfig()` → YAML file (`-config`,
+else `GORED_CONFIG`; unknown keys are an error) → `GORED_*` environment →
+flags. Flags are registered with the values so far as their defaults, which
+is how an unset flag keeps what file and environment said. `validate`
+rejects bad ports, non-positive queue sizes, negative limits, unknown log
+levels, malformed tokens (`^[A-Za-z0-9._~-]{16,}$`) and origins that are not
+`scheme://host[:port]`. `-version` prints `main.version` (set with
+`-ldflags "-X main.version=..."`) and exits.
+
+Keys: port, dataDir, webDir, maxInflight, maxMessages, messageLog, logLevel,
+authToken, allowedOrigins, rateLimit, backupKeep, backupInterval (table in
+the root README). A new setting touches `Config`, `defaultConfig`,
+`applyEnv`, the flag list, `validate`, `config_test.go` and that table.
+
+## The editor
+
+`npm run build` in `web/` writes to `internal/webui/dist`, which
+`internal/webui` embeds (`go:embed all:dist`). `webHandler` serves that
+build; `-web-dir`/`GORED_WEB_DIR` is an optional development override that
+serves a directory instead. A binary built without a frontend build answers
+extension-less paths with a 503 hint page (`editorNotBuiltHandler`); the API
+works regardless. `spaHandler` serves existing files as-is, falls back to
+`index.html` for extension-less paths (client-side routes survive a reload,
+`Cache-Control: no-cache`) and answers a missing file with an extension with
+a plain 404.
+
+## Errors
+
+`statusForError` maps the engine's sentinel errors: `ErrFlowNotFound` → 404,
+`ErrFlowExists` and `ErrFlowNotDeployed` → 409, `ErrInvalidFlowID` → 400,
+`ErrInvalidFlow` and `ErrNodeInit` → 422, anything else → 500.
+`writeEngineError` sends the error text for the classified ones and a
+generic `"internal error"` (after logging the real one) for 500s, so file
+system or internal details never reach a client. Every error body is
+`dto.ErrorResponse{Error: ...}`. Malformed JSON is a 400
+`"invalid request body"`; bodies are capped at `maxBodyBytes` (10 MiB) with
+`http.MaxBytesReader`.
+
+On the WebSocket `publicError` does the same job: engine errors are
+user-facing except `engine.ErrPersist`, which becomes `"failed to save flow"`.
+
+## Sanitization
+
+`sanitizeString` strips NUL bytes and truncates to 10000 characters. It is
+applied to flow name and description on create, update and import (the name
+is also trimmed and required) and, through `sanitizeNodes` and the update
+handler, to every node's `Type`, `Name` and `Description`. Node `config`
+maps are passed through as sent. Imported flows always get a fresh UUID
+(the original id is echoed back as `originalId`); flow ids are validated by
+the engine (`ErrInvalidFlowID`).
+
+## WebSocket
+
+One `WebSocketMessage{type, data, timestamp, requestId?}` per frame; inbound
+frames capped at 512 KiB; 256 buffered outbound messages per client; pings
+every 30 s with a 60 s pong deadline. A full send buffer drops the message
+(logged) rather than blocking the hub; the hub's broadcast channel holds 1024.
+`Hub.CheckOrigin` is set by `main` from the allowed-origins list (default
+`sameOrigin`); the upgrader selects the `gored` subprotocol.
+
+Message types (`MessageType` in `hub.go`; `AllMessageTypes` must list every
+constant because `cmd/gentypes` enumerates it by reflection):
+
+- Client queries answered on the same type: `flow:list`, `flow:get`,
+  `state:sync` (all flows plus node types), `ping` → `pong`.
+- `subscribe`/`unsubscribe` (`dto.SubscribeRequest`): a client receives
+  runtime events only for flows it subscribed to. Subscribing answers with
+  `flow:snapshot` (`dto.FlowSnapshot`: status, node statuses, metrics, debug
+  log), the catch-up source of truth because events can be dropped under load.
+- Runtime events to subscribers (`Hub.BroadcastToFlow`): `node:status`,
+  `debug:message`, `flow:metrics`, translated from `engine.Event` values in
+  `onEngineEvent`.
+- Events to every client (`Hub.Broadcast`): `flow:status` (also after every
+  REST change), `flow:list` (after any change), `flow:delete`.
+- `message:send` injects a payload at a node (`engine.InjectMessage`).
+- `error` carries `{error: <short code>, message, ...fields}`; unknown types
+  get one too. A panic in a handler is recovered in `Client.dispatch`.
+
+## Tests
+
+- `newTestServer(t)` / `newTestServerWith(t, routerOptions{...})`
+  (`main_test.go`): a started engine with an in-memory `StateManager` and
+  the real `newRouter` without a WebSocket handler, so tests hit exactly the
+  routes `main` wires. An empty `WebDir` becomes a temp dir. Use
+  `newTestServerWith` for auth, origin and rate-limit cases.
+- `do(t, h, method, target, body)` marshals `body` as JSON and returns the
+  `httptest.ResponseRecorder`; `decodeBody(t, w, &v)` unmarshals it.
+  `security_test.go` adds `request(method, target, headers)` and
+  `serve(h, req)` for header-level tests.
+- `config_test.go` drives `loadConfig(args, envOf(map))` directly;
+  `websocket/hub_test.go` covers the hub without a network (`TestMessageType`
+  lists every constant, so extend it when adding one). CI runs
+  `go test -race ./...`.
+
+## Changing things here
+
+- New route: add it to `newRouter`, use `dto` types for the body, return
+  errors through `writeEngineError`, add a `main_test.go` case, document it
+  in `docs/PROTOCOL.md`.
+- New WebSocket message: constant plus `AllMessageTypes` in `hub.go`, a case
+  in `HandleMessage` or `onEngineEvent`, `go generate ./internal/dto/...`, a
+  handler in `web/src/store/bindServerEvents.ts` if the editor consumes it,
+  `docs/PROTOCOL.md`.

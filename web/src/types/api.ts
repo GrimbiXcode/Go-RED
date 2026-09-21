@@ -1,14 +1,14 @@
 // API response types for Go-RED REST API
 import type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus } from './flow';
 import type { NodeMetadata } from './node';
-import type { MessageLogEntry, WebSocketMessageType } from './message';
+import type { WebSocketMessageType } from './message';
 
-export type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus, NodeMetadata, MessageLogEntry, WebSocketMessageType };
+export type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus, NodeMetadata, WebSocketMessageType };
 
 // FlowSummary, FlowCreateRequest, and FlowUpdateRequest are generated from
 // the Go backend (see internal/dto) via `go generate ./internal/dto/...` —
 // do not hand-describe their shape here.
-export type { FlowSummary, FlowCreateRequest, FlowUpdateRequest } from './generated';
+export type { FlowSummary, FlowCreateRequest, FlowUpdateRequest, DeployResponse, ErrorResponse } from './generated';
 
 export interface PaginatedResponse<T> {
   data: T[];
@@ -26,17 +26,6 @@ export interface Pagination {
 
 export interface NodeDetailResponse {
   metadata: NodeMetadata;
-}
-
-export interface DeployResponse {
-  flowId: string;
-  status: string;
-  message?: string;
-  errors?: string[];
-}
-
-export interface MessageLogResponse {
-  messages: MessageLogEntry[];
 }
 
 export interface HealthCheckResponse {
@@ -59,21 +48,6 @@ export interface StatsResponse {
   messagesProcessed: number;
   messagesPerSecond: number;
   averageProcessingTime: number;
-}
-
-export interface DeployRequest {
-  flowId: string;
-  force?: boolean;
-}
-
-export interface UndeployRequest {
-  flowId: string;
-}
-
-export interface MessageLogRequest {
-  flowId?: string;
-  limit?: number;
-  offset?: number;
 }
 
 export interface FlowExportRequest {

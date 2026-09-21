@@ -1,13 +1,12 @@
 import type { CSSProperties } from 'react';
-import { Handle, Position } from 'reactflow';
+import { Handle, Position } from '@xyflow/react';
 import type { Port } from '../types/node';
 
 /**
- * Shared port rendering for canvas nodes (Phase 3): small square
- * connectors sitting exactly on the node's left/right edge, evenly spaced
- * when a node has multiple ports on one side. Falls back to a single
- * default input/output pair only when a node type defines no ports at all
- * (matches the previous per-component fallback behavior).
+ * Port rendering for canvas nodes: round connectors on the node's edge,
+ * evenly spaced, drawn in the node's own color (`--node-color`, set by
+ * NodeShell). Multi-output nodes get a small label next to each output.
+ * Falls back to one input and one output when a type declares no ports.
  */
 
 export interface NodeHandlesProps {
@@ -19,16 +18,21 @@ const PORT_SIZE = 10;
 
 const defaultPort = (id: string): Port => ({ id, name: '', description: '', required: false });
 
+function portTop(index: number, total: number): string {
+  return `calc(var(--gr-node-height) * ${(index + 1) / (total + 1)})`;
+}
+
 function portStyle(index: number, total: number): CSSProperties {
-  const fraction = (index + 1) / (total + 1);
   return {
-    top: `calc(var(--gr-node-height) * ${fraction})`,
+    top: portTop(index, total),
     transform: 'translateY(-50%)',
     width: PORT_SIZE,
     height: PORT_SIZE,
-    borderRadius: 2,
-    background: '#475569',
-    border: '1px solid white',
+    minWidth: PORT_SIZE,
+    minHeight: PORT_SIZE,
+    borderRadius: '50%',
+    background: 'var(--bg-panel)',
+    border: '2px solid var(--node-color)',
   };
 }
 
@@ -40,25 +44,22 @@ export function NodeHandles({ inputPorts, outputPorts }: NodeHandlesProps) {
   return (
     <>
       {inputs.map((port, i) => (
-        <Handle
-          key={port.id}
-          type="target"
-          position={Position.Left}
-          id={port.id}
-          title={port.name || undefined}
-          style={portStyle(i, inputs.length)}
-        />
+        <Handle key={port.id} type="target" position={Position.Left} id={port.id} title={port.name || undefined} style={portStyle(i, inputs.length)} />
       ))}
       {outputs.map((port, i) => (
-        <Handle
-          key={port.id}
-          type="source"
-          position={Position.Right}
-          id={port.id}
-          title={port.name || undefined}
-          style={portStyle(i, outputs.length)}
-        />
+        <Handle key={port.id} type="source" position={Position.Right} id={port.id} title={port.name || undefined} style={portStyle(i, outputs.length)} />
       ))}
+      {outputs.length > 1 &&
+        outputs.map((port, i) => (
+          <div
+            key={`label-${port.id}`}
+            className="absolute left-full ml-2.5 text-2xs leading-none text-muted whitespace-nowrap pointer-events-none max-w-[8rem] truncate"
+            style={{ top: portTop(i, outputs.length), transform: 'translateY(-50%)' }}
+            data-testid="port-label"
+          >
+            {port.name}
+          </div>
+        ))}
     </>
   );
 }

@@ -12,31 +12,31 @@
 package typedvalue
 
 import (
-    "encoding/json"
-    "fmt"
-    "os"
-    "strconv"
-    "strings"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
 )
 
 // Type identifies how Value should be interpreted.
 type Type string
 
 const (
-    TypeString Type = "str"
-    TypeNumber Type = "num"
-    TypeBool   Type = "bool"
-    TypeJSON   Type = "json"
-    TypeEnv    Type = "env"
-    TypeMsg    Type = "msg"
-    TypeFlow   Type = "flow"
-    TypeGlobal Type = "global"
+	TypeString Type = "str"
+	TypeNumber Type = "num"
+	TypeBool   Type = "bool"
+	TypeJSON   Type = "json"
+	TypeEnv    Type = "env"
+	TypeMsg    Type = "msg"
+	TypeFlow   Type = "flow"
+	TypeGlobal Type = "global"
 )
 
 // Value is a typed input as stored in a node's configuration.
 type Value struct {
-    Type  Type   `json:"type"`
-    Value string `json:"value"`
+	Type  Type   `json:"type"`
+	Value string `json:"value"`
 }
 
 // ContextGetter is the read side of a key-value context store. Both
@@ -45,7 +45,7 @@ type Value struct {
 // import cycle, since engine will eventually construct Resolvers for
 // nodes).
 type ContextGetter interface {
-    Get(key string) (interface{}, bool)
+	Get(key string) (interface{}, bool)
 }
 
 // Resolver supplies the data a Value may reference: the current message,
@@ -53,62 +53,62 @@ type ContextGetter interface {
 // may be nil if unavailable (e.g. in a unit test); resolving a "flow" or
 // "global" Value against a nil store is an error.
 type Resolver struct {
-    Message       map[string]interface{}
-    FlowContext   ContextGetter
-    GlobalContext ContextGetter
+	Message       map[string]interface{}
+	FlowContext   ContextGetter
+	GlobalContext ContextGetter
 }
 
 // Resolve evaluates v against r, returning the resulting Go value.
 func (v Value) Resolve(r Resolver) (interface{}, error) {
-    switch v.Type {
-    case TypeString:
-        return v.Value, nil
+	switch v.Type {
+	case TypeString:
+		return v.Value, nil
 
-    case TypeNumber:
-        n, err := strconv.ParseFloat(v.Value, 64)
-        if err != nil {
-            return nil, fmt.Errorf("typedvalue: %q is not a valid number: %w", v.Value, err)
-        }
-        return n, nil
+	case TypeNumber:
+		n, err := strconv.ParseFloat(v.Value, 64)
+		if err != nil {
+			return nil, fmt.Errorf("typedvalue: %q is not a valid number: %w", v.Value, err)
+		}
+		return n, nil
 
-    case TypeBool:
-        b, err := strconv.ParseBool(v.Value)
-        if err != nil {
-            return nil, fmt.Errorf("typedvalue: %q is not a valid bool: %w", v.Value, err)
-        }
-        return b, nil
+	case TypeBool:
+		b, err := strconv.ParseBool(v.Value)
+		if err != nil {
+			return nil, fmt.Errorf("typedvalue: %q is not a valid bool: %w", v.Value, err)
+		}
+		return b, nil
 
-    case TypeJSON:
-        var out interface{}
-        if err := json.Unmarshal([]byte(v.Value), &out); err != nil {
-            return nil, fmt.Errorf("typedvalue: %q is not valid JSON: %w", v.Value, err)
-        }
-        return out, nil
+	case TypeJSON:
+		var out interface{}
+		if err := json.Unmarshal([]byte(v.Value), &out); err != nil {
+			return nil, fmt.Errorf("typedvalue: %q is not valid JSON: %w", v.Value, err)
+		}
+		return out, nil
 
-    case TypeEnv:
-        return os.Getenv(v.Value), nil
+	case TypeEnv:
+		return os.Getenv(v.Value), nil
 
-    case TypeMsg:
-        val, _ := lookupPath(r.Message, v.Value)
-        return val, nil
+	case TypeMsg:
+		val, _ := lookupPath(r.Message, v.Value)
+		return val, nil
 
-    case TypeFlow:
-        if r.FlowContext == nil {
-            return nil, fmt.Errorf("typedvalue: flow context is not available")
-        }
-        val, _ := r.FlowContext.Get(v.Value)
-        return val, nil
+	case TypeFlow:
+		if r.FlowContext == nil {
+			return nil, fmt.Errorf("typedvalue: flow context is not available")
+		}
+		val, _ := r.FlowContext.Get(v.Value)
+		return val, nil
 
-    case TypeGlobal:
-        if r.GlobalContext == nil {
-            return nil, fmt.Errorf("typedvalue: global context is not available")
-        }
-        val, _ := r.GlobalContext.Get(v.Value)
-        return val, nil
+	case TypeGlobal:
+		if r.GlobalContext == nil {
+			return nil, fmt.Errorf("typedvalue: global context is not available")
+		}
+		val, _ := r.GlobalContext.Get(v.Value)
+		return val, nil
 
-    default:
-        return nil, fmt.Errorf("typedvalue: unsupported type %q", v.Type)
-    }
+	default:
+		return nil, fmt.Errorf("typedvalue: unsupported type %q", v.Type)
+	}
 }
 
 // lookupPath resolves a dot-separated path ("payload.foo.bar") against
@@ -117,20 +117,20 @@ func (v Value) Resolve(r Resolver) (interface{}, error) {
 // map) resolves to (nil, false), mirroring JavaScript's "undefined" rather
 // than being an error.
 func lookupPath(msg map[string]interface{}, path string) (interface{}, bool) {
-    if path == "" {
-        return msg, msg != nil
-    }
+	if path == "" {
+		return msg, msg != nil
+	}
 
-    var current interface{} = msg
-    for _, segment := range strings.Split(path, ".") {
-        m, ok := current.(map[string]interface{})
-        if !ok {
-            return nil, false
-        }
-        current, ok = m[segment]
-        if !ok {
-            return nil, false
-        }
-    }
-    return current, true
+	var current interface{} = msg
+	for _, segment := range strings.Split(path, ".") {
+		m, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		current, ok = m[segment]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
 }
