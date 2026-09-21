@@ -8,23 +8,40 @@ This document describes the technical architecture of Go—RED.
 
 ## System Architecture
 
-### Layered Architecture
-
-Go—RED follows a layered architecture with clear separation of concerns:
-
-```
-Presentation Layer (React WebUI)
-│
-Application Layer (Flow Engine, Node Registry, Plugin Loader)
-│
-Infrastructure Layer (Message Bus, Worker Pool, State Manager)
-```
+One binary serves the editor and runs the flows. The diagrams in this
+document are Mermaid and render on GitHub.
 
 ### Component Diagram
 
+```mermaid
+flowchart LR
+    subgraph Browser
+        Editor["Editor (React, web/)"]
+    end
+    subgraph Binary["go-red binary (cmd/go-red)"]
+        HTTP["HTTP layer<br/>REST /api, WebSocket /ws, /metrics<br/>config, auth, origin policy, rate limit"]
+        WebUI["internal/webui<br/>embedded editor build"]
+        Engine["internal/engine<br/>flows, dispatch, events"]
+        Registry["internal/registry<br/>node types, schemas, NodeRuntime"]
+        Nodes["internal/nodes/*<br/>47 built-in nodes, shared base helpers"]
+        NodeRED["internal/nodered<br/>flows.json import/export"]
+        State["internal/state<br/>flow files, backups, quarantine"]
+    end
+    Disk[("dataDir/<br/>flows, backups, quarantine")]
+
+    Editor -- "REST (writes and reads)" --> HTTP
+    Editor <-- "WebSocket (events, snapshots)" --> HTTP
+    HTTP --> WebUI
+    HTTP --> Engine
+    HTTP --> NodeRED
+    Engine --> Registry
+    Registry --> Nodes
+    Engine --> State
+    State --> Disk
 ```
-Client (Browser) → WebSocket/HTTP → Go—RED Server → File System/Database
-```
+
+The REST API is the only write path; the WebSocket carries events and
+read-only queries (`docs/PROTOCOL.md`).
 
 ### Core Components
 
@@ -55,6 +72,20 @@ Every deployed flow has its own message queue and one dispatcher goroutine:
    context of the node that produced it.
 4. A node's output is queued again, until nothing is wired to it.
 
+```mermaid
+flowchart LR
+    Inject["InjectMessage<br/>(editor, REST/WS)"] --> Q
+    Emit["EmittingNode.Start<br/>(inject, tcp in, http in, ...)"] --> Q
+    Out["node output"] --> Q
+    Q[["flow queue<br/>-max-messages"]] --> D["dispatcher<br/>(one goroutine per flow)"]
+    D -- "targets wired to the<br/>port the message left on" --> S{{"execution slots<br/>maxConcurrency"}}
+    S --> E1["goroutine: node.Execute(ctx)"]
+    S --> E2["goroutine: node.Execute(ctx)"]
+    E1 --> Out
+    E2 --> Out
+    Q -. "full: drop + count" .-> X["gored_messages_dropped_total"]
+```
+
 There is no engine-wide worker pool and no lock per message on the hot
 path: the message log behind `GET /api/messages` is a fixed ring that is
 off unless `-message-log` is set. Undeploy (and redeploy, which is
@@ -64,6 +95,28 @@ network and timing nodes honor cancellation (dial with context, deadlines
 from the context, `ctx.Done()` in every wait), so a stop never leaves a
 goroutine, timer or connection behind; `go test -race` and goroutine-leak
 tests keep it that way.
+
+### Flow lifecycle
+
+A flow definition (what the editor edits and the state manager persists)
+and a running instance (a snapshot taken at deploy time) are separate
+objects; editing never touches what runs until the next deploy.
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft: POST /api/flows, import, load from disk
+    draft --> draft: PUT /api/flows/{id} (autosave of the definition)
+    draft --> running: deploy - snapshot, init nodes, start dispatcher and emitters
+    running --> running: PUT (definition changes, instance untouched;<br/>updatedAt > deployedAt lights Deploy)
+    running --> running: deploy again = stop old instance, start new one
+    running --> draft: undeploy - cancel context, wait for emitters and executions, Close nodes
+    draft --> error: deploy fails (node init) - reason in the debug feed
+    error --> running: deploy after the fix
+    running --> [*]: DELETE (stops first)
+    draft --> [*]: DELETE
+```
+
+Flows that were running are deployed again at startup (`LoadAllFlows`).
 
 ---
 
@@ -166,6 +219,26 @@ canvas shows the status under the node, the Info tab shows status and
 counters of the selected node, and the Debug tab is the live feed with
 filter and clear.
 
+```mermaid
+sequenceDiagram
+    participant N as Node (Execute)
+    participant E as Engine (events.go)
+    participant H as WebSocket hub
+    participant C as Editor (runtimeStore)
+
+    C->>H: subscribe {flowId}
+    H->>E: GetDebugLog, GetNodeStatuses, GetMetrics
+    H-->>C: flow:snapshot (history, statuses, counters)
+    N->>E: NodeRuntime.ReportStatus / Debug / error
+    E->>E: remember (ring buffer, latest status, counters)
+    E-)H: event (non-blocking queue, own dispatcher goroutine)
+    H-->>C: node:status / debug:message
+    loop every second
+        E-)H: flow:metrics (only when counters changed)
+        H-->>C: flow:metrics
+    end
+```
+
 ### Canvas
 
 `@xyflow/react` (v12) renders the working copy. Node positions are written
@@ -228,6 +301,17 @@ canvas draws and labels them, and saving a node drops the connections on
 ports that no longer exist in the same undo step. Node `description`
 (Markdown) and the type's `help` are shown in the Info sidebar; disabled
 nodes are kept in the flow but skipped by the engine.
+
+```mermaid
+flowchart TD
+    M["registry.NodeMetadata<br/>type, name, category, icon, help,<br/>inputs/outputs, outputsFrom"] --> S["Schema (v2)<br/>properties, required"]
+    S --> P["Property<br/>type, label, description, order, group,<br/>widget, options, min/max/pattern,<br/>items (list schema), nodeTypes, visibleWhen"]
+    M -- "GET /api/nodes" --> G["web/src/types/generated.ts<br/>(go generate)"]
+    G --> R["src/schema<br/>resolve widgets, order, visibility;<br/>validate on every change"]
+    R --> T["NodeEditTray.tsx<br/>widgets in components/config/"]
+    R --> Ports["canvas ports<br/>outputsFrom → handles and labels"]
+    T -- "config JSON" --> Store["flowStore → PUT /api/flows/{id}"]
+```
 
 ### Look and theme
 
