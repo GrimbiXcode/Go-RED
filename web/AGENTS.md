@@ -62,8 +62,9 @@ e2e/editor.spec.ts       Playwright suite
 | `npm run e2e` | Playwright; expects a fresh `npm run build` |
 | `npm run e2e:full` | build, then Playwright |
 
-`make build-web`, `make build-all`, `make test-frontend` and
-`make generate-types` in the repository root wrap the same commands.
+`make build-web`, `make build-all`, `make test-frontend`, `make e2e` and
+`make generate-types` in the repository root wrap the same commands, and
+run `npm ci` first whenever `package-lock.json` is newer than `node_modules`.
 
 ESLint rules to know: `no-console` (only `warn` and `error` allowed),
 `@typescript-eslint/no-explicit-any` off, unused vars must start with `_`,

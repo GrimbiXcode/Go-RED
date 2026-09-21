@@ -35,7 +35,8 @@ docs/                  PROTOCOL, ARCHITECTURE, NODE_DEVELOPMENT, PERFORMANCE, pl
 | Editor checks | `cd web && npm run typecheck && npm run lint && npx vitest run` |
 | End-to-end | `cd web && npm run build && npx playwright test` (real server on port 8081) |
 | Regenerate types | `make generate-types` after changing `internal/dto`, `internal/registry` metadata or WebSocket message types; commit the result |
-| Run for development | `go run ./cmd/go-red` plus `cd web && npm run dev` (Vite proxies /api and /ws to :8080), or `go run ./cmd/go-red -web-dir internal/webui/dist` after `npm run build` |
+| Run it | `make start` (checks Go and Node, installs, builds, runs on :8080; `PORT=` and `DATA_DIR=` override) |
+| Run for development | `make dev` (both servers, Ctrl+C stops them), which is `go run ./cmd/go-red` plus `cd web && npm run dev` (Vite proxies /api and /ws to :8080), or `go run ./cmd/go-red -web-dir internal/webui/dist` after `npm run build` |
 | One binary with the editor | `make build-all` (Node 22 builds the editor, Go 1.25 embeds it) |
 
 ## Rules that hold everywhere

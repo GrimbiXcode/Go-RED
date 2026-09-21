@@ -30,20 +30,16 @@ cd Go-RED
 ```bash
 git remote add upstream https://github.com/GrimbiXcode/Go-RED.git
 ```
-4. Install Go dependencies:
+4. Install all dependencies (checks your Go and Node versions first):
 ```bash
-go mod download
+make setup
 ```
-5. Install WebUI dependencies:
+5. Build and run:
 ```bash
-cd web
-npm install
-cd ..
+make start      # the finished app on http://localhost:8080
+make dev        # or: both dev servers with hot reload, editor on http://localhost:5173
 ```
-6. Build and run:
-```bash
-make run
-```
+`make help` lists every command; `make check` runs everything CI runs.
 
 ---
 

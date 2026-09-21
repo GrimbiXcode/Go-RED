@@ -32,9 +32,11 @@ docker run -p 8080:8080 -v go-red-data:/app/data ghcr.io/grimbixcode/go-red:late
 
 ```bash
 git clone https://github.com/GrimbiXcode/Go-RED.git && cd Go-RED
-make build-all      # builds the editor, then the binary that embeds it
-bin/go-red
+make start          # checks your tools, installs, builds and runs on :8080
 ```
+
+`make help` lists every other command; `make start PORT=9090` picks another
+port.
 
 Open http://localhost:8080, drag an *Inject*, a *Function* and a *Debug*
 node onto the canvas, wire them, press **Deploy**: messages show up in the
@@ -127,10 +129,10 @@ Everything on the wire is documented in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 ## Development
 
 ```bash
+make setup                      # once: checks Go and Node, installs all dependencies
+make dev                        # API on :8080 and the editor with hot reload on :5173; Ctrl+C stops both
 make check                      # everything CI runs: gofmt, vet, race tests, generated types, web checks
-go run ./cmd/go-red             # API on :8080 ...
-cd web && npm run dev           # ... editor on :5173 with a proxy to it
-cd web && npm run e2e:full      # Playwright against the real server
+make e2e                        # Playwright against the real server
 go test ./internal/engine -run '^$' -bench . -benchtime 20000x
 make generate-types             # after changing Go DTOs or WebSocket message types
 ```
