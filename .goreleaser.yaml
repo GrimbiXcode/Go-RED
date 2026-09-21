@@ -1,0 +1,94 @@
+# GoReleaser configuration (https://goreleaser.com). A tag v* triggers
+# .github/workflows/release.yml, which runs `goreleaser release --clean`:
+# the editor is built first and embedded into every binary (see
+# internal/webui), then archives, checksums, a changelog grouped by
+# conventional-commit type, and multi-arch images on GHCR are published.
+version: 2
+
+project_name: go-red
+
+before:
+  hooks:
+    - npm ci --prefix web --no-audit --no-fund
+    - npm run build --prefix web
+
+builds:
+  - id: go-red
+    main: ./cmd/go-red
+    binary: go-red
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - docs/PROTOCOL.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: Features
+      regexp: '^feat(\(.+\))?:'
+      order: 0
+    - title: Fixes
+      regexp: '^fix(\(.+\))?:'
+      order: 1
+    - title: Performance
+      regexp: '^perf(\(.+\))?:'
+      order: 2
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^docs'
+      - '^test'
+      - '^chore'
+      - '^ci'
+      - '^style'
+
+# Images: one multi-arch manifest per tag on GHCR. GoReleaser builds the
+# context with the binaries under $TARGETPLATFORM/, which
+# Dockerfile.goreleaser copies from.
+dockers_v2:
+  - id: go-red
+    dockerfile: Dockerfile.goreleaser
+    images:
+      - ghcr.io/grimbixcode/go-red
+    tags:
+      - "{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.source: https://github.com/GrimbiXcode/Go-RED
+      org.opencontainers.image.licenses: MIT
+
+release:
+  github:
+    owner: GrimbiXcode
+    name: Go-RED
+  prerelease: auto
+  footer: |
+    Binaries embed the editor; run `./go-red` and open http://localhost:8080.
+    Docker: `docker run -p 8080:8080 -v go-red-data:/app/data ghcr.io/grimbixcode/go-red:{{ .Version }}`

@@ -1,0 +1,21 @@
+# Runtime image used by GoReleaser (dockers_v2): the binary, with the editor
+# embedded, is built by GoReleaser and placed under $TARGETPLATFORM/ in the
+# build context; see .goreleaser.yaml. The regular Dockerfile builds
+# everything from source instead.
+FROM alpine:3.20
+ARG TARGETPLATFORM
+RUN apk add --no-cache ca-certificates wget \
+    && addgroup -S gored && adduser -S gored -G gored
+WORKDIR /app
+COPY $TARGETPLATFORM/go-red ./go-red
+RUN mkdir -p /app/data && chown -R gored:gored /app
+USER gored
+
+EXPOSE 8080
+VOLUME ["/app/data"]
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/health || exit 1
+
+ENTRYPOINT ["./go-red"]
+CMD ["-port", "8080", "-data-dir", "/app/data"]
