@@ -8,6 +8,8 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  useStore,
+  useUpdateNodeInternals,
   type Connection,
   type Edge,
   type NodeTypes,
@@ -113,6 +115,30 @@ export function mergeCanvasNodes(current: CanvasNode[], incoming: CanvasNode[]):
       measured: existing.measured,
     };
   });
+}
+
+/** The parts of an xyflow internal node that {@link nodesMissingHandles} reads. */
+export interface MeasuredNode {
+  id: string;
+  hidden?: boolean;
+  measured?: { width?: number; height?: number };
+  internals: { handleBounds?: unknown };
+}
+
+/**
+ * Ids of nodes that xyflow shows (it has measured their size) but cannot
+ * attach wires to, because it holds no handle positions for them. xyflow
+ * drops the handle positions when it is handed a node without `measured`,
+ * which happens when a store update reaches it between its own measurement
+ * and the matching dimensions change. It only measures again when the size
+ * changes, so without a nudge those nodes keep their wires hidden for good.
+ */
+export function nodesMissingHandles(nodes: Iterable<MeasuredNode>): string[] {
+  const ids: string[] = [];
+  for (const node of nodes) {
+    if (!node.hidden && node.measured?.width && node.measured?.height && !node.internals.handleBounds) ids.push(node.id);
+  }
+  return ids;
 }
 
 /** The wire under a screen point, if any (edges carry their id as data-id). */
@@ -221,8 +247,19 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
 
   useEffect(() => {
     setNodes((current) => mergeCanvasNodes(current, flowNodes));
+  }, [flowNodes, setNodes]);
+  useEffect(() => {
     setEdges(flowEdges);
-  }, [flowNodes, flowEdges, setNodes, setEdges]);
+  }, [flowEdges, setEdges]);
+
+  // Measures again the nodes that lost their handle positions (see
+  // nodesMissingHandles), so their wires come back.
+  const updateNodeInternals = useUpdateNodeInternals();
+  const missingHandles = useStore((state) => JSON.stringify(nodesMissingHandles(state.nodeLookup.values())));
+  useEffect(() => {
+    const ids: string[] = JSON.parse(missingHandles);
+    if (ids.length > 0) updateNodeInternals(ids);
+  }, [missingHandles, updateNodeInternals]);
 
   // A paste or duplicate asks for its new nodes to be selected.
   useEffect(() => {

@@ -82,9 +82,9 @@ in `test/editTray.test.tsx` and show it in `pages/StyleGuide.tsx`.
 - Node help and descriptions are Markdown rendered by `utils/markdown.ts`
   (DOMPurify); never put unsanitized input into `dangerouslySetInnerHTML`.
 - Canvas behavior that does not need the DOM lives in exported pure helpers
-  (`flowNodeToCanvasNode`, `mergeCanvasNodes`, `filterNodeTypes`,
-  `previewNodeRed`, `settingsRows`, ...) so it can be unit-tested; the rest
-  is covered by the e2e suite.
+  (`flowNodeToCanvasNode`, `mergeCanvasNodes`, `nodesMissingHandles`,
+  `filterNodeTypes`, `previewNodeRed`, `settingsRows`, ...) so it can be
+  unit-tested; the rest is covered by the e2e suite.
 - Component tests: `test/components.test.tsx`, `test/editTray.test.tsx`,
   `test/debugPanel.test.tsx`, `test/flowCanvas.test.tsx`, `test/auth.test.tsx`.
 
@@ -102,7 +102,12 @@ in `test/editTray.test.tsx` and show it in `pages/StyleGuide.tsx`.
    status line) and `NodeHandles`.
 4. Store updates (autosave results, server events) are folded in with
    `mergeCanvasNodes`, which keeps the on-screen position of a node being
-   dragged and the current selection.
+   dragged, the current selection and xyflow's measured size. xyflow
+   forgets a node's handle positions when an update without `measured`
+   lands between its measurement and the matching dimensions change, and
+   then draws the node but none of its wires; `nodesMissingHandles` finds
+   such nodes in xyflow's store and `FlowCanvas` has them measured again
+   (`useUpdateNodeInternals`).
 5. Selection goes to `editorStore.selectedNodeIds`; a double-click sets
    `configNodeId`, which opens `NodeEditTray`; its `onSave` calls
    `updateNode`, and the cycle starts again from the store.
