@@ -184,7 +184,14 @@ func (req *FlowUpdateRequest) ApplyTo(f *engine.Flow) {
 			f.Config.Environment[k] = v
 		}
 	}
-	f.UpdatedAt = time.Now().UTC()
+	// UpdatedAt is the engine's: it decides whether a change counts as an
+	// edit (engine.UpdateFlowWith).
+}
+
+// OnlyOrder reports whether the request moves the flow's tab and changes
+// nothing else; such an update is not an edit of the flow.
+func (req FlowUpdateRequest) OnlyOrder() bool {
+	return req.Order != nil && req.Name == nil && req.Description == nil && req.Nodes == nil && req.Connections == nil && req.Config == nil
 }
 
 // PopulateFromWire replaces f's nodes, connections, config, and description

@@ -497,7 +497,9 @@ func (s *server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 		request.Nodes[id] = node
 	}
 
-	flow, err := s.engine.UpdateFlow(r.PathValue("id"), func(f *engine.Flow) error {
+	// A body with only order moves the tab; that is not an edit of the flow.
+	opts := engine.UpdateOptions{NotAnEdit: request.OnlyOrder()}
+	flow, err := s.engine.UpdateFlowWith(r.PathValue("id"), opts, func(f *engine.Flow) error {
 		request.ApplyTo(f)
 		return nil
 	})
