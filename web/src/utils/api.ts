@@ -6,6 +6,7 @@ import type {
   FlowSummary,
   NodeMetadata,
   DeployResponse,
+  AuthUser,
 } from '../types/api';
 
 import { authHeaders, authRequired } from '../lib/auth';
@@ -194,3 +195,9 @@ export const importFlow = async (file: File): Promise<ImportResult> => {
     message: response.message,
   };
 };
+
+/** Who the editor is authenticated as (method "none" without authentication). */
+export const fetchAuthUser = (): Promise<AuthUser> => apiRequest<AuthUser>('GET', '/auth/me');
+
+/** Ends the OIDC session (clears the cookie; the provider's session stays). */
+export const signOut = (): Promise<void> => apiRequest<void>('POST', '/auth/logout');

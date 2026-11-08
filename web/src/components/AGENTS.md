@@ -19,7 +19,7 @@ import.
 | `DebugPanel.tsx` | The Debug tab: live feed from `runtimeStore` with node/text filter, pause and clear; exports `formatPayload`, `filterDebug`, `DebugEntry`. |
 | `EmptyStates.tsx` | `NoFlowsState` (create or import) and the empty-flow illustration. |
 | `ToastNotification.tsx` | `ToastHost` renders `notificationStore` toasts. |
-| `TokenPrompt.tsx` | Dialog shown while `useAuthStore.required`; stores the token and reloads. |
+| `TokenPrompt.tsx` | Dialog shown while `useAuthStore.required`: the SSO button when the server has OIDC (and "signed out" after a sign-out), the token field when it takes a token (stored, then reload). |
 | `WebSocketStatus.tsx` | Connection dot or label from `useWebSocket().state`. |
 
 ## Canvas

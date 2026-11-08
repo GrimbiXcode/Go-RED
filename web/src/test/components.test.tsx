@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Header } from '../components/Header';
+import { useAuthStore } from '../lib/auth';
 import { FlowTabs } from '../components/FlowTabs';
 import { NodePalette } from '../components/NodePalette';
 import { StatusBar } from '../components/StatusBar';
@@ -59,6 +60,40 @@ describe('Header', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Import…' }));
     expect(onImport).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+});
+
+describe('Header account menu', () => {
+  afterEach(() => {
+    cleanup(); // unmount before resetting the store the header listens to
+    useAuthStore.setState({ user: null });
+    vi.unstubAllGlobals();
+  });
+
+  it('shows the signed-in OIDC user and signs out through the API', async () => {
+    useAuthStore.setState({ user: { method: 'oidc', subject: 'u1', name: 'Ada Lovelace', email: 'ada@example.com' } });
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 204, json: async () => ({}) }));
+    vi.stubGlobal('fetch', fetchMock);
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...window.location, reload });
+
+    render(<Header {...headerProps()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Main menu' }));
+    expect(screen.getByTestId('signed-in-user')).toHaveTextContent('Ada Lovelace');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    const [url, options] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/auth/logout');
+    expect(options.method).toBe('POST');
+  });
+
+  it('has no account section without an OIDC user', () => {
+    useAuthStore.setState({ user: { method: 'token' } });
+    render(<Header {...headerProps()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Main menu' }));
+    expect(screen.queryByTestId('signed-in-user')).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Sign out' })).not.toBeInTheDocument();
   });
 });
 
