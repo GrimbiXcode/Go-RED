@@ -46,6 +46,8 @@ src/
   types/                 generated.ts (from Go) plus hand-written UI types
   utils/                 api.ts (REST client), markdown.ts, nodeCategories.ts
 e2e/editor.spec.ts       Playwright suite
+e2e/oidc.spec.ts         OIDC sign-in against a second server (:8082) and
+e2e/oidcProvider.ts      the fake OIDC provider it starts (:8083)
 ```
 
 ## Scripts (`package.json`)
@@ -65,6 +67,9 @@ e2e/editor.spec.ts       Playwright suite
 `make build-web`, `make build-all`, `make test-frontend`, `make e2e` and
 `make generate-types` in the repository root wrap the same commands, and
 run `npm ci` first whenever `package-lock.json` is newer than `node_modules`.
+`make e2e-docker` runs the Playwright suite in the official image of the
+pinned `@playwright/test` version (host Go toolchain and module cache
+mounted read-only, no network, `E2E_ARGS` passed to `playwright test`).
 
 ESLint rules to know: `no-console` (only `warn` and `error` allowed),
 `@typescript-eslint/no-explicit-any` off, unused vars must start with `_`,
@@ -79,7 +84,8 @@ ESLint rules to know: `no-console` (only `warn` and `error` allowed),
   `ToastHost` and `TokenPrompt`.
 - REST (`src/utils/api.ts`): `fetchFlows`, `fetchFlow`, `createFlow`,
   `updateFlow`, `deleteFlow`, `deployFlow`, `undeployFlow`, `getNodes`,
-  `getNode`, `exportFlow` (triggers a download), `importFlow(file)`. Every
+  `getNode`, `exportFlow` (triggers a download), `importFlow(file)`,
+  `fetchAuthUser`, `signOut`. Every
   call sends `authHeaders()`; a 401 calls `authRequired()`; a non-2xx
   response throws an `Error` with the server's `error` text.
   `VITE_API_BASE_URL` overrides the `/api` base.
@@ -96,8 +102,31 @@ ESLint rules to know: `no-console` (only `warn` and `error` allowed),
   runtime subscription on the open flow. `editorActions.ts` holds
   copy/paste/duplicate/align/distribute/auto-layout.
 - Auth (`src/lib/auth.ts`, `components/TokenPrompt.tsx`): the token is kept
-  in `localStorage` (`go-red.token`); after a 401 the prompt asks for it and
-  reloads the page on save.
+  in `localStorage` (`go-red.token`); an OIDC session is an HttpOnly cookie
+  the browser sends by itself. After a 401, `authRequired()` loads
+  `GET /api/auth/info`: with OIDC as the only method it goes to
+  `/auth/login?next=<page>` on its own (only before anything was
+  authenticated in this page load, at most once a minute and not after a
+  sign-out, via the `go-red.ssoRedirect` sessionStorage mark), otherwise
+  the prompt offers the SSO button and/or the token field (a token reloads
+  the page on save). `App` loads `GET /api/auth/me` into `useAuthStore.user`;
+  the header menu shows an OIDC user and *Sign out* (saves, then
+  `POST /api/auth/logout`; with a `logoutUrl` the browser goes to the
+  provider's logout, which comes back to the editor, else it reloads;
+  either way into the signed-out dialog). After a sign-out the SSO button
+  adds `reauth=1`, so the provider checks the user again.
+  Unsaved work survives re-authentication: `flowStore` registers
+  `onReauthentication` hooks; `startSignIn` and sign-out stash the unsaved
+  draft in `sessionStorage` (`go-red.unsavedFlow`) with `baseUpdatedAt`, the
+  server version it was made on (set on load and save, never by status
+  events). `selectFlow` restores it as one undoable step when the server
+  still has that version; otherwise it sets `staleStash` and
+  `StaleDraftDialog` asks (keep, server version, download) through
+  `resolveStaleStash`. A successful save drops that flow's stash. The leave
+  prompt is skipped only while `isSigningIn()` (stash written, or nothing to
+  stash), which `pageshow` from the back/forward cache resets. A token
+  entered mid-session retries in place (`resumeAfterToken`) instead of
+  reloading.
 - Types (`src/types/`): `generated.ts` comes from
   `go generate ./internal/dto/...` and is never edited by hand; the other
   files re-export it and add UI-only types.

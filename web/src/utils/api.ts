@@ -6,9 +6,11 @@ import type {
   FlowSummary,
   NodeMetadata,
   DeployResponse,
+  AuthUser,
 } from '../types/api';
 
 import { authHeaders, authRequired } from '../lib/auth';
+import type { LogoutResponse } from '../types/generated';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
@@ -149,17 +151,21 @@ export const exportFlow = async (flowId: string, format: ExportFormat = 'go-red'
     throw new Error('No data in response');
   }
 
-  const dataStr = JSON.stringify(response, null, 2);
-  const dataBlob = new Blob([dataStr], { type: 'application/json' });
+  downloadJson(response, format === 'node-red' ? `flow-${flowId}.node-red.json` : `flow-${flowId}.json`);
+};
+
+/** Saves data as a pretty-printed JSON file through the browser's download. */
+export function downloadJson(data: unknown, filename: string): void {
+  const dataBlob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(dataBlob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = format === 'node-red' ? `flow-${flowId}.node-red.json` : `flow-${flowId}.json`;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
-};
+}
 
 export interface ImportedFlow {
   flowId: string;
@@ -194,3 +200,9 @@ export const importFlow = async (file: File): Promise<ImportResult> => {
     message: response.message,
   };
 };
+
+/** Who the editor is authenticated as (method "none" without authentication). */
+export const fetchAuthUser = (): Promise<AuthUser> => apiRequest<AuthUser>('GET', '/auth/me');
+
+/** Ends the OIDC session; logoutUrl, when set, ends the provider's session too. */
+export const signOut = (): Promise<LogoutResponse> => apiRequest<LogoutResponse>('POST', '/auth/logout');

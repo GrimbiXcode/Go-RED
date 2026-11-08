@@ -1,6 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Header } from '../components/Header';
+import { useAuthStore } from '../lib/auth';
+import { StaleDraftDialog } from '../components/StaleDraftDialog';
+import { useFlowStore, __resetFlowStoreForTests } from '../store/flowStore';
+import type { Flow } from '../types/flow';
 import { FlowTabs } from '../components/FlowTabs';
 import { NodePalette } from '../components/NodePalette';
 import { StatusBar } from '../components/StatusBar';
@@ -59,6 +63,86 @@ describe('Header', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Import…' }));
     expect(onImport).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+});
+
+describe('Header account menu', () => {
+  afterEach(() => {
+    cleanup(); // unmount before resetting the store the header listens to
+    useAuthStore.setState({ user: null });
+    vi.unstubAllGlobals();
+  });
+
+  it('shows the signed-in OIDC user and signs out through the API', async () => {
+    useAuthStore.setState({ user: { method: 'oidc', subject: 'u1', name: 'Ada Lovelace', email: 'ada@example.com' } });
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 204, json: async () => ({}) }));
+    vi.stubGlobal('fetch', fetchMock);
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...window.location, reload });
+
+    render(<Header {...headerProps()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Main menu' }));
+    expect(screen.getByTestId('signed-in-user')).toHaveTextContent('Ada Lovelace');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    const [url, options] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/auth/logout');
+    expect(options.method).toBe('POST');
+  });
+
+  it('has no account section without an OIDC user', () => {
+    useAuthStore.setState({ user: { method: 'token' } });
+    render(<Header {...headerProps()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Main menu' }));
+    expect(screen.queryByTestId('signed-in-user')).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Sign out' })).not.toBeInTheDocument();
+  });
+});
+
+describe('StaleDraftDialog', () => {
+  const flow = {
+    id: 'f1',
+    name: 'Theirs',
+    description: '',
+    nodes: {},
+    connections: [],
+    status: 'draft',
+    config: { timeout: 30, maxConcurrency: 0, retryPolicy: { maxRetries: 0, backoff: 1, maxBackoff: 1, retryOn: [] }, environment: {} },
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:05:00Z',
+    version: '1',
+  } as Flow;
+  const stash = { flowId: 'f1', name: 'Mine', description: '', nodes: {}, connections: [], config: flow.config, baseUpdatedAt: '2026-01-01T00:00:00Z', stashedAt: 1 };
+
+  afterEach(() => {
+    cleanup();
+    __resetFlowStoreForTests();
+    vi.unstubAllGlobals();
+  });
+
+  it('stays hidden without a stale stash', () => {
+    useFlowStore.setState({ flow, staleStash: null });
+    render(<StaleDraftDialog />);
+    expect(screen.queryByTestId('stale-draft')).not.toBeInTheDocument();
+  });
+
+  it('offers keep, server and download', () => {
+    const resolveStaleStash = vi.fn();
+    useFlowStore.setState({ flow, staleStash: stash, resolveStaleStash });
+    const createObjectURL = vi.fn((blob: Blob) => (blob ? 'blob:x' : ''));
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL: vi.fn() });
+    render(<StaleDraftDialog />);
+    expect(screen.getByTestId('stale-draft')).toHaveTextContent('“Mine”');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download my changes' }));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(resolveStaleStash).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use the server version' }));
+    expect(resolveStaleStash).toHaveBeenCalledWith('server');
+    fireEvent.click(screen.getByRole('button', { name: 'Keep my changes' }));
+    expect(resolveStaleStash).toHaveBeenCalledWith('keep');
   });
 });
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -60,17 +61,27 @@ func TestLoadConfigRejectsBadValues(t *testing.T) {
 		env  map[string]string
 		yaml string
 	}{
-		"unknown yaml key":      {yaml: "prot: 1\n"},
-		"bad env int":           {env: map[string]string{"GORED_PORT": "eighty"}},
-		"bad env duration":      {env: map[string]string{"GORED_BACKUP_INTERVAL": "soon"}},
-		"port out of range":     {args: []string{"-port", "70000"}},
-		"short token":           {args: []string{"-auth-token", "abc"}},
-		"token with slashes":    {args: []string{"-auth-token", "abc/def/ghi/jkl/mno"}},
-		"origin without scheme": {args: []string{"-allowed-origins", "app.example"}},
-		"origin with path":      {args: []string{"-allowed-origins", "http://app.example/api"}},
-		"bad log level":         {args: []string{"-log-level", "loud"}},
-		"negative backups":      {args: []string{"-backup-keep", "-1"}},
-		"unknown flag":          {args: []string{"-max-workers", "3"}},
+		"unknown yaml key":         {yaml: "prot: 1\n"},
+		"bad env int":              {env: map[string]string{"GORED_PORT": "eighty"}},
+		"bad env duration":         {env: map[string]string{"GORED_BACKUP_INTERVAL": "soon"}},
+		"port out of range":        {args: []string{"-port", "70000"}},
+		"short token":              {args: []string{"-auth-token", "abc"}},
+		"token with slashes":       {args: []string{"-auth-token", "abc/def/ghi/jkl/mno"}},
+		"origin without scheme":    {args: []string{"-allowed-origins", "app.example"}},
+		"origin with path":         {args: []string{"-allowed-origins", "http://app.example/api"}},
+		"bad log level":            {args: []string{"-log-level", "loud"}},
+		"negative backups":         {args: []string{"-backup-keep", "-1"}},
+		"unknown flag":             {args: []string{"-max-workers", "3"}},
+		"short session secret":     {args: []string{"-session-secret", "too-short"}},
+		"oidc without client":      {args: []string{"-oidc-issuer", "https://idp.example", "-oidc-redirect-url", "https://red.example/auth/callback", "-oidc-allow-any-user"}},
+		"oidc without redirect":    {args: []string{"-oidc-issuer", "https://idp.example", "-oidc-client-id", "c", "-oidc-allow-any-user"}},
+		"oidc redirect path":       {args: []string{"-oidc-issuer", "https://idp.example", "-oidc-client-id", "c", "-oidc-redirect-url", "https://red.example/callback", "-oidc-allow-any-user"}},
+		"oidc issuer scheme":       {args: []string{"-oidc-issuer", "idp.example", "-oidc-client-id", "c", "-oidc-redirect-url", "https://red.example/auth/callback", "-oidc-allow-any-user"}},
+		"oidc without allowlist":   {args: []string{"-oidc-issuer", "https://idp.example", "-oidc-client-id", "c", "-oidc-redirect-url", "https://red.example/auth/callback"}},
+		"oidc bad email entry":     {args: []string{"-oidc-issuer", "https://idp.example", "-oidc-client-id", "c", "-oidc-redirect-url", "https://red.example/auth/callback", "-oidc-allowed-emails", "example.com"}},
+		"client id without issuer": {args: []string{"-oidc-client-id", "c"}},
+		"bad allow-any env":        {env: map[string]string{"GORED_OIDC_ALLOW_ANY_USER": "maybe"}},
+		"bad oidc logout":          {args: []string{"-oidc-logout", "everywhere"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -91,4 +102,68 @@ func TestDefaultConfigIsValid(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, defaultConfig(), cfg)
 	assert.NoError(t, cfg.validate())
+}
+
+func TestLoadConfigOIDC(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "go-red.yaml")
+	require.NoError(t, os.WriteFile(file, []byte(`
+oidcIssuer: https://idp.example/realms/red
+oidcClientId: go-red
+oidcRedirectUrl: https://red.example/auth/callback
+oidcAllowedEmails: [ada@example.com]
+sessionTtl: 2h
+`), 0o644))
+	cfg, _, err := loadConfig([]string{"-config", file, "-oidc-allowed-groups", "admins,ops"}, envOf(map[string]string{
+		"GORED_OIDC_CLIENT_SECRET": "from-env",
+		"GORED_SESSION_SECRET":     "0123456789abcdef0123456789abcdef",
+		"GORED_OIDC_SCOPES":        "email",
+	}))
+	require.NoError(t, err)
+	settings, ok := cfg.oidcSettings()
+	require.True(t, ok)
+	assert.Equal(t, oidcSettings{
+		Issuer:        "https://idp.example/realms/red",
+		ClientID:      "go-red",
+		ClientSecret:  "from-env",
+		RedirectURL:   "https://red.example/auth/callback",
+		Scopes:        []string{"email"},
+		AllowedEmails: []string{"ada@example.com"},
+		AllowedGroups: []string{"admins", "ops"},
+		GroupsClaim:   "groups",
+		Logout:        "provider",
+		SessionSecret: "0123456789abcdef0123456789abcdef",
+		SessionTTL:    2 * time.Hour,
+	}, settings)
+
+	_, ok = defaultConfig().oidcSettings()
+	assert.False(t, ok, "sign-in is off by default")
+}
+
+func TestSecretsStayOutOfUsageText(t *testing.T) {
+	var out bytes.Buffer
+	flagOutput = &out
+	t.Cleanup(func() { flagOutput = os.Stderr })
+	env := envOf(map[string]string{
+		"GORED_AUTH_TOKEN":         "env-auth-token-0123456789",
+		"GORED_OIDC_CLIENT_SECRET": "env-client-secret",
+		"GORED_SESSION_SECRET":     "env-session-secret-0123456789abcdef0123",
+	})
+
+	for _, args := range [][]string{{"-help"}, {"-no-such-flag"}} {
+		out.Reset()
+		_, _, err := loadConfig(args, env)
+		require.Error(t, err)
+		usage := out.String()
+		assert.Contains(t, usage, "-oidc-client-secret", "the flags are still listed")
+		for _, secret := range []string{"env-auth-token", "env-client-secret", "env-session-secret"} {
+			assert.NotContains(t, usage, secret, "%v prints %s", args, secret)
+		}
+	}
+
+	// The secret flags still work, and beat the environment.
+	cfg, _, err := loadConfig([]string{"-auth-token", "flag-auth-token-0123456789", "-session-secret", "flag-session-secret-0123456789abcdef01"}, env)
+	require.NoError(t, err)
+	assert.Equal(t, "flag-auth-token-0123456789", cfg.AuthToken)
+	assert.Equal(t, "flag-session-secret-0123456789abcdef01", cfg.SessionSecret)
+	assert.Equal(t, "env-client-secret", cfg.OIDCClientSecret, "an unset secret flag keeps the environment's value")
 }

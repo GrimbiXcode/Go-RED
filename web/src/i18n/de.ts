@@ -29,6 +29,8 @@ const de: TranslationResource = {
     deployThis: 'Diesen Flow deployen',
     deployAll_one: 'Alle geänderten Flows deployen ({{count}})',
     deployAll_other: 'Alle geänderten Flows deployen ({{count}})',
+    account: 'Konto',
+    signOut: 'Abmelden',
   },
   context: {
     configure: 'Konfigurieren…',
@@ -288,6 +290,7 @@ const de: TranslationResource = {
   },
   toast: {
     flowCreateFailed: 'Flow konnte nicht angelegt werden: {{message}}',
+    unsavedRestored: 'Deine ungespeicherten Änderungen von vor der Anmeldung wurden wiederhergestellt',
     flowDeleted: 'Flow gelöscht',
     flowDeleteFailed: 'Flow konnte nicht gelöscht werden: {{message}}',
     deployed: 'Flow deployed',
@@ -315,11 +318,23 @@ const de: TranslationResource = {
     deploying: 'wird deployed',
     undeploying: 'wird gestoppt',
   },
+  staleDraft: {
+    title: 'Dieser Flow hat sich während der Anmeldung geändert',
+    text: 'Deine ungespeicherten Änderungen an „{{name}}“ beruhen auf einer älteren Version. Inzwischen hat jemand den Flow gespeichert; behältst du deine Änderungen, ersetzen sie diese Version (ein Rückgängig holt sie zurück).',
+    keep: 'Meine Änderungen behalten',
+    server: 'Serverversion verwenden',
+    download: 'Meine Änderungen herunterladen',
+  },
   auth: {
     title: 'Anmelden',
     text: 'Dieser Go-RED-Server verlangt ein Zugriffstoken. Gib das Token ein, mit dem er gestartet wurde (-auth-token oder GORED_AUTH_TOKEN).',
     placeholder: 'Zugriffstoken',
     submit: 'Weiter',
+    ssoText: 'Melde dich mit dem Konto an, das deine Organisation für diesen Go-RED-Server verwendet.',
+    ssoButton: 'Mit Single Sign-on anmelden',
+    or: 'oder',
+    signedOut: 'Du bist abgemeldet.',
+    signOutFailed: 'Abmelden fehlgeschlagen: {{message}}',
   },
   common: {
     close: 'Schließen',

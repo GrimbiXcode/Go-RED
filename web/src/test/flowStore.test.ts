@@ -14,7 +14,11 @@ vi.mock('../utils/api', () => ({
 }));
 
 import * as api from '../utils/api';
+import { isSigningIn, onReauthentication, resumeAfterToken, startSignIn, useAuthStore } from '../lib/auth';
 import {
+  UNSAVED_STASH_KEY,
+  resumeAfterReauthentication,
+  stashUnsavedWork,
   useFlowStore,
   __resetFlowStoreForTests,
   AUTOSAVE_DELAY_MS,
@@ -285,5 +289,191 @@ describe('flowStore save and deploy', () => {
     store().applyFlowDeleted('f1');
     expect(store().flow).toBeNull();
     expect(store().flows).toHaveLength(0);
+  });
+});
+
+describe('unsaved work across re-authentication', () => {
+  const stashed = () => JSON.parse(window.sessionStorage.getItem(UNSAVED_STASH_KEY) ?? 'null');
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    useAuthStore.setState({ user: null, required: false, info: null });
+  });
+
+  afterEach(() => {
+    window.sessionStorage.clear();
+    vi.unstubAllGlobals();
+    onReauthentication({ beforeSignIn: stashUnsavedWork, resume: resumeAfterReauthentication });
+  });
+
+  it('stashes an edit that could not be saved and restores it when the flow opens again', async () => {
+    await openFlow();
+    vi.mocked(api.updateFlow).mockRejectedValueOnce(new Error('authentication required'));
+    const id = store().addNode('debug', { x: 10, y: 10 })!;
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    expect(store().saveState).toBe('error');
+
+    // The dialog's sign-in button: the flow store's hook stashes first.
+    vi.stubGlobal('location', { ...window.location, pathname: '/flow/f1', search: '', assign: vi.fn() });
+    startSignIn({ methods: ['oidc'], loginUrl: '/auth/login' });
+    expect(stashed()).toMatchObject({ flowId: 'f1', name: 'Flow' });
+    expect(Object.keys(stashed().nodes)).toEqual([id]);
+
+    // Back from the provider: a fresh page opens the flow from the server.
+    __resetFlowStoreForTests();
+    await openFlow();
+    expect(Object.keys(store().flow!.nodes)).toEqual([id]);
+    expect(store().saveState).toBe('pending');
+    expect(selectCanUndo(store())).toBe(true);
+    expect(window.sessionStorage.getItem(UNSAVED_STASH_KEY)).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    expect(store().saveState).toBe('idle');
+    const calls = vi.mocked(api.updateFlow).mock.calls;
+    const [, payload] = calls[calls.length - 1];
+    expect(Object.keys(payload.nodes!)).toEqual([id]);
+
+    store().undo();
+    expect(store().flow!.nodes).toEqual({});
+  });
+
+  it('stashes nothing when everything is saved, and keeps a stash for another flow', async () => {
+    await openFlow();
+    stashUnsavedWork();
+    expect(stashed()).toBeNull();
+
+    const other = { flowId: 'f2', name: 'Other', description: '', nodes: {}, connections: [], config: makeFlow().config, stashedAt: Date.now() };
+    window.sessionStorage.setItem(UNSAVED_STASH_KEY, JSON.stringify(other));
+    __resetFlowStoreForTests();
+    await openFlow();
+    expect(store().saveState).toBe('idle');
+    expect(stashed()).toEqual(other);
+  });
+
+  it('does not replay a stash older than an hour', async () => {
+    const old = { flowId: 'f1', name: 'Old', description: '', nodes: { x: { id: 'x' } }, connections: [], config: makeFlow().config, stashedAt: Date.now() - 2 * 60 * 60 * 1000 };
+    window.sessionStorage.setItem(UNSAVED_STASH_KEY, JSON.stringify(old));
+    await openFlow();
+    expect(store().flow!.name).toBe('Flow');
+    expect(store().saveState).toBe('idle');
+    expect(stashed()).toBeNull();
+  });
+
+  /** A stash with one debug node, made on the server version `base`. */
+  function stashOn(base: string | null) {
+    const stash = { flowId: 'f1', name: 'Mine', description: '', nodes: { mine: { id: 'mine', type: 'debug', name: 'Mine', position: { x: 0, y: 0 }, config: {}, disabled: false } }, connections: [], config: makeFlow().config, baseUpdatedAt: base, stashedAt: Date.now() };
+    window.sessionStorage.setItem(UNSAVED_STASH_KEY, JSON.stringify(stash));
+    return stash;
+  }
+  const serverNodes = { theirs: { id: 'theirs', type: 'inject', name: 'Theirs', position: { x: 0, y: 0 }, config: {}, disabled: false } };
+  const T1 = '2026-01-01T00:05:00Z';
+
+  it('asks before applying a stash whose flow was saved by someone else since', async () => {
+    const stash = stashOn(T0);
+    await openFlow(makeFlow({ updatedAt: T1, nodes: serverNodes }));
+    expect(Object.keys(store().flow!.nodes)).toEqual(['theirs']);
+    expect(store().saveState).toBe('idle');
+    expect(store().staleStash).toEqual(stash);
+    expect(stashed()).toEqual(stash);
+
+    // A reload before deciding asks again.
+    __resetFlowStoreForTests();
+    await openFlow(makeFlow({ updatedAt: T1, nodes: serverNodes }));
+    expect(store().staleStash).toEqual(stash);
+
+    store().resolveStaleStash('keep');
+    expect(store().staleStash).toBeNull();
+    expect(stashed()).toBeNull();
+    expect(store().flow!.name).toBe('Mine');
+    expect(Object.keys(store().flow!.nodes)).toEqual(['mine']);
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    const calls = vi.mocked(api.updateFlow).mock.calls;
+    expect(Object.keys(calls[calls.length - 1][1].nodes!)).toEqual(['mine']);
+
+    store().undo();
+    expect(Object.keys(store().flow!.nodes)).toEqual(['theirs']);
+  });
+
+  it('drops a stale stash when the server version is chosen', async () => {
+    stashOn(T0);
+    await openFlow(makeFlow({ updatedAt: T1, nodes: serverNodes }));
+    store().resolveStaleStash('server');
+    expect(store().staleStash).toBeNull();
+    expect(stashed()).toBeNull();
+    expect(Object.keys(store().flow!.nodes)).toEqual(['theirs']);
+    expect(store().saveState).toBe('idle');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    expect(api.updateFlow).not.toHaveBeenCalled();
+  });
+
+  it('keeps the base version when a status event reports someone else saving', async () => {
+    await openFlow();
+    expect(store().baseUpdatedAt).toBe(T0);
+    store().applyFlowStatus({ flowId: 'f1', status: 'draft', updatedAt: T1 });
+    expect(store().flow!.updatedAt).toBe(T1);
+    expect(store().baseUpdatedAt).toBe(T0);
+
+    vi.mocked(api.updateFlow).mockRejectedValueOnce(new Error('authentication required'));
+    store().addNode('debug', { x: 0, y: 0 });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    stashUnsavedWork();
+    expect(stashed().baseUpdatedAt).toBe(T0);
+  });
+
+  it('drops the stash for a flow once it saves successfully', async () => {
+    await openFlow();
+    vi.mocked(api.updateFlow).mockRejectedValueOnce(new Error('authentication required'));
+    store().addNode('debug', { x: 0, y: 0 });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    expect(stashUnsavedWork()).toBe(true);
+    expect(stashed()).not.toBeNull();
+
+    // The sign-in did not leave the page after all; the next save works.
+    await store().flushSave();
+    expect(store().saveState).toBe('idle');
+    expect(stashed()).toBeNull();
+  });
+
+  it('keeps the leave prompt when the stash cannot be written, and after coming back from the cache', async () => {
+    vi.stubGlobal('location', { ...window.location, pathname: '/flow/f1', search: '', assign: vi.fn() });
+    await openFlow();
+    vi.mocked(api.updateFlow).mockRejectedValueOnce(new Error('authentication required'));
+    store().addNode('debug', { x: 0, y: 0 });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError');
+    });
+    startSignIn({ methods: ['oidc'], loginUrl: '/auth/login' });
+    expect(isSigningIn()).toBe(false);
+    setItem.mockRestore();
+
+    startSignIn({ methods: ['oidc'], loginUrl: '/auth/login' });
+    expect(isSigningIn()).toBe(true);
+    const back = new Event('pageshow');
+    Object.defineProperty(back, 'persisted', { value: true });
+    window.dispatchEvent(back);
+    expect(isSigningIn()).toBe(false);
+  });
+
+  it('a token entered mid-session retries the failed save in place instead of reloading', async () => {
+    await openFlow();
+    vi.mocked(api.updateFlow).mockRejectedValueOnce(new Error('authentication required'));
+    store().addNode('inject', { x: 0, y: 0 });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    expect(store().saveState).toBe('error');
+
+    const reload = vi.fn();
+    useAuthStore.setState({ user: { method: 'token' } });
+    resumeAfterToken(reload);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reload).not.toHaveBeenCalled();
+    expect(api.updateFlow).toHaveBeenCalledTimes(2);
+    expect(store().saveState).toBe('idle');
+
+    // Nothing was authenticated in this page load yet: reload instead.
+    useAuthStore.setState({ user: null });
+    resumeAfterToken(reload);
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 });

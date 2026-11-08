@@ -95,6 +95,13 @@ the environment, which wins over the file.
 | `-port` | `GORED_PORT` | `8080` | HTTP port |
 | `-data-dir` | `GORED_DATA_DIR` | `data` | flows, backups, quarantine |
 | `-auth-token` | `GORED_AUTH_TOKEN` | – | bearer token for the API, the WebSocket and `/metrics` (≥ 16 chars of `A-Z a-z 0-9 . _ ~ -`); the editor asks for it once |
+| `-oidc-issuer` | `GORED_OIDC_ISSUER` | – | OpenID Connect provider; turns on editor sign-in (needs `-oidc-client-id`, `-oidc-redirect-url` and an allowlist; see below) |
+| `-oidc-client-id` / `-oidc-client-secret` | `GORED_OIDC_CLIENT_ID` / `GORED_OIDC_CLIENT_SECRET` | – | the client registered at the provider (secret optional, PKCE is always used) |
+| `-oidc-redirect-url` | `GORED_OIDC_REDIRECT_URL` | – | `https://your-host/auth/callback`, registered at the provider |
+| `-oidc-allowed-emails` / `-oidc-allowed-groups` | `GORED_OIDC_ALLOWED_EMAILS` / `GORED_OIDC_ALLOWED_GROUPS` | – | who may sign in: verified addresses or `@domain`, groups from the `-oidc-groups-claim` claim (default `groups`); `-oidc-allow-any-user` lets everyone in |
+| `-oidc-logout` | `GORED_OIDC_LOGOUT` | `provider` | `provider`: signing out also ends the provider session (register `https://your-host/` as its logout callback); `local`: only Go-RED's |
+| `-oidc-scopes` | `GORED_OIDC_SCOPES` | `profile,email` | scopes requested besides `openid` |
+| `-session-secret` / `-session-ttl` | `GORED_SESSION_SECRET` / `GORED_SESSION_TTL` | random / `12h` | key (≥ 32 chars) that signs session cookies, so sessions survive a restart; sign-in lifetime |
 | `-allowed-origins` | `GORED_ALLOWED_ORIGINS` | – | extra browser origins (`scheme://host[:port]`, comma-separated, or `*`); the editor's own origin is always allowed |
 | `-rate-limit` | `GORED_RATE_LIMIT` | `60` | import/deploy requests per client and minute (`0` disables) |
 | `-max-inflight` | `GORED_MAX_INFLIGHT` | `1024` | concurrent node executions per flow (a flow's `maxConcurrency` overrides it) |
@@ -110,6 +117,19 @@ port: 8080
 authToken: change-me-to-something-long
 allowedOrigins: [https://dashboard.example]
 rateLimit: 30
+```
+
+Single sign-on for the editor through any OpenID Connect provider
+(Keycloak, Entra ID, Google, Okta, ...); the token above can stay for
+scripts:
+
+```yaml
+oidcIssuer: https://sso.example.com/realms/main
+oidcClientId: go-red
+oidcClientSecret: from-the-provider     # or GORED_OIDC_CLIENT_SECRET
+oidcRedirectUrl: https://red.example.com/auth/callback
+oidcAllowedEmails: [ada@example.com, "@example.com"]
+sessionSecret: at-least-32-random-characters-here
 ```
 
 The server refuses cross-site browser requests unless their origin is
@@ -133,6 +153,7 @@ make setup                      # once: checks Go and Node, installs all depende
 make dev                        # API on :8080 and the editor with hot reload on :5173; Ctrl+C stops both
 make check                      # everything CI runs: gofmt, vet, race tests, generated types, web checks
 make e2e                        # Playwright against the real server
+make e2e-docker                 # the same in the Playwright container, no browser install needed
 go test ./internal/engine -run '^$' -bench . -benchtime 20000x
 make generate-types             # after changing Go DTOs or WebSocket message types
 ```

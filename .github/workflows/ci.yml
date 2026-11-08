@@ -87,7 +87,9 @@ jobs:
 
   e2e:
     name: End-to-end (Playwright against the Go server)
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest is Ubuntu 26.04 now, and Playwright 1.56 cannot
+    # install Chromium there. Move back once @playwright/test supports it.
+    runs-on: ubuntu-24.04
     needs: [go, web]
     defaults:
       run:

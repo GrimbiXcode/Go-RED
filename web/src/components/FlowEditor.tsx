@@ -13,10 +13,12 @@ import { SidebarTabs, InfoTabIcon, DebugTabIcon } from './SidebarTabs';
 import { StatusBar } from './StatusBar';
 import { ExportModal } from './ExportModal';
 import { ImportModal } from './ImportModal';
+import { StaleDraftDialog } from './StaleDraftDialog';
 import { useFlowStore, selectCanDeploy, selectCanRedo, selectCanUndeploy, selectCanUndo, hasUndeployedChanges, type NodePatch } from '../store/flowStore';
 import { connectionsOnMissingPorts, outputPortIds } from '../schema/ports';
 import { useEditorStore, type SidebarTab } from '../store/editorStore';
 import { notify } from '../store/notificationStore';
+import { isSigningIn } from '../lib/auth';
 import { deployFlow } from '../utils/api';
 import { NoFlowsState } from './EmptyStates';
 import { ShortcutHelp } from './ShortcutHelp';
@@ -93,13 +95,16 @@ export function FlowEditor() {
     }
   }, [flowId, flows, navigate]);
 
-  // Never lose a pending autosave to a reload or tab close.
+  // Never lose a pending autosave to a reload or tab close. Leaving for the
+  // sign-in needs neither: the request would be refused, and the flow store
+  // has stashed the unsaved work to restore it afterwards.
   useEffect(() => {
     const onPageHide = () => {
+      if (isSigningIn()) return;
       void flushSave({ keepalive: true });
     };
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (useFlowStore.getState().saveState === 'idle') return;
+      if (isSigningIn() || useFlowStore.getState().saveState === 'idle') return;
       void flushSave({ keepalive: true });
       event.preventDefault();
       event.returnValue = '';
@@ -351,6 +356,7 @@ export function FlowEditor() {
       {flow && <ExportModal flowId={flow.id} flowName={flow.name} isOpen={showExport} onClose={() => setShowExport(false)} />}
 
       <ImportModal isOpen={showImport} onClose={() => setShowImport(false)} onFlowImported={handleFlowImported} />
+      <StaleDraftDialog />
 
       <ShortcutHelp isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </div>
