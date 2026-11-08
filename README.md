@@ -152,6 +152,7 @@ make setup                      # once: checks Go and Node, installs all depende
 make dev                        # API on :8080 and the editor with hot reload on :5173; Ctrl+C stops both
 make check                      # everything CI runs: gofmt, vet, race tests, generated types, web checks
 make e2e                        # Playwright against the real server
+make e2e-docker                 # the same in the Playwright container, no browser install needed
 go test ./internal/engine -run '^$' -bench . -benchtime 20000x
 make generate-types             # after changing Go DTOs or WebSocket message types
 ```

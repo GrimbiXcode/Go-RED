@@ -48,8 +48,13 @@ WEB_SOURCES=$(shell find $(WEB_DIR)/src $(WEB_DIR)/public -type f 2>/dev/null) \
 	$(wildcard $(WEB_DIR)/index.html $(WEB_DIR)/*.config.* $(WEB_DIR)/tsconfig*.json)
 GO_SOURCES=$(shell find cmd internal -type f -name '*.go' 2>/dev/null) go.mod go.sum
 
+# Playwright image for e2e-docker: the version the editor pins, so the
+# browsers in the image match the test runner in node_modules.
+PLAYWRIGHT_VERSION=$(shell node -p "require('./$(WEB_DIR)/node_modules/@playwright/test/package.json').version" 2>/dev/null)
+PLAYWRIGHT_IMAGE=mcr.microsoft.com/playwright:v$(PLAYWRIGHT_VERSION)-noble
+
 .PHONY: help start setup doctor all build build-web build-all run dev run-dev \
-	run-frontend test test-frontend test-all e2e lint check fmt deps \
+	run-frontend test test-frontend test-all e2e e2e-docker lint check fmt deps \
 	generate-types check-types clean clean-all docker-build docker-run docker-clean
 
 ##@ Getting started
@@ -155,6 +160,22 @@ test-all: test test-frontend ## Run Go and editor tests
 
 e2e: $(WEB_DEPS) ## Run the Playwright end-to-end tests against the real server
 	cd $(WEB_DIR) && npm run e2e:full
+
+# The same suite inside the official Playwright image, for machines without
+# Playwright's browsers. The host's Go toolchain and module cache are mounted
+# read-only (the tests build the server), the container runs as the calling
+# user so nothing root-owned lands in the tree, and it has no network.
+# E2E_ARGS passes options through, e.g. E2E_ARGS='-g oidc'.
+e2e-docker: $(WEB_DIST) ## Run the end-to-end tests in the Playwright container (needs Docker and Go)
+	@test -n "$(PLAYWRIGHT_VERSION)" || { echo "@playwright/test is not installed -- run make setup"; exit 1; }
+	$(GOMOD) download
+	docker run --rm --init --ipc=host --network none --user "$$(id -u):$$(id -g)" \
+		-v "$(CURDIR)":/src -w /src/$(WEB_DIR) \
+		-v "$$($(GOCMD) env GOROOT)":/usr/local/go:ro \
+		-v "$$($(GOCMD) env GOMODCACHE)":/gomod:ro \
+		-e HOME=/tmp -e PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin \
+		-e GOMODCACHE=/gomod -e GOCACHE=/tmp/gocache -e GOTOOLCHAIN=local -e GOPROXY=off -e GOFLAGS=-buildvcs=false \
+		$(PLAYWRIGHT_IMAGE) npx playwright test $(E2E_ARGS)
 
 # Static checks for the Go side (what CI runs).
 lint: go.mod ## gofmt + go vet

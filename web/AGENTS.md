@@ -65,6 +65,9 @@ e2e/editor.spec.ts       Playwright suite
 `make build-web`, `make build-all`, `make test-frontend`, `make e2e` and
 `make generate-types` in the repository root wrap the same commands, and
 run `npm ci` first whenever `package-lock.json` is newer than `node_modules`.
+`make e2e-docker` runs the Playwright suite in the official image of the
+pinned `@playwright/test` version (host Go toolchain and module cache
+mounted read-only, no network, `E2E_ARGS` passed to `playwright test`).
 
 ESLint rules to know: `no-console` (only `warn` and `error` allowed),
 `@typescript-eslint/no-explicit-any` off, unused vars must start with `_`,
