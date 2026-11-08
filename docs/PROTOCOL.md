@@ -30,6 +30,9 @@ the server log).
 | `GET /api/health` | – | `{status, version, flows, deployed, uptimeSeconds}` | liveness; always public |
 | `GET /api/version` | – | `{version, goVersion, os, arch}` | always public |
 | `GET /metrics` | – | Prometheus text format | see *Operations*; guarded by the token like the API |
+| `GET /api/auth/info` | – | `AuthInfo {methods, loginUrl?}` | always public; `methods` lists `token` and/or `oidc` (empty: no authentication), `loginUrl` is set with `oidc` |
+| `GET /api/auth/me` | – | `AuthUser {method, subject?, email?, name?}` | who the request is authenticated as; `method` is `token`, `oidc` or `none` (server without authentication) |
+| `POST /api/auth/logout` | – | `204` | always public; clears the OIDC session cookie (the provider's own session is left alone) |
 | `GET /api/flows` | – | `FlowSummary[]` | every known flow, running or not |
 | `POST /api/flows` | `FlowCreateRequest {id?, name, description?}` | `201 Flow` | `id` is optional; it must be a safe file name |
 | `POST /api/flows/import` | `Flow` (a Go-RED export) **or** a Node-RED `flows.json` array | `201 {status: "imported", format, flowId, originalId, name, flows: [{flowId, originalId, name}], warnings: string[], message}` | `format` is `go-red` or `node-red`; every imported flow gets a fresh id, `originalId` echoes the file's; a Node-RED array yields one flow per tab (`flows`, first one in `flowId`) and `warnings` lists what could not be mapped (see *Node-RED import and export*). Rate limited (`429`, see *Authentication and origins*) |
@@ -72,8 +75,9 @@ clients send no `Origin` and are never affected.
 
 `-auth-token` (or `GORED_AUTH_TOKEN`; at least 16 characters of
 `A-Z a-z 0-9 . _ ~ -`) turns authentication on for everything under
-`/api/`, for `/ws` and for `/metrics`; `/api/health`, `/api/version` and
-the editor's static files stay public. Clients present the token as
+`/api/`, for `/ws` and for `/metrics`; `/api/health`, `/api/version`,
+`/api/auth/info`, `/api/auth/logout` and the editor's static files stay
+public. Clients present the token as
 
 | Where | How |
 |---|---|
@@ -83,6 +87,62 @@ the editor's static files stay public. Clients present the token as
 A missing or wrong token is `401` with `WWW-Authenticate: Bearer`. The
 editor stores the token in `localStorage` (`go-red.token`) after asking for
 it once, and sends it on every request and handshake.
+
+### OIDC sign-in
+
+`-oidc-issuer` turns on editor sign-in through an OpenID Connect provider
+(Keycloak, Entra ID, Google, Okta, Authentik, Dex, ...; plain OAuth2
+providers without OIDC discovery, such as GitHub, do not work). It guards
+the same paths as the token, and the two can be used together: scripts keep
+the bearer token while people sign in.
+
+| Setting | Meaning |
+|---|---|
+| `-oidc-issuer` | issuer URL; `<issuer>/.well-known/openid-configuration` must answer |
+| `-oidc-client-id`, `-oidc-client-secret` | the client registered at the provider; the secret may be empty for a public client (PKCE is always used). Prefer `GORED_OIDC_CLIENT_SECRET` or the config file over the flag |
+| `-oidc-redirect-url` | `scheme://host[:port]/auth/callback` as the browser sees it; register exactly this URL at the provider. An `https` URL makes the cookies `Secure` (and the session cookie `__Host-gored_session`) |
+| `-oidc-scopes` | requested besides `openid` (default `profile,email`) |
+| `-oidc-allowed-emails` | addresses, or `@domain` for a whole domain, that may sign in; only an ID token with `email_verified: true` matches |
+| `-oidc-allowed-groups`, `-oidc-groups-claim` | groups that may sign in, read from that ID token claim (default `groups`, a list or a single string). Providers that do not send `email_verified` (Entra ID) need groups |
+| `-oidc-allow-any-user` | every account the provider authenticates may sign in. Without it an allowlist (emails or groups) is required, so a public provider never opens the server to everyone by accident |
+| `-session-secret` | at least 32 characters; signs the cookies. Empty: a random key per process, so sessions end when the server restarts |
+| `-session-ttl` | how long a sign-in lasts (default `12h`) |
+
+The flow is the authorization code flow with PKCE:
+
+1. `GET /auth/login?next=/path` stores state, nonce and the PKCE verifier in
+   a signed, HttpOnly cookie (`gored_login`, path `/auth/`, 10 minutes) and
+   redirects to the provider. `next` must be a local path; anything else
+   becomes `/`.
+2. The provider redirects to `GET /auth/callback?code=&state=`. The server
+   checks state against the cookie, exchanges the code (with the verifier),
+   verifies the ID token (signature, issuer, audience, expiry, nonce) and
+   applies the allowlist. It then sets the session cookie (HttpOnly,
+   `SameSite=Lax`, signed with HMAC-SHA256, holding subject, e-mail, name
+   and expiry) and redirects to `next`.
+3. A failure ends on a small HTML page with a generic message; the reason
+   is in the server log.
+
+Both routes live outside `/api` (they are top-level navigations, so the
+origin policy does not apply) and share the import/deploy rate limit.
+
+The session cookie authenticates a request only when it is same-origin: a
+cross-origin request (even from an allowed origin) has to bring the bearer
+token, and a `POST`, `PUT` or `DELETE` must carry a same-origin `Origin`
+header or `Sec-Fetch-Site: same-origin`, which browsers send by themselves
+and other sites cannot fake. Sessions are stateless: signing out clears the
+cookie, and a user removed at the provider keeps access until the session
+expires.
+
+The editor reads `GET /api/auth/info` after a `401`. With `oidc` as the
+only method and no sign-in yet in this page load it goes to `/auth/login`
+on its own (a session that expires while someone edits shows the dialog
+instead, so no draft is navigated away from), at most once a minute (a
+`sessionStorage` mark, `go-red.ssoRedirect`, stops a redirect loop when the
+cookie does not stick, for example a `Secure` cookie over plain http or
+`127.0.0.1` against a `localhost` redirect URL) and not after an explicit
+sign-out; otherwise it shows a dialog with the sign-on button and/or the
+token field. The main menu shows the signed-in user and *Sign out*.
 
 Import and deploy are rate limited per client address: `-rate-limit N`
 requests per minute (default 60, burst of a quarter of that, `0` disables);
@@ -107,12 +167,19 @@ over the limit the answer is `429` with `Retry-After: 1`.
 Server configuration comes from, in rising precedence, the defaults, a YAML
 file (`-config go-red.yaml` or `GORED_CONFIG`; keys `port`, `dataDir`,
 `webDir`, `maxInflight`, `maxMessages`, `messageLog`, `logLevel`,
-`authToken`, `allowedOrigins`, `rateLimit`, `backupKeep`, `backupInterval`;
+`authToken`, `allowedOrigins`, `rateLimit`, `backupKeep`, `backupInterval`,
+`oidcIssuer`, `oidcClientId`, `oidcClientSecret`, `oidcRedirectUrl`,
+`oidcScopes`, `oidcAllowedEmails`, `oidcAllowedGroups`, `oidcGroupsClaim`,
+`oidcAllowAnyUser`, `sessionSecret`, `sessionTtl`;
 unknown keys are an error), `GORED_*` environment variables
 (`GORED_PORT`, `GORED_DATA_DIR`, `GORED_WEB_DIR`, `GORED_MAX_INFLIGHT`,
 `GORED_MAX_MESSAGES`, `GORED_MESSAGE_LOG`, `GORED_LOG_LEVEL`,
 `GORED_AUTH_TOKEN`, `GORED_ALLOWED_ORIGINS`, `GORED_RATE_LIMIT`,
-`GORED_BACKUP_KEEP`, `GORED_BACKUP_INTERVAL`) and the flags of the same
+`GORED_BACKUP_KEEP`, `GORED_BACKUP_INTERVAL`, `GORED_OIDC_ISSUER`,
+`GORED_OIDC_CLIENT_ID`, `GORED_OIDC_CLIENT_SECRET`, `GORED_OIDC_REDIRECT_URL`,
+`GORED_OIDC_SCOPES`, `GORED_OIDC_ALLOWED_EMAILS`, `GORED_OIDC_ALLOWED_GROUPS`,
+`GORED_OIDC_GROUPS_CLAIM`, `GORED_OIDC_ALLOW_ANY_USER`, `GORED_SESSION_SECRET`,
+`GORED_SESSION_TTL`) and the flags of the same
 names (`go-red -help`).
 
 Flows are persisted one file per flow under `<dataDir>/flows/<id>.json`:

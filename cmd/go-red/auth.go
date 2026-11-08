@@ -10,11 +10,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/GrimbiXcode/Go-RED/internal/dto"
 )
 
 // The security baseline (docs/NEXT_LEVEL_PLAN.md, Phase 6):
 //
-//   - an optional bearer token guards /api/*, /ws and /metrics;
+//   - an optional bearer token and/or OIDC sign-in (oidc.go) guard /api/*,
+//     /ws and /metrics;
 //   - browser requests from another origin are rejected unless the origin
 //     is allowed, and allowed origins get CORS headers;
 //   - import and deploy are rate limited per client address.
@@ -66,11 +69,21 @@ func tokenFromRequest(r *http.Request) string {
 	return r.URL.Query().Get("access_token")
 }
 
-// isProtectedPath says which paths the token guards. Health and version
-// stay public for probes, and the editor itself is static content.
+// isPublicAPIPath lists the API paths that never need authentication:
+// probes, and what a signed-out editor needs to sign in or out.
+func isPublicAPIPath(p string) bool {
+	switch p {
+	case "/api/health", "/api/version", "/api/auth/info", "/api/auth/logout":
+		return true
+	}
+	return false
+}
+
+// isProtectedPath says which paths authentication guards. The public API
+// paths stay open, and the editor itself is static content.
 func isProtectedPath(p string) bool {
 	switch {
-	case p == "/api/health", p == "/api/version":
+	case isPublicAPIPath(p):
 		return false
 	case strings.HasPrefix(p, "/api/"), p == "/ws", p == "/metrics":
 		return true
@@ -78,24 +91,38 @@ func isProtectedPath(p string) bool {
 	return false
 }
 
-// requireAuth answers protected requests without the token with 401.
-func requireAuth(token string, next http.Handler) http.Handler {
-	if token == "" {
+// requireAuth answers protected requests that carry neither the token nor
+// (with sign-in on) a usable session cookie with 401. Authenticated
+// requests get their principal in the context (principalFrom). With neither
+// a token nor sessions configured it returns next unchanged.
+func requireAuth(token string, sessions *oidcAuth, next http.Handler) http.Handler {
+	if token == "" && sessions == nil {
 		return next
 	}
 	expected := []byte(token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isProtectedPath(r.URL.Path) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if subtle.ConstantTimeCompare([]byte(tokenFromRequest(r)), expected) != 1 {
+		if p, ok := authenticate(r, expected, sessions); ok {
+			r = withPrincipal(r, p)
+		} else if isProtectedPath(r.URL.Path) {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="go-red"`)
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// authenticate checks the bearer token first, then the session cookie.
+func authenticate(r *http.Request, token []byte, sessions *oidcAuth) (principal, bool) {
+	if len(token) > 0 {
+		if presented := tokenFromRequest(r); presented != "" && subtle.ConstantTimeCompare([]byte(presented), token) == 1 {
+			return principal{Method: dto.AuthMethodToken}, true
+		}
+	}
+	if sessions != nil && sessionCookieUsable(r) {
+		return sessions.session(r)
+	}
+	return principal{}, false
 }
 
 // originAllowed reports whether a request may be served for the browser
@@ -138,8 +165,7 @@ func crossOrigin(r *http.Request) bool {
 // allowed one gets CORS headers and its preflight answered.
 func corsMiddleware(allowed []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		public := r.URL.Path == "/api/health" || r.URL.Path == "/api/version"
-		if !crossOrigin(r) || (!isProtectedPath(r.URL.Path) && !public) {
+		if !crossOrigin(r) || (!isProtectedPath(r.URL.Path) && !isPublicAPIPath(r.URL.Path)) {
 			// Same-origin requests and the editor's own static files need
 			// no policy; the API (public endpoints included) does.
 			next.ServeHTTP(w, r)
@@ -246,4 +272,39 @@ func clientKey(r *http.Request) string {
 		return host
 	}
 	return r.RemoteAddr
+}
+
+// handleAuthInfo answers GET /api/auth/info (public): which methods the
+// editor can use to authenticate.
+func (s *server) handleAuthInfo(w http.ResponseWriter, r *http.Request) {
+	info := dto.AuthInfo{Methods: []string{}}
+	if s.authToken {
+		info.Methods = append(info.Methods, dto.AuthMethodToken)
+	}
+	if s.sessions != nil {
+		info.Methods = append(info.Methods, dto.AuthMethodOIDC)
+		info.LoginURL = oidcLoginPath
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+// handleAuthMe answers GET /api/auth/me: who the request is authenticated
+// as ("none" when the server runs without authentication).
+func (s *server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
+	p, ok := principalFrom(r)
+	if !ok {
+		writeJSON(w, http.StatusOK, dto.AuthUser{Method: dto.AuthMethodNone})
+		return
+	}
+	writeJSON(w, http.StatusOK, dto.AuthUser{Method: p.Method, Subject: p.Subject, Email: p.Email, Name: p.Name})
+}
+
+// handleLogout answers POST /api/auth/logout (public, so an expired session
+// can still sign out): it clears the session cookie. The provider's own
+// session is left alone.
+func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if s.sessions != nil {
+		s.sessions.clearSession(w)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -106,6 +106,18 @@ export interface ErrorResponse {
   error: string;
 }
 
+export interface AuthInfo {
+  methods: string[];
+  loginUrl?: string;
+}
+
+export interface AuthUser {
+  method: string;
+  subject?: string;
+  email?: string;
+  name?: string;
+}
+
 export interface FlowStatusEvent {
   flowId: string;
   status: FlowStatus;

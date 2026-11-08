@@ -10,7 +10,8 @@ code disagree, the code wins, and the file gets fixed.
 
 ```
 cmd/go-red/            server: main.go (wiring), config.go (flags/env/YAML),
-                       auth.go (token, origin policy, rate limit), ops.go
+                       auth.go (token, origin policy, rate limit), oidc.go
+                       (OIDC sign-in, session cookies), ops.go
                        (/api/version, /metrics), websocket/ (hub, handlers)
 cmd/gentypes/          go generate: Go DTOs -> web/src/types/generated.ts
 internal/engine/       flows, per-flow dispatch, runtime events, benchmarks
@@ -60,8 +61,10 @@ docs/                  PROTOCOL, ARCHITECTURE, NODE_DEVELOPMENT, PERFORMANCE, pl
   size-capped, user strings are sanitized, HTML rendered in the editor goes
   through DOMPurify.
 - **Security defaults.** Cross-site browser requests are refused unless the
-  origin is allowed; an optional bearer token guards the API, the WebSocket
-  and `/metrics`; import and deploy are rate limited. Keep new endpoints
+  origin is allowed; an optional bearer token and/or OIDC sign-in (session
+  cookie, same-origin only) guard the API, the WebSocket and `/metrics`;
+  OIDC needs an allowlist unless explicitly opened; import, deploy and
+  sign-in are rate limited. Keep new endpoints
   behind the same middleware (`newRouter`).
 - **Node schemas.** A node's `ConfigSchema` (schema v2: label, widget, order,
   group, items, visibleWhen, outputsFrom) is what the edit tray renders;

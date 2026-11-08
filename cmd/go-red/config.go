@@ -52,20 +52,53 @@ type Config struct {
 	// BackupInterval is the minimum age of the newest backup before a save
 	// makes another one.
 	BackupInterval time.Duration `yaml:"backupInterval"`
+
+	// OIDCIssuer, when set, turns on editor sign-in through an OpenID
+	// Connect provider (authorization code flow with PKCE); the other
+	// OIDC* fields configure it. See docs/PROTOCOL.md.
+	OIDCIssuer string `yaml:"oidcIssuer"`
+	// OIDCClientID is the client registered at the provider.
+	OIDCClientID string `yaml:"oidcClientId"`
+	// OIDCClientSecret is the client's secret (empty for a public client).
+	OIDCClientSecret string `yaml:"oidcClientSecret"`
+	// OIDCRedirectURL is the callback the provider redirects to, as the
+	// browser sees it: scheme://host[:port]/auth/callback.
+	OIDCRedirectURL string `yaml:"oidcRedirectUrl"`
+	// OIDCScopes are requested in addition to "openid".
+	OIDCScopes []string `yaml:"oidcScopes"`
+	// OIDCAllowedEmails lists who may sign in: verified e-mail addresses, or
+	// "@domain" for a whole domain.
+	OIDCAllowedEmails []string `yaml:"oidcAllowedEmails"`
+	// OIDCAllowedGroups lets members of these groups (read from the ID
+	// token claim OIDCGroupsClaim) sign in.
+	OIDCAllowedGroups []string `yaml:"oidcAllowedGroups"`
+	// OIDCGroupsClaim is the ID token claim holding the user's groups.
+	OIDCGroupsClaim string `yaml:"oidcGroupsClaim"`
+	// OIDCAllowAnyUser lets every account the provider authenticates sign
+	// in; without it an allowlist (emails or groups) is required.
+	OIDCAllowAnyUser bool `yaml:"oidcAllowAnyUser"`
+	// SessionSecret signs editor session cookies (at least 32 characters).
+	// Empty means a random key per process: sessions end on restart.
+	SessionSecret string `yaml:"sessionSecret"`
+	// SessionTTL is how long a sign-in lasts.
+	SessionTTL time.Duration `yaml:"sessionTtl"`
 }
 
 // defaultConfig is the configuration without any file, env or flag.
 func defaultConfig() Config {
 	return Config{
-		Port:           8080,
-		DataDir:        "data",
-		MaxInflight:    1024,
-		MaxMessages:    1000,
-		MessageLog:     0,
-		LogLevel:       "info",
-		RateLimit:      60,
-		BackupKeep:     5,
-		BackupInterval: 10 * time.Minute,
+		Port:            8080,
+		DataDir:         "data",
+		MaxInflight:     1024,
+		MaxMessages:     1000,
+		MessageLog:      0,
+		LogLevel:        "info",
+		RateLimit:       60,
+		BackupKeep:      5,
+		BackupInterval:  10 * time.Minute,
+		OIDCScopes:      []string{"profile", "email"},
+		OIDCGroupsClaim: "groups",
+		SessionTTL:      12 * time.Hour,
 	}
 }
 
@@ -95,7 +128,7 @@ func loadConfig(args []string, getenv func(string) string) (Config, bool, error)
 	// keeps what file and environment said.
 	fs := flag.NewFlagSet("go-red", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	fs.String("config", file, "YAML config file (keys: port, dataDir, webDir, maxInflight, maxMessages, messageLog, logLevel, authToken, allowedOrigins, rateLimit, backupKeep, backupInterval)")
+	fs.String("config", file, "YAML config file (keys: port, dataDir, webDir, maxInflight, maxMessages, messageLog, logLevel, authToken, allowedOrigins, rateLimit, backupKeep, backupInterval, oidcIssuer, oidcClientId, oidcClientSecret, oidcRedirectUrl, oidcScopes, oidcAllowedEmails, oidcAllowedGroups, oidcGroupsClaim, oidcAllowAnyUser, sessionSecret, sessionTtl)")
 	fs.IntVar(&cfg.Port, "port", cfg.Port, "Port to listen on")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "Directory for flow data")
 	fs.StringVar(&cfg.WebUIDir, "web-dir", cfg.WebUIDir, "Serve the editor from this directory instead of the embedded build (development)")
@@ -108,11 +141,25 @@ func loadConfig(args []string, getenv func(string) string) (Config, bool, error)
 	fs.IntVar(&cfg.RateLimit, "rate-limit", cfg.RateLimit, "Import and deploy requests allowed per client and minute (0 disables)")
 	fs.IntVar(&cfg.BackupKeep, "backup-keep", cfg.BackupKeep, "Backups to keep per flow file (0 disables)")
 	fs.DurationVar(&cfg.BackupInterval, "backup-interval", cfg.BackupInterval, "Minimum time between two backups of the same flow")
+	fs.StringVar(&cfg.OIDCIssuer, "oidc-issuer", cfg.OIDCIssuer, "OpenID Connect issuer URL; turns on editor sign-in (empty: off)")
+	fs.StringVar(&cfg.OIDCClientID, "oidc-client-id", cfg.OIDCClientID, "OpenID Connect client ID")
+	fs.StringVar(&cfg.OIDCClientSecret, "oidc-client-secret", cfg.OIDCClientSecret, "OpenID Connect client secret (prefer GORED_OIDC_CLIENT_SECRET or the config file)")
+	fs.StringVar(&cfg.OIDCRedirectURL, "oidc-redirect-url", cfg.OIDCRedirectURL, "Callback URL as the browser sees it: scheme://host[:port]/auth/callback")
+	scopes := fs.String("oidc-scopes", strings.Join(cfg.OIDCScopes, ","), "Comma-separated scopes requested besides openid")
+	emails := fs.String("oidc-allowed-emails", strings.Join(cfg.OIDCAllowedEmails, ","), "Comma-separated verified e-mail addresses (or @domain) allowed to sign in")
+	groups := fs.String("oidc-allowed-groups", strings.Join(cfg.OIDCAllowedGroups, ","), "Comma-separated groups allowed to sign in")
+	fs.StringVar(&cfg.OIDCGroupsClaim, "oidc-groups-claim", cfg.OIDCGroupsClaim, "ID token claim that holds the user's groups")
+	fs.BoolVar(&cfg.OIDCAllowAnyUser, "oidc-allow-any-user", cfg.OIDCAllowAnyUser, "Let every account the provider authenticates sign in (no allowlist)")
+	fs.StringVar(&cfg.SessionSecret, "session-secret", cfg.SessionSecret, "Key that signs session cookies, at least 32 characters (empty: random, sessions end on restart)")
+	fs.DurationVar(&cfg.SessionTTL, "session-ttl", cfg.SessionTTL, "How long an editor sign-in lasts")
 	showVersion := fs.Bool("version", false, "Print the version and exit")
 	if err := fs.Parse(args); err != nil {
 		return cfg, false, err
 	}
 	cfg.AllowedOrigins = splitList(*origins)
+	cfg.OIDCScopes = splitList(*scopes)
+	cfg.OIDCAllowedEmails = splitList(*emails)
+	cfg.OIDCAllowedGroups = splitList(*groups)
 
 	if err := cfg.validate(); err != nil {
 		return cfg, false, err
@@ -171,6 +218,22 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 			return nil
 		}
 	}
+	setList := func(dst *[]string) func(string) error {
+		return func(v string) error {
+			*dst = splitList(v)
+			return nil
+		}
+	}
+	setDuration := func(dst *time.Duration) func(string) error {
+		return func(v string) error {
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				return err
+			}
+			*dst = d
+			return nil
+		}
+	}
 	vars := []struct {
 		key   string
 		apply func(string) error
@@ -183,17 +246,28 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 		{"GORED_MESSAGE_LOG", setInt(&cfg.MessageLog)},
 		{"GORED_LOG_LEVEL", setString(&cfg.LogLevel)},
 		{"GORED_AUTH_TOKEN", setString(&cfg.AuthToken)},
-		{"GORED_ALLOWED_ORIGINS", func(v string) error { cfg.AllowedOrigins = splitList(v); return nil }},
+		{"GORED_ALLOWED_ORIGINS", setList(&cfg.AllowedOrigins)},
 		{"GORED_RATE_LIMIT", setInt(&cfg.RateLimit)},
 		{"GORED_BACKUP_KEEP", setInt(&cfg.BackupKeep)},
-		{"GORED_BACKUP_INTERVAL", func(v string) error {
-			d, err := time.ParseDuration(v)
+		{"GORED_BACKUP_INTERVAL", setDuration(&cfg.BackupInterval)},
+		{"GORED_OIDC_ISSUER", setString(&cfg.OIDCIssuer)},
+		{"GORED_OIDC_CLIENT_ID", setString(&cfg.OIDCClientID)},
+		{"GORED_OIDC_CLIENT_SECRET", setString(&cfg.OIDCClientSecret)},
+		{"GORED_OIDC_REDIRECT_URL", setString(&cfg.OIDCRedirectURL)},
+		{"GORED_OIDC_SCOPES", setList(&cfg.OIDCScopes)},
+		{"GORED_OIDC_ALLOWED_EMAILS", setList(&cfg.OIDCAllowedEmails)},
+		{"GORED_OIDC_ALLOWED_GROUPS", setList(&cfg.OIDCAllowedGroups)},
+		{"GORED_OIDC_GROUPS_CLAIM", setString(&cfg.OIDCGroupsClaim)},
+		{"GORED_OIDC_ALLOW_ANY_USER", func(v string) error {
+			b, err := strconv.ParseBool(v)
 			if err != nil {
 				return err
 			}
-			cfg.BackupInterval = d
+			cfg.OIDCAllowAnyUser = b
 			return nil
 		}},
+		{"GORED_SESSION_SECRET", setString(&cfg.SessionSecret)},
+		{"GORED_SESSION_TTL", setDuration(&cfg.SessionTTL)},
 	}
 	for _, v := range vars {
 		value := getenv(v.key)
@@ -248,6 +322,45 @@ func (c Config) validate() error {
 		if err != nil || u.Scheme == "" || u.Host == "" || u.Path != "" {
 			return fmt.Errorf("allowed origin %q must look like scheme://host[:port]", origin)
 		}
+	}
+	return c.validateOIDC()
+}
+
+// validateOIDC checks the sign-in settings. Everything is optional while
+// OIDCIssuer is empty, except that a session secret must still be usable.
+func (c Config) validateOIDC() error {
+	if c.SessionSecret != "" && len(c.SessionSecret) < 32 {
+		return errors.New("session-secret must be at least 32 characters")
+	}
+	if c.OIDCIssuer == "" {
+		if c.OIDCClientID != "" || c.OIDCRedirectURL != "" {
+			return errors.New("oidc-client-id and oidc-redirect-url need oidc-issuer")
+		}
+		return nil
+	}
+	if u, err := url.Parse(c.OIDCIssuer); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fmt.Errorf("oidc-issuer %q must be an http(s) URL", c.OIDCIssuer)
+	}
+	if c.OIDCClientID == "" {
+		return errors.New("oidc-issuer needs oidc-client-id")
+	}
+	u, err := url.Parse(c.OIDCRedirectURL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.Path != oidcCallbackPath || u.RawQuery != "" {
+		return fmt.Errorf("oidc-redirect-url must look like scheme://host[:port]%s, got %q", oidcCallbackPath, c.OIDCRedirectURL)
+	}
+	if !c.OIDCAllowAnyUser && len(c.OIDCAllowedEmails) == 0 && len(c.OIDCAllowedGroups) == 0 {
+		return errors.New("oidc-issuer needs oidc-allowed-emails or oidc-allowed-groups (or oidc-allow-any-user to let every account of the provider in)")
+	}
+	if len(c.OIDCAllowedGroups) > 0 && c.OIDCGroupsClaim == "" {
+		return errors.New("oidc-allowed-groups needs oidc-groups-claim")
+	}
+	for _, e := range c.OIDCAllowedEmails {
+		if !strings.Contains(e, "@") {
+			return fmt.Errorf("oidc-allowed-emails entry %q must be an address or @domain", e)
+		}
+	}
+	if c.SessionTTL < time.Minute {
+		return errors.New("session-ttl must be at least 1m")
 	}
 	return nil
 }

@@ -9,12 +9,13 @@ route, payload and WebSocket message) is in `docs/PROTOCOL.md`.
 | File | Holds |
 |---|---|
 | `main.go` | `main` (config → logging → registry → state manager → engine → hub → `http.Server`; SIGINT/SIGTERM shutdown with a 30 s deadline), `newRouter`, the REST handlers, `webHandler`/`spaHandler`/`editorNotBuiltHandler`, `sanitizeString`, `writeJSON`/`writeError`/`writeEngineError`/`statusForError`, `decodeJSON` |
-| `config.go` | `Config`, `defaultConfig`, `loadConfig`, `applyEnv`, `loadConfigFile`, `validate` |
-| `auth.go` | `validateToken`, `tokenFromRequest`, `isProtectedPath`, `requireAuth`, `originAllowed`, `corsMiddleware`, `rateLimiter` |
+| `config.go` | `Config`, `defaultConfig`, `loadConfig`, `applyEnv`, `loadConfigFile`, `validate`, `validateOIDC` |
+| `auth.go` | `validateToken`, `tokenFromRequest`, `isPublicAPIPath`, `isProtectedPath`, `requireAuth`, `authenticate`, `originAllowed`, `corsMiddleware`, `rateLimiter`, the `/api/auth/*` handlers |
+| `oidc.go` | OIDC sign-in: `oidcAuth` (`handleLogin`, `handleCallback`, `session`, `clearSession`), `principal`/`principalFrom`, `sessionCookieUsable`, `safeNext`, `signCookie`/`verifyCookie`, `authErrorPage` |
 | `ops.go` | `handleVersion` (`GET /api/version`), `handleMetrics` (`GET /metrics`, Prometheus text format written by hand) |
 | `websocket/hub.go` | `Hub`, `Client`, `WebSocketMessage`, the `MessageType` constants and `AllMessageTypes`, read/write pumps, per-client subscriptions |
 | `websocket/integration.go` | `WebSocketHandler`: forwards engine events to clients, answers client queries, `FlowChanged`/`FlowDeleted` |
-| `main_test.go`, `config_test.go`, `security_test.go`, `ops_test.go`, `websocket/hub_test.go` | tests, see below |
+| `main_test.go`, `config_test.go`, `security_test.go`, `oidc_test.go`, `ops_test.go`, `websocket/hub_test.go` | tests, see below |
 
 Node packages are registered by the blank imports in `main.go`; a new node
 type must be added to that list or it never reaches the registry. Hot-path
@@ -29,6 +30,11 @@ Go 1.22 pattern routing on a plain `http.ServeMux`:
 GET    /api/health                public, no auth
 GET    /api/version               public, no auth
 GET    /metrics                   Prometheus text format
+GET    /api/auth/info             public: dto.AuthInfo (accepted methods, login URL)
+GET    /api/auth/me               dto.AuthUser (who the request is authenticated as)
+POST   /api/auth/logout           public: clears the OIDC session cookie, 204
+GET    /auth/login                only with OIDC; rate limited; redirect to the provider
+GET    /auth/callback             only with OIDC; rate limited; sets the session cookie
 GET    /api/flows                 []dto.FlowSummary
 POST   /api/flows                 dto.FlowCreateRequest → 201 dto.Flow
 POST   /api/flows/import          rate limited; Go-RED JSON or Node-RED flows.json
@@ -58,24 +64,47 @@ plus `AllMessageTypes` into `web/src/types/generated.ts`.
 
 ## Middleware order
 
-`corsMiddleware(allowedOrigins, requireAuth(token, mux))`: a request passes
-the origin policy first, then the token check, then the mux. Inside the mux,
-`POST /api/flows/import` and `POST /api/flows/{id}/deploy` are wrapped by
-`rateLimiter.limit` (429 with `Retry-After: 1`).
+`corsMiddleware(allowedOrigins, requireAuth(token, oidc, mux))`: a request
+passes the origin policy first, then authentication, then the mux. Inside
+the mux, `POST /api/flows/import`, `POST /api/flows/{id}/deploy`,
+`GET /auth/login` and `GET /auth/callback` are wrapped by
+`rateLimiter.limit` (429 with `Retry-After: 1`, one bucket per client).
 
 - `corsMiddleware`: same-origin requests and static files pass untouched. A
   cross-origin request (Origin host != request Host) to `/api/*`, `/ws` or
   `/metrics` is refused with 403 unless its origin is allowed (or the list
   is `*`); allowed ones get CORS headers and a 204 preflight.
-- `requireAuth`: with an empty token it returns `next` unchanged. Otherwise
-  `isProtectedPath` (`/api/*` except health and version, `/ws`, `/metrics`)
-  requires the token, compared in constant time, else 401 with
-  `WWW-Authenticate`. `tokenFromRequest` reads `Authorization: Bearer`; on
+- `requireAuth`: with neither a token nor OIDC it returns `next` unchanged.
+  Otherwise `authenticate` tries the bearer token (constant-time compare),
+  then the OIDC session cookie, and puts the `principal` into the context
+  (`principalFrom`, used by `/api/auth/me`). `isProtectedPath` (`/api/*`
+  except `isPublicAPIPath`: health, version, auth info, logout; `/ws`;
+  `/metrics`) answers an unauthenticated request with 401 and
+  `WWW-Authenticate`. The cookie only counts when `sessionCookieUsable`:
+  never cross-origin (allowed origins included), and `POST`/`PUT`/`DELETE`
+  need a same-origin `Origin` or `Sec-Fetch-Site: same-origin` (CSRF). `tokenFromRequest` reads `Authorization: Bearer`; on
   `/ws` only it also accepts the `gored.token.<token>` subprotocol and the
   `access_token` query parameter.
 - `rateLimiter`: token bucket per client IP (`clientKey`), burst
   `perMinute/4` (at least 3), buckets pruned after 10 minutes of silence.
   `newRateLimiter(0)` returns nil and `limit` becomes a no-op.
+
+## OIDC sign-in (`oidc.go`)
+
+`newOIDCAuth` is built in `main` when `oidcIssuer` is set and passed as
+`routerOptions.OIDC` (nil: no sign-in routes, no cookie check). The provider
+is discovered lazily and retried after a failure, so a provider that is down
+does not stop the server (`main` also tries once at startup to log a
+misconfiguration). `handleLogin` stores state, nonce and the PKCE verifier
+in the signed `gored_login` cookie; `handleCallback` checks them, exchanges
+the code, verifies the ID token and the allowlist (`userFromToken`: verified
+e-mail or `@domain`, or a group claim) and sets the session cookie
+(`gored_session`, `__Host-` prefixed when the redirect URL is https).
+Cookies are `base64url(JSON).base64url(HMAC-SHA256)` with a key per purpose
+derived from `sessionSecret` (random per process when unset). Failures end
+on `authErrorPage` with a fixed text; details only go to the log.
+`oidc_test.go` drives the whole flow against a fake provider (go-oidc's
+`oidctest` plus a token endpoint that checks the PKCE verifier).
 
 ## Configuration (`loadConfig`)
 
@@ -89,8 +118,13 @@ levels, malformed tokens (`^[A-Za-z0-9._~-]{16,}$`) and origins that are not
 `-ldflags "-X main.version=..."`) and exits.
 
 Keys: port, dataDir, webDir, maxInflight, maxMessages, messageLog, logLevel,
-authToken, allowedOrigins, rateLimit, backupKeep, backupInterval (table in
-the root README). A new setting touches `Config`, `defaultConfig`,
+authToken, allowedOrigins, rateLimit, backupKeep, backupInterval, and for
+OIDC sign-in oidcIssuer, oidcClientId, oidcClientSecret, oidcRedirectUrl,
+oidcScopes, oidcAllowedEmails, oidcAllowedGroups, oidcGroupsClaim,
+oidcAllowAnyUser, sessionSecret, sessionTtl (table in the root README).
+`validateOIDC` requires client ID, a redirect URL ending in `/auth/callback`
+and an allowlist (or `oidcAllowAnyUser`) once `oidcIssuer` is set, and a
+session secret of at least 32 characters. Secrets are never logged. A new setting touches `Config`, `defaultConfig`,
 `applyEnv`, the flag list, `validate`, `config_test.go` and that table.
 
 ## The editor

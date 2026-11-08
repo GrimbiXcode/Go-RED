@@ -153,8 +153,10 @@ the JavaScript function node dominates every flow that uses it.
 `GORED_*` environment variables and flags, in that order of precedence
 (`config.go`). The HTTP layer (`auth.go`) applies an origin policy to every
 request (same origin always, `-allowed-origins` for others, with CORS
-headers), an optional bearer token on the API, the WebSocket handshake and
-`/metrics`, and a per-client rate limit on import and deploy. `ops.go`
+headers), an optional bearer token and/or OIDC sign-in (`oidc.go`:
+authorization code flow with PKCE, a signed same-origin session cookie) on
+the API, the WebSocket handshake and `/metrics`, and a per-client rate limit
+on import, deploy and sign-in. `ops.go`
 serves `/api/version` and a hand-written Prometheus exposition of the
 engine's counters. `docs/PROTOCOL.md` lists every knob.
 
