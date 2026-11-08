@@ -35,6 +35,9 @@ var (
 	ErrFlowExists = errors.New("flow already exists")
 	// ErrFlowNotDeployed means the flow is known but not currently running.
 	ErrFlowNotDeployed = errors.New("flow is not deployed")
+	// ErrFlowConflict means an update was based on a revision of the flow
+	// that is no longer current: someone else saved it in between.
+	ErrFlowConflict = errors.New("the flow was changed by someone else")
 	// ErrInvalidFlowID means the ID does not match the allowed pattern.
 	ErrInvalidFlowID = errors.New("invalid flow ID")
 	// ErrInvalidFlow means the flow definition failed validation.
@@ -1135,7 +1138,13 @@ func (e *FlowEngine) UpdateFlowWith(flowID string, opts UpdateOptions, mutate fu
 	def.ID = flowID
 	def.UpdatedAt = updatedAt
 	if !opts.NotAnEdit {
-		def.UpdatedAt = time.Now().UTC()
+		// Strictly later than the previous edit, so every edit is a new
+		// revision even within the clock's resolution or after a clock step.
+		now := time.Now().UTC()
+		if !now.After(updatedAt) {
+			now = updatedAt.Add(time.Nanosecond)
+		}
+		def.UpdatedAt = now
 	}
 
 	if err := e.persistLocked(def); err != nil {

@@ -188,6 +188,7 @@ func main() {
 	g.ensureStruct(reflect.TypeOf(dto.Message{}))
 	g.ensureStruct(reflect.TypeOf(dto.DeployResponse{}))
 	g.ensureStruct(reflect.TypeOf(dto.ErrorResponse{}))
+	g.ensureStruct(reflect.TypeOf(dto.FlowConflictResponse{}))
 	g.ensureStruct(reflect.TypeOf(dto.AuthInfo{}))
 	g.ensureStruct(reflect.TypeOf(dto.AuthUser{}))
 	g.ensureStruct(reflect.TypeOf(dto.LogoutResponse{}))

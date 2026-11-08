@@ -111,6 +111,7 @@ describe('StaleDraftDialog', () => {
     config: { timeout: 30, maxConcurrency: 0, retryPolicy: { maxRetries: 0, backoff: 1, maxBackoff: 1, retryOn: [] }, environment: {} },
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:05:00Z',
+    revision: 'r1',
     version: '1',
   } as Flow;
   const stash = { flowId: 'f1', name: 'Mine', description: '', nodes: {}, connections: [], config: flow.config, baseUpdatedAt: '2026-01-01T00:00:00Z', stashedAt: 1 };
@@ -148,8 +149,8 @@ describe('StaleDraftDialog', () => {
 
 describe('FlowTabs', () => {
   const flows: FlowSummary[] = [
-    { id: 'a', name: 'Alpha', status: 'running', nodeCount: 2, createdAt: '', updatedAt: '' },
-    { id: 'b', name: 'Beta', status: 'draft', nodeCount: 0, createdAt: '', updatedAt: '' },
+    { id: 'a', name: 'Alpha', status: 'running', nodeCount: 2, createdAt: '', updatedAt: '', revision: 'r1' },
+    { id: 'b', name: 'Beta', status: 'draft', nodeCount: 0, createdAt: '', updatedAt: '', revision: 'r1' },
   ];
 
   it('renders a tab per flow, marks the selected one and reports clicks', () => {
@@ -250,6 +251,7 @@ describe('StatusBar', () => {
     config: { timeout: 30, maxConcurrency: 1, retryPolicy: { maxRetries: 0, backoff: 0, maxBackoff: 0, retryOn: [] }, environment: {} },
     createdAt: '',
     updatedAt: '',
+    revision: 'r1',
     version: '1.0',
   };
 

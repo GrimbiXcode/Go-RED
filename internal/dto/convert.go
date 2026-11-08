@@ -114,6 +114,7 @@ func ToWire(f *engine.Flow) Flow {
 		UpdatedAt:  f.UpdatedAt.Format(time.RFC3339),
 		DeployedAt: formatOptionalTime(f.DeployedAt),
 		Version:    f.Version,
+		Revision:   f.Revision(),
 	}
 }
 
@@ -140,6 +141,7 @@ func ToWireSummary(f *engine.Flow) FlowSummary {
 		CreatedAt:   f.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   f.UpdatedAt.Format(time.RFC3339),
 		DeployedAt:  formatOptionalTime(f.DeployedAt),
+		Revision:    f.Revision(),
 	}
 }
 

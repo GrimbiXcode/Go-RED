@@ -41,6 +41,7 @@ function makeFlow(overrides: Partial<Flow> = {}): Flow {
     config: { timeout: 30, maxConcurrency: 100, retryPolicy: { maxRetries: 3, backoff: 1, maxBackoff: 30, retryOn: [] }, environment: {} },
     createdAt: T0,
     updatedAt: T0,
+    revision: 'r1',
     version: '1.0',
     ...overrides,
   };
@@ -63,12 +64,14 @@ beforeEach(() => {
     ...(data as Partial<Flow>),
     id,
     updatedAt: '2026-01-01T00:00:10Z',
+    revision: 'r1',
   }));
   vi.mocked(api.deployFlow).mockReset();
   vi.mocked(api.deployFlow).mockImplementation(async (id) => ({
     flowId: id,
     status: 'running',
     updatedAt: '2026-01-01T00:00:10Z',
+    revision: 'r1',
     deployedAt: '2026-01-01T00:00:20Z',
   }));
 });
@@ -281,7 +284,7 @@ describe('flowStore save and deploy', () => {
 
   it('server events update status and drop deleted flows', async () => {
     await openFlow();
-    store().applyFlowList([{ id: 'f1', name: 'Flow', status: 'draft', nodeCount: 0, createdAt: T0, updatedAt: T0 }]);
+    store().applyFlowList([{ id: 'f1', name: 'Flow', status: 'draft', nodeCount: 0, createdAt: T0, updatedAt: T0, revision: 'r1' }]);
     store().applyFlowStatus({ flowId: 'f1', status: 'running', deployedAt: '2026-01-01T00:00:20Z' });
     expect(store().flow?.status).toBe('running');
     expect(store().flows[0].status).toBe('running');

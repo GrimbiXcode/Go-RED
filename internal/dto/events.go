@@ -15,6 +15,9 @@ type FlowStatusEvent struct {
 	Status     FlowStatus `json:"status"`
 	UpdatedAt  string     `json:"updatedAt,omitempty"`
 	DeployedAt string     `json:"deployedAt,omitempty"`
+	// Revision is the flow's current revision; a client whose working copy
+	// is based on another one is behind and pulls the flow.
+	Revision string `json:"revision,omitempty"`
 	// Error is the deploy error when Status is "error".
 	Error string `json:"error,omitempty"`
 }
@@ -76,6 +79,7 @@ func FlowStatusEventToWire(ev engine.FlowStatusEvent) FlowStatusEvent {
 		Status:     FlowStatusFromEngine(ev.Status),
 		UpdatedAt:  formatOptionalTime(ev.UpdatedAt),
 		DeployedAt: formatOptionalTime(ev.DeployedAt),
+		Revision:   revisionOf(ev.UpdatedAt),
 		Error:      ev.Error,
 	}
 }
@@ -130,4 +134,12 @@ func MetricsToWire(metrics map[string]engine.NodeMetrics) map[string]NodeMetrics
 		out[id] = NodeMetrics{Messages: m.Messages, Errors: m.Errors}
 	}
 	return out
+}
+
+// revisionOf is engine.RevisionOf, empty for a zero time.
+func revisionOf(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return engine.RevisionOf(t)
 }

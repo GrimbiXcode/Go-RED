@@ -37,7 +37,7 @@ the server log).
 | `POST /api/flows` | `FlowCreateRequest {id?, name, description?}` | `201 Flow` | `id` is optional; it must be a safe file name |
 | `POST /api/flows/import` | `Flow` (a Go-RED export) **or** a Node-RED `flows.json` array | `201 {status: "imported", format, flowId, originalId, name, flows: [{flowId, originalId, name}], warnings: string[], message}` | `format` is `go-red` or `node-red`; every imported flow gets a fresh id, `originalId` echoes the file's; a Node-RED array yields one flow per tab (`flows`, first one in `flowId`) and `warnings` lists what could not be mapped (see *Node-RED import and export*). Rate limited (`429`, see *Authentication and origins*) |
 | `GET /api/flows/{id}` | – | `Flow` | the **draft definition**, including `deployedAt` |
-| `PUT /api/flows/{id}` | `FlowUpdateRequest {name?, description?, nodes?, connections?, config?, order?}` | `Flow` | saves the draft only; a running instance is untouched until the next deploy. A body with only `order` moves the tab and does not count as an edit (`updatedAt` stays) |
+| `PUT /api/flows/{id}` | `FlowUpdateRequest {name?, description?, nodes?, connections?, config?, order?, baseRevision?}` | `Flow` | saves the draft only; a running instance is untouched until the next deploy. A body with only `order` moves the tab and does not count as an edit (`updatedAt` and `revision` stay). With `baseRevision` the save only happens if that is still the flow's revision, else `409 FlowConflictResponse {error, code: "revision_conflict", flow}` (see *Revisions*) |
 | `DELETE /api/flows/{id}` | – | `{status: "deleted", flowId}` | stops the flow first |
 | `POST /api/flows/{id}/deploy` | – | `DeployResponse {flowId, status, updatedAt?, deployedAt?, message?}` | runs a snapshot of the draft; `422` with the reason when it cannot run; rate limited (`429`) |
 | `POST /api/flows/{id}/undeploy` | – | `DeployResponse` | the definition stays, status becomes `draft` |
@@ -59,6 +59,21 @@ node instance (Markdown); a node with `disabled: true` stays in the
 definition but is neither started on deploy nor routed to, and cannot be
 injected into. A draft differs from what is running when
 `updatedAt > deployedAt`; the editor's Deploy button uses exactly that.
+
+### Revisions
+
+Every flow (and `FlowSummary`, and `flow:status`) carries a `revision`: an
+opaque token that changes with every edit of the definition and with
+nothing else (moving the tab, deploy and undeploy keep it). Revisions are
+strictly ordered and survive a restart. Compare them for equality only;
+`updatedAt` is not a substitute, it has one-second precision.
+
+A client that sends `baseRevision` with `PUT /api/flows/{id}` gets
+optimistic concurrency: the check and the save happen atomically, so of
+several saves on the same revision exactly one succeeds, and the others
+get `409` with `code: "revision_conflict"` and the flow as it is now, to
+pull and reapply their change on. Without `baseRevision` the last writer
+wins, as for scripts before.
 
 ## Authentication and origins
 
@@ -292,7 +307,7 @@ was away.
 
 | `type` | `data` | When |
 |---|---|---|
-| `flow:status` | `FlowStatusEvent {flowId, status, updatedAt?, deployedAt?, error?}` | after every REST mutation of the flow and every runtime change: deploy, undeploy, a deploy that failed (`status: "error"` with the reason in `error`), a flow that failed to restore at start-up |
+| `flow:status` | `FlowStatusEvent {flowId, status, updatedAt?, deployedAt?, revision?, error?}` | after every REST mutation of the flow and every runtime change: deploy, undeploy, a deploy that failed (`status: "error"` with the reason in `error`), a flow that failed to restore at start-up |
 | `flow:list` | `{flows: FlowSummary[]}` | together with every `flow:status`, after create, import and delete |
 | `flow:delete` | `{flowId}` | after `DELETE /api/flows/{id}` |
 

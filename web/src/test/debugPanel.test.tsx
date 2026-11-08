@@ -89,6 +89,7 @@ describe('DebugPanel', () => {
         config: { timeout: 30, maxConcurrency: 1, retryPolicy: { maxRetries: 0, backoff: 0, maxBackoff: 0, retryOn: [] }, environment: {} },
         createdAt: '',
         updatedAt: '',
+        revision: 'r1',
         version: '1.0',
       },
     });

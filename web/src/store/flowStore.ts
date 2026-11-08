@@ -220,6 +220,7 @@ function summaryFromFlow(flow: Flow): FlowSummary {
     nodeCount: Object.keys(flow.nodes || {}).length,
     createdAt: flow.createdAt,
     updatedAt: flow.updatedAt,
+    revision: flow.revision,
     deployedAt: flow.deployedAt,
   };
 }

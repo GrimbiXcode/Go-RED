@@ -388,7 +388,7 @@ func statusForError(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, engine.ErrFlowExists):
 		return http.StatusConflict
-	case errors.Is(err, engine.ErrFlowNotDeployed):
+	case errors.Is(err, engine.ErrFlowNotDeployed), errors.Is(err, engine.ErrFlowConflict):
 		return http.StatusConflict
 	case errors.Is(err, engine.ErrInvalidFlowID):
 		return http.StatusBadRequest
@@ -499,10 +499,22 @@ func (s *server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 
 	// A body with only order moves the tab; that is not an edit of the flow.
 	opts := engine.UpdateOptions{NotAnEdit: request.OnlyOrder()}
+	var current *dto.Flow
 	flow, err := s.engine.UpdateFlowWith(r.PathValue("id"), opts, func(f *engine.Flow) error {
+		// Checked under the engine lock, so two saves on the same base
+		// cannot both pass; the 409 carries the flow as it is right now.
+		if request.BaseRevision != "" && request.BaseRevision != f.Revision() {
+			wire := dto.ToWire(f.Clone())
+			current = &wire
+			return engine.ErrFlowConflict
+		}
 		request.ApplyTo(f)
 		return nil
 	})
+	if errors.Is(err, engine.ErrFlowConflict) && current != nil {
+		writeJSON(w, http.StatusConflict, dto.FlowConflictResponse{Error: engine.ErrFlowConflict.Error(), Code: dto.RevisionConflictCode, Flow: *current})
+		return
+	}
 	if err != nil {
 		writeEngineError(w, err)
 		return
