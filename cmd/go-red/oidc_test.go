@@ -40,6 +40,8 @@ type fakeProvider struct {
 	mu     sync.Mutex
 	claims map[string]any // set per sign-in; iss, aud, exp and nonce are filled in
 	nonce  string         // overrides the nonce from the login request when set
+	// noEndSession hides end_session_endpoint from discovery.
+	noEndSession bool
 	// challenge and nonce of the last login, recorded by the test from the
 	// authorization URL.
 	lastChallenge string
@@ -54,6 +56,20 @@ func newFakeProvider(t *testing.T) *fakeProvider {
 	discovery := &oidctest.Server{PublicKeys: []oidctest.PublicKey{{PublicKey: key.Public(), KeyID: "k1", Algorithm: oidc.RS256}}}
 	mux := http.NewServeMux()
 	mux.Handle("/", discovery)
+	// oidctest's discovery has no end_session_endpoint; add one.
+	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		rec := httptest.NewRecorder()
+		discovery.ServeHTTP(rec, r)
+		var doc map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &doc))
+		p.mu.Lock()
+		if !p.noEndSession {
+			doc["end_session_endpoint"] = p.srv.URL + "/end-session"
+		}
+		p.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(doc)
+	})
 	mux.HandleFunc("POST /token", p.token)
 	p.srv = httptest.NewServer(mux)
 	t.Cleanup(p.srv.Close)
@@ -104,6 +120,7 @@ func (p *fakeProvider) settings() oidcSettings {
 		AllowedEmails: []string{"ada@example.com", "@team.example"},
 		AllowedGroups: []string{"go-red-admins"},
 		GroupsClaim:   "groups",
+		Logout:        oidcLogoutProvider,
 		SessionSecret: strings.Repeat("s", 32),
 		SessionTTL:    time.Hour,
 	}
@@ -226,7 +243,7 @@ func TestOIDCSignInFlow(t *testing.T) {
 
 	t.Run("logout clears the cookie and needs no auth", func(t *testing.T) {
 		w := serve(h, request(http.MethodPost, "/api/auth/logout", map[string]string{"Origin": "http://localhost:8080"}))
-		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
 		cleared := cookieNamed(w, "gored_session")
 		require.NotNil(t, cleared)
 		assert.Less(t, cleared.MaxAge, 0)
@@ -424,4 +441,109 @@ func TestOIDCCallbackRefusalsAreLogged(t *testing.T) {
 	assert.Contains(t, logs.String(), "oidc callback does not match the sign-in it answers")
 	assert.Contains(t, logs.String(), "stateMatches=false")
 	assert.NotContains(t, logs.String(), state, "the state value itself is not logged")
+}
+
+// signInCookies runs the flow and returns every cookie the callback set.
+func signInCookies(t *testing.T, h http.Handler, p *fakeProvider, claims map[string]any) []*http.Cookie {
+	t.Helper()
+	p.set(func() { p.claims = claims })
+	state, login := startLogin(t, h, p, "")
+	w := callback(h, "code="+testCode+"&state="+url.QueryEscape(state), login)
+	require.Equal(t, http.StatusFound, w.Code, w.Body.String())
+	return w.Result().Cookies()
+}
+
+func logout(t *testing.T, h http.Handler, cookies []*http.Cookie) (*httptest.ResponseRecorder, dto.LogoutResponse) {
+	t.Helper()
+	req := request(http.MethodPost, "/api/auth/logout", map[string]string{"Origin": "http://localhost:8080"})
+	for _, c := range cookies {
+		if c.MaxAge >= 0 {
+			req.AddCookie(c)
+		}
+	}
+	w := serve(h, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp dto.LogoutResponse
+	decodeBody(t, w, &resp)
+	return w, resp
+}
+
+func TestOIDCLogoutAtTheProvider(t *testing.T) {
+	p := newFakeProvider(t)
+	h, _ := oidcServer(t, p, routerOptions{}, nil)
+	cookies := signInCookies(t, h, p, ada)
+
+	var idToken *http.Cookie
+	for _, c := range cookies {
+		if c.Name == idTokenCookieName {
+			idToken = c
+		}
+	}
+	require.NotNil(t, idToken, "the ID token is kept for the logout hint")
+	assert.Equal(t, idTokenCookiePath, idToken.Path, "only the auth endpoints receive it")
+	assert.True(t, idToken.HttpOnly)
+
+	w, resp := logout(t, h, cookies)
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+	target, err := url.Parse(resp.LogoutURL)
+	require.NoError(t, err)
+	assert.Equal(t, p.srv.URL+"/end-session", target.Scheme+"://"+target.Host+target.Path)
+	q := target.Query()
+	assert.Equal(t, idToken.Value, q.Get("id_token_hint"))
+	assert.Equal(t, testClientID, q.Get("client_id"))
+	assert.Equal(t, "http://localhost:8080/", q.Get("post_logout_redirect_uri"))
+	for _, name := range []string{"gored_session", idTokenCookieName} {
+		c := cookieNamed(w, name)
+		require.NotNil(t, c, name)
+		assert.Less(t, c.MaxAge, 0, "%s is cleared", name)
+	}
+
+	// An expired session can still sign out at the provider (no hint then).
+	_, resp = logout(t, h, nil)
+	assert.Contains(t, resp.LogoutURL, "/end-session?")
+	assert.NotContains(t, resp.LogoutURL, "id_token_hint")
+}
+
+func TestOIDCLogoutStaysLocal(t *testing.T) {
+	p := newFakeProvider(t)
+	local, _ := oidcServer(t, p, routerOptions{}, func(s *oidcSettings) { s.Logout = oidcLogoutLocal })
+	_, resp := logout(t, local, signInCookies(t, local, p, ada))
+	assert.Empty(t, resp.LogoutURL, "oidcLogout: local")
+
+	p.set(func() { p.noEndSession = true })
+	h, _ := oidcServer(t, p, routerOptions{}, nil)
+	_, resp = logout(t, h, signInCookies(t, h, p, ada))
+	assert.Empty(t, resp.LogoutURL, "a provider without an end-session endpoint")
+
+	_, plain := newTestServer(t)
+	_, resp = logout(t, plain, nil)
+	assert.Empty(t, resp.LogoutURL, "no sign-in at all")
+}
+
+func TestOIDCOversizedIDTokenIsNotKept(t *testing.T) {
+	p := newFakeProvider(t)
+	h, _ := oidcServer(t, p, routerOptions{}, nil)
+	claims := map[string]any{"sub": "big", "email": "ada@example.com", "email_verified": true, "pad": strings.Repeat("x", maxIDTokenCookie)}
+	cookies := signInCookies(t, h, p, claims)
+	for _, c := range cookies {
+		if c.Name == idTokenCookieName {
+			assert.Less(t, c.MaxAge, 0, "cleared instead of set")
+		}
+	}
+	_, resp := logout(t, h, cookies)
+	assert.NotContains(t, resp.LogoutURL, "id_token_hint")
+}
+
+func TestOIDCReauthAsksTheProviderToCheckAgain(t *testing.T) {
+	p := newFakeProvider(t)
+	h, _ := oidcServer(t, p, routerOptions{}, nil)
+	location := func(target string) url.Values {
+		w := serve(h, request(http.MethodGet, target, nil))
+		require.Equal(t, http.StatusFound, w.Code)
+		u, err := url.Parse(w.Header().Get("Location"))
+		require.NoError(t, err)
+		return u.Query()
+	}
+	assert.Empty(t, location("/auth/login?next=/").Get("prompt"))
+	assert.Equal(t, "login", location("/auth/login?next=/&reauth=1").Get("prompt"))
 }

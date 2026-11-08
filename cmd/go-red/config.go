@@ -77,6 +77,10 @@ type Config struct {
 	// OIDCAllowAnyUser lets every account the provider authenticates sign
 	// in; without it an allowlist (emails or groups) is required.
 	OIDCAllowAnyUser bool `yaml:"oidcAllowAnyUser"`
+	// OIDCLogout is what signing out does: "provider" also ends the session
+	// at the provider when it has an end-session endpoint (RP-initiated
+	// logout), "local" only ends Go-RED's.
+	OIDCLogout string `yaml:"oidcLogout"`
 	// SessionSecret signs editor session cookies (at least 32 characters).
 	// Empty means a random key per process: sessions end on restart.
 	SessionSecret string `yaml:"sessionSecret"`
@@ -112,6 +116,7 @@ func defaultConfig() Config {
 		BackupInterval:  10 * time.Minute,
 		OIDCScopes:      []string{"profile", "email"},
 		OIDCGroupsClaim: "groups",
+		OIDCLogout:      oidcLogoutProvider,
 		SessionTTL:      12 * time.Hour,
 	}
 }
@@ -142,7 +147,7 @@ func loadConfig(args []string, getenv func(string) string) (Config, bool, error)
 	// keeps what file and environment said.
 	fs := flag.NewFlagSet("go-red", flag.ContinueOnError)
 	fs.SetOutput(flagOutput)
-	fs.String("config", file, "YAML config file (keys: port, dataDir, webDir, maxInflight, maxMessages, messageLog, logLevel, authToken, allowedOrigins, rateLimit, backupKeep, backupInterval, oidcIssuer, oidcClientId, oidcClientSecret, oidcRedirectUrl, oidcScopes, oidcAllowedEmails, oidcAllowedGroups, oidcGroupsClaim, oidcAllowAnyUser, sessionSecret, sessionTtl)")
+	fs.String("config", file, "YAML config file (keys: port, dataDir, webDir, maxInflight, maxMessages, messageLog, logLevel, authToken, allowedOrigins, rateLimit, backupKeep, backupInterval, oidcIssuer, oidcClientId, oidcClientSecret, oidcRedirectUrl, oidcScopes, oidcAllowedEmails, oidcAllowedGroups, oidcGroupsClaim, oidcAllowAnyUser, oidcLogout, sessionSecret, sessionTtl)")
 	fs.IntVar(&cfg.Port, "port", cfg.Port, "Port to listen on")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "Directory for flow data")
 	fs.StringVar(&cfg.WebUIDir, "web-dir", cfg.WebUIDir, "Serve the editor from this directory instead of the embedded build (development)")
@@ -164,6 +169,7 @@ func loadConfig(args []string, getenv func(string) string) (Config, bool, error)
 	groups := fs.String("oidc-allowed-groups", strings.Join(cfg.OIDCAllowedGroups, ","), "Comma-separated groups allowed to sign in")
 	fs.StringVar(&cfg.OIDCGroupsClaim, "oidc-groups-claim", cfg.OIDCGroupsClaim, "ID token claim that holds the user's groups")
 	fs.BoolVar(&cfg.OIDCAllowAnyUser, "oidc-allow-any-user", cfg.OIDCAllowAnyUser, "Let every account the provider authenticates sign in (no allowlist)")
+	fs.StringVar(&cfg.OIDCLogout, "oidc-logout", cfg.OIDCLogout, "What signing out ends: provider (also the provider's session, when it supports that) or local (only Go-RED's)")
 	secretFlag(fs, &cfg.SessionSecret, "session-secret", "Key that signs session cookies, at least 32 characters (prefer GORED_SESSION_SECRET or the config file; empty: random, sessions end on restart)")
 	fs.DurationVar(&cfg.SessionTTL, "session-ttl", cfg.SessionTTL, "How long an editor sign-in lasts")
 	showVersion := fs.Bool("version", false, "Print the version and exit")
@@ -272,6 +278,7 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 		{"GORED_OIDC_ALLOWED_EMAILS", setList(&cfg.OIDCAllowedEmails)},
 		{"GORED_OIDC_ALLOWED_GROUPS", setList(&cfg.OIDCAllowedGroups)},
 		{"GORED_OIDC_GROUPS_CLAIM", setString(&cfg.OIDCGroupsClaim)},
+		{"GORED_OIDC_LOGOUT", setString(&cfg.OIDCLogout)},
 		{"GORED_OIDC_ALLOW_ANY_USER", func(v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -345,6 +352,9 @@ func (c Config) validate() error {
 func (c Config) validateOIDC() error {
 	if c.SessionSecret != "" && len(c.SessionSecret) < 32 {
 		return errors.New("session-secret must be at least 32 characters")
+	}
+	if c.OIDCLogout != oidcLogoutProvider && c.OIDCLogout != oidcLogoutLocal {
+		return fmt.Errorf("oidc-logout must be %s or %s, got %q", oidcLogoutProvider, oidcLogoutLocal, c.OIDCLogout)
 	}
 	if c.OIDCIssuer == "" {
 		if c.OIDCClientID != "" || c.OIDCRedirectURL != "" {

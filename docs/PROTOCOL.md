@@ -32,7 +32,7 @@ the server log).
 | `GET /metrics` | – | Prometheus text format | see *Operations*; guarded by the token like the API |
 | `GET /api/auth/info` | – | `AuthInfo {methods, loginUrl?}` | always public; `methods` lists `token` and/or `oidc` (empty: no authentication), `loginUrl` is set with `oidc` |
 | `GET /api/auth/me` | – | `AuthUser {method, subject?, email?, name?}` | who the request is authenticated as; `method` is `token`, `oidc` or `none` (server without authentication) |
-| `POST /api/auth/logout` | – | `204` | always public; clears the OIDC session cookie (the provider's own session is left alone) |
+| `POST /api/auth/logout` | – | `LogoutResponse {logoutUrl?}` | always public; clears the OIDC session cookies. `logoutUrl`, when set, is the provider's end-session URL for the browser to visit next (see *Signing out*) |
 | `GET /api/flows` | – | `FlowSummary[]` | every known flow, running or not |
 | `POST /api/flows` | `FlowCreateRequest {id?, name, description?}` | `201 Flow` | `id` is optional; it must be a safe file name |
 | `POST /api/flows/import` | `Flow` (a Go-RED export) **or** a Node-RED `flows.json` array | `201 {status: "imported", format, flowId, originalId, name, flows: [{flowId, originalId, name}], warnings: string[], message}` | `format` is `go-red` or `node-red`; every imported flow gets a fresh id, `originalId` echoes the file's; a Node-RED array yields one flow per tab (`flows`, first one in `flowId`) and `warnings` lists what could not be mapped (see *Node-RED import and export*). Rate limited (`429`, see *Authentication and origins*) |
@@ -104,6 +104,7 @@ the bearer token while people sign in.
 | `-oidc-scopes` | requested besides `openid` (default `profile,email`) |
 | `-oidc-allowed-emails` | addresses, or `@domain` for a whole domain, that may sign in; only an ID token with `email_verified: true` matches |
 | `-oidc-allowed-groups`, `-oidc-groups-claim` | groups that may sign in, read from that ID token claim (default `groups`, a list or a single string). Providers that do not send `email_verified` (Entra ID) need groups |
+| `-oidc-logout` | `provider` (default): signing out also ends the session at the provider, when it has an end-session endpoint; `local`: only Go-RED's session ends (see *Signing out*) |
 | `-oidc-allow-any-user` | every account the provider authenticates may sign in. Without it an allowlist (emails or groups) is required, so a public provider never opens the server to everyone by accident |
 | `-session-secret` | at least 32 characters; signs the cookies. Empty: a random key per process, so sessions end when the server restarts |
 | `-session-ttl` | how long a sign-in lasts (default `12h`) |
@@ -136,9 +137,29 @@ The session cookie authenticates a request only when it is same-origin: a
 cross-origin request (even from an allowed origin) has to bring the bearer
 token, and a `POST`, `PUT` or `DELETE` must carry a same-origin `Origin`
 header or `Sec-Fetch-Site: same-origin`, which browsers send by themselves
-and other sites cannot fake. Sessions are stateless: signing out clears the
-cookie, and a user removed at the provider keeps access until the session
-expires.
+and other sites cannot fake. Sessions are stateless: a user removed at the
+provider keeps access until the session expires.
+
+### Signing out
+
+*Sign out* saves pending edits, then `POST /api/auth/logout` clears
+Go-RED's cookies. With `-oidc-logout provider` (the default) and a provider
+that advertises `end_session_endpoint`, the answer carries `logoutUrl`, and
+the editor sends the browser there (OIDC RP-Initiated Logout): it ends the
+session at the provider, and with it the single sign-on to other
+applications of that provider. The URL carries the ID token as
+`id_token_hint` (kept at sign-in in an HttpOnly cookie that only
+`/api/auth/` receives, unless it is too large for a cookie), `client_id`
+and `post_logout_redirect_uri`, the editor's root on the redirect URL's
+origin (`https://<host>/`); register that as a logout callback URL of the
+client at the provider. The provider then sends the browser back to the
+editor's signed-out dialog.
+
+With `-oidc-logout local`, or a provider without an end-session endpoint,
+only Go-RED's session ends. Either way, the dialog's sign-in button after an
+explicit sign-out asks the provider to check the user again
+(`/auth/login?reauth=1`, which adds `prompt=login`), so a provider session
+that is still alive cannot sign the user straight back in.
 
 The editor reads `GET /api/auth/info` after a `401`. With `oidc` as the
 only method and no sign-in yet in this page load it goes to `/auth/login`
@@ -195,7 +216,7 @@ file (`-config go-red.yaml` or `GORED_CONFIG`; keys `port`, `dataDir`,
 `authToken`, `allowedOrigins`, `rateLimit`, `backupKeep`, `backupInterval`,
 `oidcIssuer`, `oidcClientId`, `oidcClientSecret`, `oidcRedirectUrl`,
 `oidcScopes`, `oidcAllowedEmails`, `oidcAllowedGroups`, `oidcGroupsClaim`,
-`oidcAllowAnyUser`, `sessionSecret`, `sessionTtl`;
+`oidcAllowAnyUser`, `oidcLogout`, `sessionSecret`, `sessionTtl`;
 unknown keys are an error), `GORED_*` environment variables
 (`GORED_PORT`, `GORED_DATA_DIR`, `GORED_WEB_DIR`, `GORED_MAX_INFLIGHT`,
 `GORED_MAX_MESSAGES`, `GORED_MESSAGE_LOG`, `GORED_LOG_LEVEL`,
@@ -203,7 +224,8 @@ unknown keys are an error), `GORED_*` environment variables
 `GORED_BACKUP_KEEP`, `GORED_BACKUP_INTERVAL`, `GORED_OIDC_ISSUER`,
 `GORED_OIDC_CLIENT_ID`, `GORED_OIDC_CLIENT_SECRET`, `GORED_OIDC_REDIRECT_URL`,
 `GORED_OIDC_SCOPES`, `GORED_OIDC_ALLOWED_EMAILS`, `GORED_OIDC_ALLOWED_GROUPS`,
-`GORED_OIDC_GROUPS_CLAIM`, `GORED_OIDC_ALLOW_ANY_USER`, `GORED_SESSION_SECRET`,
+`GORED_OIDC_GROUPS_CLAIM`, `GORED_OIDC_ALLOW_ANY_USER`, `GORED_OIDC_LOGOUT`,
+`GORED_SESSION_SECRET`,
 `GORED_SESSION_TTL`) and the flags of the same
 names (`go-red -help`).
 

@@ -32,7 +32,7 @@ GET    /api/version               public, no auth
 GET    /metrics                   Prometheus text format
 GET    /api/auth/info             public: dto.AuthInfo (accepted methods, login URL)
 GET    /api/auth/me               dto.AuthUser (who the request is authenticated as)
-POST   /api/auth/logout           public: clears the OIDC session cookie, 204
+POST   /api/auth/logout           public: clears the OIDC cookies; dto.LogoutResponse{logoutUrl?}
 GET    /auth/login                only with OIDC; rate limited; redirect to the provider
 GET    /auth/callback             only with OIDC; rate limited; sets the session cookie
 GET    /api/flows                 []dto.FlowSummary
@@ -103,8 +103,15 @@ e-mail or `@domain`, or a group claim) and sets the session cookie
 Cookies are `base64url(JSON).base64url(HMAC-SHA256)` with a key per purpose
 derived from `sessionSecret` (random per process when unset). Failures end
 on `authErrorPage` with a fixed text; details only go to the log.
+The callback also keeps the raw ID token in `gored_idt` (`__Secure-` on
+https, path `/api/auth/`, skipped above `maxIDTokenCookie`) for
+`providerLogoutURL`, which builds the RP-initiated logout URL from the
+provider's `end_session_endpoint` (`id_token_hint`, `client_id`,
+`post_logout_redirect_uri` = the redirect URL's origin + `/`) unless
+`oidcLogout` is `local`. `/auth/login?reauth=1` adds `prompt=login`.
 `oidc_test.go` drives the whole flow against a fake provider (go-oidc's
-`oidctest` plus a token endpoint that checks the PKCE verifier).
+`oidctest` plus a token endpoint that checks the PKCE verifier, and an
+`end_session_endpoint` in discovery).
 
 ## Configuration (`loadConfig`)
 
@@ -121,7 +128,7 @@ Keys: port, dataDir, webDir, maxInflight, maxMessages, messageLog, logLevel,
 authToken, allowedOrigins, rateLimit, backupKeep, backupInterval, and for
 OIDC sign-in oidcIssuer, oidcClientId, oidcClientSecret, oidcRedirectUrl,
 oidcScopes, oidcAllowedEmails, oidcAllowedGroups, oidcGroupsClaim,
-oidcAllowAnyUser, sessionSecret, sessionTtl (table in the root README).
+oidcAllowAnyUser, oidcLogout, sessionSecret, sessionTtl (table in the root README).
 `validateOIDC` requires client ID, a redirect URL ending in `/auth/callback`
 and an allowlist (or `oidcAllowAnyUser`) once `oidcIssuer` is set, and a
 session secret of at least 32 characters. Secrets are never logged, and

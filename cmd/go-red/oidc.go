@@ -46,6 +46,17 @@ const (
 	// oidcHTTPTimeout bounds discovery, key and token requests to the
 	// provider.
 	oidcHTTPTimeout = 15 * time.Second
+
+	// The ID token is kept for RP-initiated logout (id_token_hint), in a
+	// cookie only POST /api/auth/logout receives. A token too big for a
+	// cookie is not kept; the provider then identifies the session itself.
+	idTokenCookieName = "gored_idt"
+	idTokenCookiePath = "/api/auth/"
+	maxIDTokenCookie  = 3800
+
+	// oidcLogout values.
+	oidcLogoutProvider = "provider"
+	oidcLogoutLocal    = "local"
 )
 
 // oidcSettings is the sign-in part of Config.
@@ -59,6 +70,7 @@ type oidcSettings struct {
 	AllowedGroups []string
 	GroupsClaim   string
 	AllowAnyUser  bool
+	Logout        string
 	SessionSecret string
 	SessionTTL    time.Duration
 }
@@ -78,6 +90,7 @@ func (c Config) oidcSettings() (oidcSettings, bool) {
 		AllowedGroups: c.OIDCAllowedGroups,
 		GroupsClaim:   c.OIDCGroupsClaim,
 		AllowAnyUser:  c.OIDCAllowAnyUser,
+		Logout:        c.OIDCLogout,
 		SessionSecret: c.SessionSecret,
 		SessionTTL:    c.SessionTTL,
 	}, true
@@ -109,10 +122,14 @@ type oidcAuth struct {
 	cfg         oidcSettings
 	secure      bool   // the redirect URL is https: cookies get Secure and the __Host- prefix
 	sessionName string // session cookie name
-	sessionKey  []byte
-	loginKey    []byte
-	client      *http.Client
-	now         func() time.Time
+	idTokenName string // ID token cookie name
+	// postLogoutURL is where the provider sends the browser after a logout:
+	// the editor's root on the redirect URL's origin.
+	postLogoutURL string
+	sessionKey    []byte
+	loginKey      []byte
+	client        *http.Client
+	now           func() time.Time
 
 	mu       sync.Mutex
 	provider *oidc.Provider // discovered lazily, kept once it worked
@@ -138,16 +155,20 @@ func newOIDCAuth(cfg oidcSettings, client *http.Client) (*oidcAuth, error) {
 		return nil, fmt.Errorf("oidc redirect url: %w", err)
 	}
 	a := &oidcAuth{
-		cfg:         cfg,
-		secure:      redirect.Scheme == "https",
-		sessionName: "gored_session",
-		sessionKey:  deriveKey(secret, "go-red session"),
-		loginKey:    deriveKey(secret, "go-red login"),
-		client:      client,
-		now:         time.Now,
+		cfg:           cfg,
+		secure:        redirect.Scheme == "https",
+		sessionName:   "gored_session",
+		idTokenName:   idTokenCookieName,
+		postLogoutURL: (&url.URL{Scheme: redirect.Scheme, Host: redirect.Host, Path: "/"}).String(),
+		sessionKey:    deriveKey(secret, "go-red session"),
+		loginKey:      deriveKey(secret, "go-red login"),
+		client:        client,
+		now:           time.Now,
 	}
 	if a.secure {
 		a.sessionName = "__Host-gored_session"
+		// __Host- needs Path=/; this cookie is scoped to /api/auth/.
+		a.idTokenName = "__Secure-" + idTokenCookieName
 	}
 	return a, nil
 }
@@ -237,7 +258,13 @@ func (a *oidcAuth) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Secure:   a.secure,
 		SameSite: http.SameSiteLaxMode,
 	})
-	target := a.oauthConfig(p).AuthCodeURL(st.State, oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier))
+	opts := []oauth2.AuthCodeOption{oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)}
+	if r.URL.Query().Get("reauth") == "1" {
+		// After an explicit sign-out: the provider must check the user
+		// again even if its own session is still alive.
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "login"))
+	}
+	target := a.oauthConfig(p).AuthCodeURL(st.State, opts...)
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, target, http.StatusFound)
 }
@@ -338,6 +365,19 @@ func (a *oidcAuth) handleCallback(w http.ResponseWriter, r *http.Request) {
 		Secure:   a.secure,
 		SameSite: http.SameSiteLaxMode,
 	})
+	if len(rawID) <= maxIDTokenCookie {
+		http.SetCookie(w, &http.Cookie{
+			Name:     a.idTokenName,
+			Value:    rawID,
+			Path:     idTokenCookiePath,
+			MaxAge:   int(a.cfg.SessionTTL.Seconds()),
+			HttpOnly: true,
+			Secure:   a.secure,
+			SameSite: http.SameSiteLaxMode,
+		})
+	} else {
+		a.clearIDToken(w)
+	}
 	slog.Info("oidc sign-in", "subject", user.Subject, "email", user.Email)
 	http.Redirect(w, r, st.Next, http.StatusFound)
 }
@@ -430,6 +470,44 @@ func (a *oidcAuth) session(r *http.Request) (principal, bool) {
 // clearSession expires the session cookie.
 func (a *oidcAuth) clearSession(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: a.sessionName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteLaxMode})
+	a.clearIDToken(w)
+}
+
+func (a *oidcAuth) clearIDToken(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: a.idTokenName, Path: idTokenCookiePath, MaxAge: -1, HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteLaxMode})
+}
+
+// providerLogoutURL is where to send the browser to end the session at the
+// provider too (OIDC RP-Initiated Logout): its end-session endpoint with
+// the ID token as hint, the client ID and the editor's root to come back
+// to. Empty when logout is local or the provider has no such endpoint.
+func (a *oidcAuth) providerLogoutURL(r *http.Request) string {
+	if a.cfg.Logout != oidcLogoutProvider {
+		return ""
+	}
+	p, err := a.discover()
+	if err != nil {
+		slog.Warn("oidc discovery failed, signing out locally only", "err", err)
+		return ""
+	}
+	var meta struct {
+		EndSession string `json:"end_session_endpoint"`
+	}
+	if err := p.Claims(&meta); err != nil || meta.EndSession == "" {
+		return ""
+	}
+	u, err := url.Parse(meta.EndSession)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		return ""
+	}
+	q := u.Query()
+	if c, err := r.Cookie(a.idTokenName); err == nil && c.Value != "" {
+		q.Set("id_token_hint", c.Value)
+	}
+	q.Set("client_id", a.cfg.ClientID)
+	q.Set("post_logout_redirect_uri", a.postLogoutURL)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // sessionCookieUsable says whether a session cookie may authenticate r. It

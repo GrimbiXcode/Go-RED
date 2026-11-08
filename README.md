@@ -99,6 +99,7 @@ the environment, which wins over the file.
 | `-oidc-client-id` / `-oidc-client-secret` | `GORED_OIDC_CLIENT_ID` / `GORED_OIDC_CLIENT_SECRET` | – | the client registered at the provider (secret optional, PKCE is always used) |
 | `-oidc-redirect-url` | `GORED_OIDC_REDIRECT_URL` | – | `https://your-host/auth/callback`, registered at the provider |
 | `-oidc-allowed-emails` / `-oidc-allowed-groups` | `GORED_OIDC_ALLOWED_EMAILS` / `GORED_OIDC_ALLOWED_GROUPS` | – | who may sign in: verified addresses or `@domain`, groups from the `-oidc-groups-claim` claim (default `groups`); `-oidc-allow-any-user` lets everyone in |
+| `-oidc-logout` | `GORED_OIDC_LOGOUT` | `provider` | `provider`: signing out also ends the provider session (register `https://your-host/` as its logout callback); `local`: only Go-RED's |
 | `-oidc-scopes` | `GORED_OIDC_SCOPES` | `profile,email` | scopes requested besides `openid` |
 | `-session-secret` / `-session-ttl` | `GORED_SESSION_SECRET` / `GORED_SESSION_TTL` | random / `12h` | key (≥ 32 chars) that signs session cookies, so sessions survive a restart; sign-in lifetime |
 | `-allowed-origins` | `GORED_ALLOWED_ORIGINS` | – | extra browser origins (`scheme://host[:port]`, comma-separated, or `*`); the editor's own origin is always allowed |

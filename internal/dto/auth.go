@@ -21,6 +21,14 @@ type AuthInfo struct {
 	LoginURL string `json:"loginUrl,omitempty"`
 }
 
+// LogoutResponse is the answer of POST /api/auth/logout.
+type LogoutResponse struct {
+	// LogoutURL, when set, is where the browser goes next to end the
+	// session at the OIDC provider too (RP-initiated logout); the provider
+	// sends it back to the editor afterwards.
+	LogoutURL string `json:"logoutUrl,omitempty"`
+}
+
 // AuthUser is the answer of GET /api/auth/me: who the request was
 // authenticated as.
 type AuthUser struct {

@@ -118,6 +118,10 @@ export interface AuthUser {
   name?: string;
 }
 
+export interface LogoutResponse {
+  logoutUrl?: string;
+}
+
 export interface FlowStatusEvent {
   flowId: string;
   status: FlowStatus;

@@ -81,6 +81,7 @@ func TestLoadConfigRejectsBadValues(t *testing.T) {
 		"oidc bad email entry":     {args: []string{"-oidc-issuer", "https://idp.example", "-oidc-client-id", "c", "-oidc-redirect-url", "https://red.example/auth/callback", "-oidc-allowed-emails", "example.com"}},
 		"client id without issuer": {args: []string{"-oidc-client-id", "c"}},
 		"bad allow-any env":        {env: map[string]string{"GORED_OIDC_ALLOW_ANY_USER": "maybe"}},
+		"bad oidc logout":          {args: []string{"-oidc-logout", "everywhere"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -129,6 +130,7 @@ sessionTtl: 2h
 		AllowedEmails: []string{"ada@example.com"},
 		AllowedGroups: []string{"admins", "ops"},
 		GroupsClaim:   "groups",
+		Logout:        "provider",
 		SessionSecret: "0123456789abcdef0123456789abcdef",
 		SessionTTL:    2 * time.Hour,
 	}, settings)

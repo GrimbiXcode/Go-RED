@@ -300,11 +300,14 @@ func (s *server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleLogout answers POST /api/auth/logout (public, so an expired session
-// can still sign out): it clears the session cookie. The provider's own
-// session is left alone.
+// can still sign out): it clears the session cookies and, unless logout is
+// local, names the provider's end-session URL for the browser to visit next.
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	var resp dto.LogoutResponse
 	if s.sessions != nil {
+		resp.LogoutURL = s.sessions.providerLogoutURL(r)
 		s.sessions.clearSession(w)
 	}
-	w.WriteHeader(http.StatusNoContent)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, resp)
 }
