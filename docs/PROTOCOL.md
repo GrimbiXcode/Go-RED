@@ -144,6 +144,20 @@ cookie does not stick, for example a `Secure` cookie over plain http or
 sign-out; otherwise it shows a dialog with the sign-on button and/or the
 token field. The main menu shows the signed-in user and *Sign out*.
 
+Re-authenticating never loses unsaved edits. Before the page leaves for the
+sign-in (or reloads after *Sign out*, which saves first), the editor keeps
+the draft that could not be saved in `sessionStorage`
+(`go-red.unsavedFlow`, at most an hour) together with the `updatedAt` of
+the server version it was made on. When that flow opens again and the
+server still has that version, the draft is put back as one undoable step
+and autosave sends it. When someone has saved the flow since, the server's
+version is shown and the editor asks: keep the changes (one undoable step
+over the other version), use the server version, or download the changes
+as an importable flow file; the stash stays until the user decides. A token entered
+while the editor is in use retries the failed requests in place instead of
+reloading. Undo history and edit-tray fields not yet confirmed with *Done*
+do not survive a sign-in round trip.
+
 Import and deploy are rate limited per client address: `-rate-limit N`
 requests per minute (default 60, burst of a quarter of that, `0` disables);
 over the limit the answer is `429` with `Retry-After: 1`.

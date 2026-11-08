@@ -6,6 +6,7 @@ import { THEME_PREFERENCES, useThemeStore, type ThemePreference } from '../lib/t
 import { signOutAndReload, useAuthStore } from '../lib/auth';
 import { signOut } from '../utils/api';
 import { notify } from '../store/notificationStore';
+import { useFlowStore } from '../store/flowStore';
 import { WebSocketStatus } from './WebSocketStatus';
 
 export interface HeaderProps {
@@ -98,7 +99,11 @@ export function Header({
   const user = useAuthStore((state) => state.user);
 
   const handleSignOut = () => {
-    signOutAndReload(signOut).catch((error: unknown) =>
+    // Save pending edits while the session still works, then sign out.
+    signOutAndReload(async () => {
+      await useFlowStore.getState().flushSave();
+      await signOut();
+    }).catch((error: unknown) =>
       notify('error', t('auth.signOutFailed', { message: error instanceof Error ? error.message : String(error) }))
     );
   };

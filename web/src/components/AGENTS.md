@@ -20,6 +20,7 @@ import.
 | `EmptyStates.tsx` | `NoFlowsState` (create or import) and the empty-flow illustration. |
 | `ToastNotification.tsx` | `ToastHost` renders `notificationStore` toasts. |
 | `TokenPrompt.tsx` | Dialog shown while `useAuthStore.required`: the SSO button when the server has OIDC (and "signed out" after a sign-out), the token field when it takes a token (stored, then reload). |
+| `StaleDraftDialog.tsx` | Shown while `flowStore.staleStash` is set: unsaved work from before a sign-in whose flow was saved by someone since; keep, use the server version, or download. |
 | `WebSocketStatus.tsx` | Connection dot or label from `useWebSocket().state`. |
 
 ## Canvas

@@ -3,6 +3,9 @@ import type { Flow, FlowNode, NodeConnection, FlowStatus } from '../types/flow';
 import type { FlowSummary } from '../types/api';
 import type { NodeMetadata } from '../types/node';
 import * as api from '../utils/api';
+import i18n from '../i18n';
+import { onReauthentication } from '../lib/auth';
+import { notify } from './notificationStore';
 import {
   type FlowDocument,
   type History,
@@ -70,6 +73,14 @@ interface FlowState {
   savedVersion: number;
   /** editVersion at the time of the last deploy in this session. */
   deployedVersion: number;
+  /**
+   * The server's updatedAt for the version the working copy is based on:
+   * set on load and after each successful save, never by status events
+   * (those only report that someone saved, not what).
+   */
+  baseUpdatedAt: string | null;
+  /** Unsaved work from before a sign-in whose flow has changed on the server since; waits for resolveStaleStash. */
+  staleStash: UnsavedStash | null;
 
   loadFlows: () => Promise<void>;
   loadNodeTypes: () => Promise<void>;
@@ -78,6 +89,8 @@ interface FlowState {
   deleteFlow: (flowId: string) => Promise<void>;
   renameFlow: (name: string, description?: string) => void;
   flushSave: (options?: { keepalive?: boolean }) => Promise<void>;
+  /** Applies ('keep') or drops ('server') the stale stash. */
+  resolveStaleStash: (choice: 'keep' | 'server') => void;
   deploy: () => Promise<void>;
   undeploy: () => Promise<void>;
 
@@ -107,6 +120,56 @@ interface FlowState {
   applyFlowStatus: (event: FlowStatusEvent) => void;
   applyFlowList: (flows: FlowSummary[]) => void;
   applyFlowDeleted: (flowId: string) => void;
+}
+
+/**
+ * Unsaved work kept across a sign-in round trip (sessionStorage, so only
+ * this tab and only until it closes): exactly what the autosave PUT sends.
+ */
+export const UNSAVED_STASH_KEY = 'go-red.unsavedFlow';
+/** A stash older than this is not replayed. */
+const UNSAVED_STASH_MAX_AGE_MS = 60 * 60 * 1000;
+
+export interface UnsavedStash {
+  flowId: string;
+  name: string;
+  description: Flow['description'];
+  nodes: Flow['nodes'];
+  connections: Flow['connections'];
+  config: Flow['config'];
+  /** baseUpdatedAt when the work was stashed: the server version it was made on. */
+  baseUpdatedAt: string | null;
+  stashedAt: number;
+}
+
+function writeStash(stash: UnsavedStash | null): void {
+  try {
+    if (stash) window.sessionStorage.setItem(UNSAVED_STASH_KEY, JSON.stringify(stash));
+    else window.sessionStorage.removeItem(UNSAVED_STASH_KEY);
+  } catch {
+    // Without sessionStorage there is nothing to keep the edits in.
+  }
+}
+
+/**
+ * The stash for flowId, if there is a usable one. It stays stored until it
+ * is applied or dropped, so a reload before that keeps it; an expired one
+ * is removed. A stash for another flow is left alone.
+ */
+function readStash(flowId: string): UnsavedStash | null {
+  let stash: UnsavedStash | null = null;
+  try {
+    const raw = window.sessionStorage.getItem(UNSAVED_STASH_KEY);
+    stash = raw ? (JSON.parse(raw) as UnsavedStash) : null;
+  } catch {
+    stash = null;
+  }
+  if (!stash || stash.flowId !== flowId) return null;
+  if (Date.now() - stash.stashedAt > UNSAVED_STASH_MAX_AGE_MS) {
+    writeStash(null);
+    return null;
+  }
+  return stash;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -169,6 +232,8 @@ const initialDocumentState = {
   editVersion: 0,
   savedVersion: 0,
   deployedVersion: 0,
+  baseUpdatedAt: null as string | null,
+  staleStash: null as UnsavedStash | null,
 };
 
 export const useFlowStore = create<FlowState>((set, get) => {
@@ -205,6 +270,34 @@ export const useFlowStore = create<FlowState>((set, get) => {
       saveTimer = null;
       void get().flushSave();
     }, AUTOSAVE_DELAY_MS);
+  };
+
+  /**
+   * Puts edits that could not be saved before a sign-in back over the open
+   * flow as one undoable step (undo returns to the server's version) and
+   * lets autosave send them.
+   */
+  const applyStash = (stash: UnsavedStash) => {
+    const { flow } = get();
+    if (!flow || flow.id !== stash.flowId) return;
+    writeStash(null);
+    set((state) => ({
+      flow: {
+        ...flow,
+        name: stash.name,
+        description: stash.description,
+        nodes: stash.nodes,
+        connections: stash.connections,
+        config: stash.config,
+      },
+      flows: state.flows.map((f) => (f.id === flow.id ? { ...f, name: stash.name, description: stash.description } : f)),
+      history: pushHistory(state.history, documentOf(flow)),
+      editVersion: state.editVersion + 1,
+      saveState: 'pending',
+      staleStash: null,
+    }));
+    scheduleSave();
+    notify('info', i18n.t('toast.unsavedRestored'));
   };
 
   return {
@@ -251,7 +344,16 @@ export const useFlowStore = create<FlowState>((set, get) => {
       try {
         const flow = await api.fetchFlow(flowId);
         if (get().selectedFlowId !== flowId) return;
-        set({ flow, flowLoading: false });
+        set({ flow, flowLoading: false, baseUpdatedAt: flow.updatedAt ?? null });
+        const stash = readStash(flowId);
+        if (!stash) return;
+        if (stash.baseUpdatedAt !== null && stash.baseUpdatedAt === flow.updatedAt) {
+          applyStash(stash);
+        } else {
+          // Someone saved the flow since the edits were made: applying them
+          // would silently replace that, so the user decides.
+          set({ staleStash: stash });
+        }
       } catch (error) {
         if (get().selectedFlowId !== flowId) return;
         set({ flowLoading: false, flowError: errorMessage(error) });
@@ -326,6 +428,7 @@ export const useFlowStore = create<FlowState>((set, get) => {
               flow: nextFlow,
               flows: replaceSummary(state.flows, summaryFromFlow(nextFlow)),
               savedVersion: version,
+              baseUpdatedAt: saved.updatedAt ?? state.baseUpdatedAt,
               saveState: stillDirty ? 'pending' : 'idle',
               saveError: null,
             };
@@ -344,6 +447,17 @@ export const useFlowStore = create<FlowState>((set, get) => {
       }
       if (get().flow?.id === flowId && get().editVersion !== version) {
         scheduleSave();
+      }
+    },
+
+    resolveStaleStash: (choice) => {
+      const stash = get().staleStash;
+      if (!stash) return;
+      if (choice === 'keep') {
+        applyStash(stash);
+      } else {
+        writeStash(null);
+        set({ staleStash: null });
       }
     },
 
@@ -654,3 +768,30 @@ export function __resetFlowStoreForTests(): void {
     ...initialDocumentState,
   });
 }
+
+/** Keeps what could not be saved when the page leaves for the sign-in. */
+export function stashUnsavedWork(): void {
+  const { flow, editVersion, savedVersion } = useFlowStore.getState();
+  if (!flow || editVersion === savedVersion) return;
+  writeStash({
+    flowId: flow.id,
+    name: flow.name,
+    description: flow.description,
+    nodes: flow.nodes,
+    connections: flow.connections,
+    config: flow.config,
+    baseUpdatedAt: useFlowStore.getState().baseUpdatedAt,
+    stashedAt: Date.now(),
+  });
+}
+
+/** Retries what failed while the editor was unauthenticated (token entered in place). */
+export function resumeAfterReauthentication(): void {
+  const state = useFlowStore.getState();
+  if (state.flowsError) void state.loadFlows();
+  if (state.nodeTypesError) void state.loadNodeTypes();
+  if (state.saveState === 'error') void state.flushSave();
+  else if (state.flowError && state.selectedFlowId) void state.selectFlow(state.selectedFlowId);
+}
+
+onReauthentication({ beforeSignIn: stashUnsavedWork, resume: resumeAfterReauthentication });

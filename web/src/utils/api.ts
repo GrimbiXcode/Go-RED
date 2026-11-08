@@ -150,17 +150,21 @@ export const exportFlow = async (flowId: string, format: ExportFormat = 'go-red'
     throw new Error('No data in response');
   }
 
-  const dataStr = JSON.stringify(response, null, 2);
-  const dataBlob = new Blob([dataStr], { type: 'application/json' });
+  downloadJson(response, format === 'node-red' ? `flow-${flowId}.node-red.json` : `flow-${flowId}.json`);
+};
+
+/** Saves data as a pretty-printed JSON file through the browser's download. */
+export function downloadJson(data: unknown, filename: string): void {
+  const dataBlob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(dataBlob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = format === 'node-red' ? `flow-${flowId}.node-red.json` : `flow-${flowId}.json`;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
-};
+}
 
 export interface ImportedFlow {
   flowId: string;

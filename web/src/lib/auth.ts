@@ -18,6 +18,12 @@ import type { AuthInfo, AuthUser } from '../types/api';
  * that expires while the user edits, the TokenPrompt dialog offers the
  * token field and/or the SSO button, so nothing is navigated away from
  * unasked.
+ *
+ * Unsaved work survives re-authentication: the flow store registers
+ * `onReauthentication` hooks. Before the page leaves for the sign-in,
+ * `beforeSignIn` stashes the unsaved draft (restored when the flow loads
+ * again); after a token is entered mid-session, `resume` retries in place
+ * instead of reloading.
  */
 
 const TOKEN_KEY = 'go-red.token';
@@ -127,10 +133,45 @@ export function signInUrl(info: AuthInfo): string {
   return `${info.loginUrl ?? '/auth/login'}?next=${encodeURIComponent(next)}`;
 }
 
-/** Sends the browser to the OIDC sign-in. */
+interface ReauthenticationHooks {
+  /** Runs right before the page leaves for the sign-in. */
+  beforeSignIn?: () => void;
+  /** Runs after a token was entered while the editor was in use; retries what failed. */
+  resume?: () => void;
+}
+
+let hooks: ReauthenticationHooks = {};
+let signingIn = false;
+
+/** Registers what to do around re-authentication (the flow store does this once). */
+export function onReauthentication(next: ReauthenticationHooks): void {
+  hooks = next;
+}
+
+/** The page is on its way to the sign-in (unload handlers skip their prompt). */
+export function isSigningIn(): boolean {
+  return signingIn;
+}
+
+/** Sends the browser to the OIDC sign-in, stashing unsaved work first. */
 export function startSignIn(info: AuthInfo, automatic = false): void {
+  hooks.beforeSignIn?.();
+  signingIn = true;
   writeMark(automatic ? String(Date.now()) : null);
   window.location.assign(signInUrl(info));
+}
+
+/**
+ * After a token was entered: when the editor had already been in use
+ * (someone was authenticated in this page load), retry in place so nothing
+ * unsaved is lost; otherwise reload so everything loads with the token.
+ */
+export function resumeAfterToken(reload = () => window.location.reload()): void {
+  if (useAuthStore.getState().user !== null && hooks.resume) {
+    hooks.resume();
+  } else {
+    reload();
+  }
 }
 
 /** Remembers that the user signed out, so the next 401 shows the dialog instead of signing in again. */
@@ -144,11 +185,14 @@ export function isSignedOut(): boolean {
 }
 
 /**
- * Ends the OIDC session: logout (the POST to /api/auth/logout) runs first,
- * then the page reloads into the signed-out dialog.
+ * Ends the OIDC session: logout (the caller saves pending edits, then POSTs
+ * /api/auth/logout) runs first; whatever is still unsaved is stashed for
+ * the next sign-in, and the page reloads into the signed-out dialog.
  */
 export async function signOutAndReload(logout: () => Promise<void>, reload = () => window.location.reload()): Promise<void> {
   await logout();
+  hooks.beforeSignIn?.();
+  signingIn = true;
   markSignedOut();
   reload();
 }

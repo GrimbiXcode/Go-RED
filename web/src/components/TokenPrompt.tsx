@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { KeyRound, LogIn } from 'lucide-react';
-import { isSignedOut, setToken, startSignIn, useAuthStore } from '../lib/auth';
+import { isSignedOut, resumeAfterToken, setToken, startSignIn, useAuthStore } from '../lib/auth';
 
 interface TokenPromptProps {
-  /** Runs after a token was stored; defaults to reloading the page so every request and the socket use it. */
+  /** Runs after a token was stored; defaults to retrying in place mid-session, else reloading the page. */
   onDone?: () => void;
 }
 
@@ -13,7 +13,7 @@ interface TokenPromptProps {
  * the server has OIDC sign-in, the access token field when it takes a token
  * (or before GET /api/auth/info has answered), or both.
  */
-export function TokenPrompt({ onDone = () => window.location.reload() }: TokenPromptProps) {
+export function TokenPrompt({ onDone = () => resumeAfterToken() }: TokenPromptProps) {
   const { t } = useTranslation();
   const required = useAuthStore((state) => state.required);
   const info = useAuthStore((state) => state.info);

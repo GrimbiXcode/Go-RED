@@ -110,8 +110,17 @@ ESLint rules to know: `no-console` (only `warn` and `error` allowed),
   sign-out, via the `go-red.ssoRedirect` sessionStorage mark), otherwise
   the prompt offers the SSO button and/or the token field (a token reloads
   the page on save). `App` loads `GET /api/auth/me` into `useAuthStore.user`;
-  the header menu shows an OIDC user and *Sign out* (`POST /api/auth/logout`,
-  then reload into the signed-out dialog).
+  the header menu shows an OIDC user and *Sign out* (saves, then
+  `POST /api/auth/logout`, then reloads into the signed-out dialog).
+  Unsaved work survives re-authentication: `flowStore` registers
+  `onReauthentication` hooks; `startSignIn` and sign-out stash the unsaved
+  draft in `sessionStorage` (`go-red.unsavedFlow`) with `baseUpdatedAt`, the
+  server version it was made on (set on load and save, never by status
+  events). `selectFlow` restores it as one undoable step when the server
+  still has that version; otherwise it sets `staleStash` and
+  `StaleDraftDialog` asks (keep, server version, download) through
+  `resolveStaleStash`. A token entered mid-session retries in place
+  (`resumeAfterToken`) instead of reloading.
 - Types (`src/types/`): `generated.ts` comes from
   `go generate ./internal/dto/...` and is never edited by hand; the other
   files re-export it and add UI-only types.
