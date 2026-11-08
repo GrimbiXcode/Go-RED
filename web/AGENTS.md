@@ -119,8 +119,11 @@ ESLint rules to know: `no-console` (only `warn` and `error` allowed),
   events). `selectFlow` restores it as one undoable step when the server
   still has that version; otherwise it sets `staleStash` and
   `StaleDraftDialog` asks (keep, server version, download) through
-  `resolveStaleStash`. A token entered mid-session retries in place
-  (`resumeAfterToken`) instead of reloading.
+  `resolveStaleStash`. A successful save drops that flow's stash. The leave
+  prompt is skipped only while `isSigningIn()` (stash written, or nothing to
+  stash), which `pageshow` from the back/forward cache resets. A token
+  entered mid-session retries in place (`resumeAfterToken`) instead of
+  reloading.
 - Types (`src/types/`): `generated.ts` comes from
   `go generate ./internal/dto/...` and is never edited by hand; the other
   files re-export it and add UI-only types.

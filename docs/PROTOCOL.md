@@ -153,7 +153,10 @@ server still has that version, the draft is put back as one undoable step
 and autosave sends it. When someone has saved the flow since, the server's
 version is shown and the editor asks: keep the changes (one undoable step
 over the other version), use the server version, or download the changes
-as an importable flow file; the stash stays until the user decides. A token entered
+as an importable flow file; the stash stays until the user decides, and
+is dropped as soon as that flow saves successfully. If the stash cannot be
+written (`sessionStorage` full or unavailable), the browser's leave prompt
+still warns before the sign-in navigation. A token entered
 while the editor is in use retries the failed requests in place instead of
 reloading. Undo history and edit-tray fields not yet confirmed with *Done*
 do not survive a sign-in round trip.

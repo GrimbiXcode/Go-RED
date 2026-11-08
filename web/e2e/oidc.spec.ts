@@ -94,11 +94,21 @@ test.describe('OIDC sign-in', () => {
     await page.goto(`${OIDC_SERVER_URL}/flow/${flowId}`);
     await expect(page.locator('.react-flow__node[data-id="n1"]')).toContainText('Before');
 
+    // An edit autosaves while the session works, so the stash's base version
+    // comes from a save response, not from the page load.
+    await page.locator('.react-flow__node[data-id="n1"]').dblclick();
+    const tray = page.getByTestId('node-config');
+    await tray.getByPlaceholder('Optional display name').fill('Saved');
+    await tray.getByRole('button', { name: 'Done' }).click();
+    await expect(page.getByTestId('save-state')).toHaveAttribute('data-state', 'idle');
+    await expect
+      .poll(async () => (await (await page.request.get(`${OIDC_SERVER_URL}/api/flows/${flowId}`)).json()).nodes.n1.name)
+      .toBe('Saved');
+
     // The session ends (the browser drops the cookie at Max-Age; the server
     // answers an expired one the same way), then the user keeps editing.
     await context.clearCookies();
     await page.locator('.react-flow__node[data-id="n1"]').dblclick();
-    const tray = page.getByTestId('node-config');
     await tray.getByPlaceholder('Optional display name').fill('After expiry');
     await tray.getByRole('button', { name: 'Done' }).click();
     await expect(page.getByTestId('sso-button')).toBeVisible();
@@ -115,6 +125,7 @@ test.describe('OIDC sign-in', () => {
     await signInAtProvider(page, 'ada');
     await page.waitForURL(`${OIDC_SERVER_URL}/flow/${flowId}`);
     await expect(page.getByText('Your unsaved changes from before signing in were restored')).toBeVisible();
+    await expect(page.getByTestId('stale-draft')).toHaveCount(0);
     await expect(page.locator('.react-flow__node[data-id="n1"]')).toContainText('After expiry');
     expect(dialogs).toEqual([]);
     await expect

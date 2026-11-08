@@ -142,12 +142,28 @@ export interface UnsavedStash {
   stashedAt: number;
 }
 
-function writeStash(stash: UnsavedStash | null): void {
+/** Stores or removes the stash; false when sessionStorage refused (full or unavailable). */
+function writeStash(stash: UnsavedStash | null): boolean {
   try {
     if (stash) window.sessionStorage.setItem(UNSAVED_STASH_KEY, JSON.stringify(stash));
     else window.sessionStorage.removeItem(UNSAVED_STASH_KEY);
+    return true;
   } catch {
-    // Without sessionStorage there is nothing to keep the edits in.
+    return false;
+  }
+}
+
+/**
+ * Removes a stash for flowId once that flow saved successfully: the work is
+ * on the server, and an older stash would later look like someone else's
+ * newer version had overwritten it.
+ */
+function dropStashFor(flowId: string): void {
+  try {
+    const raw = window.sessionStorage.getItem(UNSAVED_STASH_KEY);
+    if (raw && (JSON.parse(raw) as UnsavedStash).flowId === flowId) writeStash(null);
+  } catch {
+    // Unreadable: nothing to drop.
   }
 }
 
@@ -415,6 +431,7 @@ export const useFlowStore = create<FlowState>((set, get) => {
             },
             { keepalive: options.keepalive }
           );
+          dropStashFor(flowId);
           set((state) => {
             if (!state.flow || state.flow.id !== flowId) return state;
             const stillDirty = state.editVersion !== version;
@@ -769,11 +786,14 @@ export function __resetFlowStoreForTests(): void {
   });
 }
 
-/** Keeps what could not be saved when the page leaves for the sign-in. */
-export function stashUnsavedWork(): void {
+/**
+ * Keeps what could not be saved when the page leaves for the sign-in.
+ * Returns whether leaving is safe: nothing unsaved, or the stash was written.
+ */
+export function stashUnsavedWork(): boolean {
   const { flow, editVersion, savedVersion } = useFlowStore.getState();
-  if (!flow || editVersion === savedVersion) return;
-  writeStash({
+  if (!flow || editVersion === savedVersion) return true;
+  return writeStash({
     flowId: flow.id,
     name: flow.name,
     description: flow.description,

@@ -134,8 +134,11 @@ export function signInUrl(info: AuthInfo): string {
 }
 
 interface ReauthenticationHooks {
-  /** Runs right before the page leaves for the sign-in. */
-  beforeSignIn?: () => void;
+  /**
+   * Runs right before the page leaves for the sign-in; returns whether
+   * leaving is safe (the unsaved work was stashed, or there was none).
+   */
+  beforeSignIn?: () => boolean;
   /** Runs after a token was entered while the editor was in use; retries what failed. */
   resume?: () => void;
 }
@@ -148,15 +151,30 @@ export function onReauthentication(next: ReauthenticationHooks): void {
   hooks = next;
 }
 
-/** The page is on its way to the sign-in (unload handlers skip their prompt). */
+/**
+ * The page is on its way to the sign-in with its unsaved work stashed, so
+ * unload handlers skip their prompt and flush. When the stash could not be
+ * written, this stays false and the browser's leave prompt still warns.
+ */
 export function isSigningIn(): boolean {
   return signingIn;
 }
 
+function prepareToLeave(): void {
+  signingIn = hooks.beforeSignIn ? hooks.beforeSignIn() : true;
+}
+
+// A page the user comes back to from the browser's cache (Back at the
+// provider) did not leave after all: unload protection applies again.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pageshow', (event) => {
+    if ((event as PageTransitionEvent).persisted) signingIn = false;
+  });
+}
+
 /** Sends the browser to the OIDC sign-in, stashing unsaved work first. */
 export function startSignIn(info: AuthInfo, automatic = false): void {
-  hooks.beforeSignIn?.();
-  signingIn = true;
+  prepareToLeave();
   writeMark(automatic ? String(Date.now()) : null);
   window.location.assign(signInUrl(info));
 }
@@ -191,8 +209,7 @@ export function isSignedOut(): boolean {
  */
 export async function signOutAndReload(logout: () => Promise<void>, reload = () => window.location.reload()): Promise<void> {
   await logout();
-  hooks.beforeSignIn?.();
-  signingIn = true;
+  prepareToLeave();
   markSignedOut();
   reload();
 }

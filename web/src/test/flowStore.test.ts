@@ -14,7 +14,7 @@ vi.mock('../utils/api', () => ({
 }));
 
 import * as api from '../utils/api';
-import { onReauthentication, resumeAfterToken, startSignIn, useAuthStore } from '../lib/auth';
+import { isSigningIn, onReauthentication, resumeAfterToken, startSignIn, useAuthStore } from '../lib/auth';
 import {
   UNSAVED_STASH_KEY,
   resumeAfterReauthentication,
@@ -418,6 +418,42 @@ describe('unsaved work across re-authentication', () => {
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
     stashUnsavedWork();
     expect(stashed().baseUpdatedAt).toBe(T0);
+  });
+
+  it('drops the stash for a flow once it saves successfully', async () => {
+    await openFlow();
+    vi.mocked(api.updateFlow).mockRejectedValueOnce(new Error('authentication required'));
+    store().addNode('debug', { x: 0, y: 0 });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    expect(stashUnsavedWork()).toBe(true);
+    expect(stashed()).not.toBeNull();
+
+    // The sign-in did not leave the page after all; the next save works.
+    await store().flushSave();
+    expect(store().saveState).toBe('idle');
+    expect(stashed()).toBeNull();
+  });
+
+  it('keeps the leave prompt when the stash cannot be written, and after coming back from the cache', async () => {
+    vi.stubGlobal('location', { ...window.location, pathname: '/flow/f1', search: '', assign: vi.fn() });
+    await openFlow();
+    vi.mocked(api.updateFlow).mockRejectedValueOnce(new Error('authentication required'));
+    store().addNode('debug', { x: 0, y: 0 });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError');
+    });
+    startSignIn({ methods: ['oidc'], loginUrl: '/auth/login' });
+    expect(isSigningIn()).toBe(false);
+    setItem.mockRestore();
+
+    startSignIn({ methods: ['oidc'], loginUrl: '/auth/login' });
+    expect(isSigningIn()).toBe(true);
+    const back = new Event('pageshow');
+    Object.defineProperty(back, 'persisted', { value: true });
+    window.dispatchEvent(back);
+    expect(isSigningIn()).toBe(false);
   });
 
   it('a token entered mid-session retries the failed save in place instead of reloading', async () => {
