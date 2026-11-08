@@ -29,7 +29,7 @@ import.
 | `FlowCanvas.tsx` | The `@xyflow/react` canvas for one flow: converts `flow.nodes`/`connections` to canvas nodes and edges (`flowNodeToCanvasNode`, `connectionToEdge`), merges store updates without disturbing a drag or the selection (`mergeCanvasNodes`), handles palette drop, connect, delete, Ctrl+A, arrow-key nudge, zoom, node and pane context menus (`ContextMenu`), double-click quick add (`QuickAdd`) and dropping a node onto a wire (`edgeIdAt` plus `insertNodeOnEdge`/`spliceNodeIntoEdge`). Node type map: `default: NodeComponent`, `inject: InjectNode`, `debug: DebugNode`. |
 | `canvasTypes.ts` | `CanvasNodeData` (`label`, `node`, `metadata`, `outputs`, `flowId`) and `CanvasNode`. |
 | `NodeShell.tsx` | Visual shell of a node: category color through `--node-color`, icon well, label, optional control, Node-RED style status line; geometry lives in the `.gr-node*` CSS rules. |
-| `NodeHandles.tsx` | Input and output handles from `outputs`, evenly spaced, labels for multi-output nodes (`port-label`). |
+| `NodeHandles.tsx` | Input and output handles from `outputs`, evenly spaced, labels for multi-output nodes (`port-label`). When the set of ports changes (`portLayoutKey`) it has xyflow measure the node again, since the node keeps its size and xyflow would keep the old handle positions. |
 | `NodeComponent.tsx` | Generic node: `NodeShell` plus `NodeHandles`. |
 | `InjectNode.tsx` | Inject node whose icon well is the trigger button (sends `message:send` through `wsClient`). |
 | `DebugNode.tsx` | Debug node rendering; no interactive control. |
@@ -83,8 +83,8 @@ in `test/editTray.test.tsx` and show it in `pages/StyleGuide.tsx`.
   (DOMPurify); never put unsanitized input into `dangerouslySetInnerHTML`.
 - Canvas behavior that does not need the DOM lives in exported pure helpers
   (`flowNodeToCanvasNode`, `mergeCanvasNodes`, `nodesMissingHandles`,
-  `filterNodeTypes`, `previewNodeRed`, `settingsRows`, ...) so it can be
-  unit-tested; the rest is covered by the e2e suite.
+  `portLayoutKey`, `filterNodeTypes`, `previewNodeRed`, `settingsRows`,
+  ...) so it can be unit-tested; the rest is covered by the e2e suite.
 - Component tests: `test/components.test.tsx`, `test/editTray.test.tsx`,
   `test/debugPanel.test.tsx`, `test/flowCanvas.test.tsx`, `test/auth.test.tsx`.
 

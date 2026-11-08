@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { flowNodeToCanvasNode, connectionToEdge, mergeCanvasNodes, nodesMissingHandles } from '../components/FlowCanvas';
+import { portLayoutKey } from '../components/NodeHandles';
 import type { CanvasNode } from '../components/canvasTypes';
 import type { FlowNode, NodeRegistry } from '../types/flow';
 
@@ -89,5 +90,17 @@ describe('nodesMissingHandles', () => {
 
   it('is empty when every node can be wired', () => {
     expect(nodesMissingHandles([{ id: 'a', measured: size, internals: { handleBounds: bounds } }])).toEqual([]);
+  });
+});
+
+describe('portLayoutKey', () => {
+  const port = (id: string) => ({ id, name: id, description: '', required: false });
+
+  it('changes when a port is added, removed or reordered, not when a label changes', () => {
+    const base = portLayoutKey([port('input')], [port('0'), port('1')]);
+    expect(portLayoutKey([port('input')], [port('0'), port('1'), port('2')])).not.toBe(base);
+    expect(portLayoutKey([port('input')], [port('0')])).not.toBe(base);
+    expect(portLayoutKey([port('input')], [port('1'), port('0')])).not.toBe(base);
+    expect(portLayoutKey([port('input')], [{ ...port('0'), name: 'renamed' }, port('1')])).toBe(base);
   });
 });
