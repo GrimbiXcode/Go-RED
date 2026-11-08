@@ -251,6 +251,14 @@ func (a *oidcAuth) handleCallback(w http.ResponseWriter, r *http.Request) {
 	var st loginState
 	c, err := r.Cookie(loginCookieName)
 	if err != nil || !verifyCookie(a.loginKey, c.Value, &st) || a.now().Unix() > st.Expires {
+		reason := "expired"
+		switch {
+		case err != nil:
+			reason = "missing (blocked, or sent to another host than the redirect URL)"
+		case st.Expires == 0:
+			reason = "invalid signature (session secret changed, or tampered)"
+		}
+		slog.Info("oidc callback without a usable sign-in cookie", "cookie", reason, "host", r.Host)
 		authErrorPage(w, http.StatusBadRequest, "The sign-in expired or was started in another browser. Please sign in again.")
 		return
 	}
@@ -261,6 +269,7 @@ func (a *oidcAuth) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(st.State)) != 1 || q.Get("code") == "" {
+		slog.Info("oidc callback does not match the sign-in it answers", "stateMatches", q.Get("state") == st.State, "hasCode", q.Get("code") != "")
 		authErrorPage(w, http.StatusBadRequest, "The sign-in response did not match. Please sign in again.")
 		return
 	}

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -400,4 +402,26 @@ func TestSafeNext(t *testing.T) {
 	} {
 		assert.Equal(t, want, safeNext(in), "%q", in)
 	}
+}
+
+func TestOIDCCallbackRefusalsAreLogged(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	p := newFakeProvider(t)
+	h, _ := oidcServer(t, p, routerOptions{}, nil)
+	p.set(func() { p.claims = ada })
+
+	state, login := startLogin(t, h, p, "")
+	assert.Equal(t, http.StatusBadRequest, callback(h, "code="+testCode+"&state="+state, nil).Code)
+	assert.Contains(t, logs.String(), "oidc callback without a usable sign-in cookie")
+	assert.Contains(t, logs.String(), "cookie=\"missing")
+
+	logs.Reset()
+	assert.Equal(t, http.StatusBadRequest, callback(h, "code="+testCode+"&state=other", login).Code)
+	assert.Contains(t, logs.String(), "oidc callback does not match the sign-in it answers")
+	assert.Contains(t, logs.String(), "stateMatches=false")
+	assert.NotContains(t, logs.String(), state, "the state value itself is not logged")
 }
