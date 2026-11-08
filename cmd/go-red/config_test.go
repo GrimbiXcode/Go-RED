@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -134,4 +135,33 @@ sessionTtl: 2h
 
 	_, ok = defaultConfig().oidcSettings()
 	assert.False(t, ok, "sign-in is off by default")
+}
+
+func TestSecretsStayOutOfUsageText(t *testing.T) {
+	var out bytes.Buffer
+	flagOutput = &out
+	t.Cleanup(func() { flagOutput = os.Stderr })
+	env := envOf(map[string]string{
+		"GORED_AUTH_TOKEN":         "env-auth-token-0123456789",
+		"GORED_OIDC_CLIENT_SECRET": "env-client-secret",
+		"GORED_SESSION_SECRET":     "env-session-secret-0123456789abcdef0123",
+	})
+
+	for _, args := range [][]string{{"-help"}, {"-no-such-flag"}} {
+		out.Reset()
+		_, _, err := loadConfig(args, env)
+		require.Error(t, err)
+		usage := out.String()
+		assert.Contains(t, usage, "-oidc-client-secret", "the flags are still listed")
+		for _, secret := range []string{"env-auth-token", "env-client-secret", "env-session-secret"} {
+			assert.NotContains(t, usage, secret, "%v prints %s", args, secret)
+		}
+	}
+
+	// The secret flags still work, and beat the environment.
+	cfg, _, err := loadConfig([]string{"-auth-token", "flag-auth-token-0123456789", "-session-secret", "flag-session-secret-0123456789abcdef01"}, env)
+	require.NoError(t, err)
+	assert.Equal(t, "flag-auth-token-0123456789", cfg.AuthToken)
+	assert.Equal(t, "flag-session-secret-0123456789abcdef01", cfg.SessionSecret)
+	assert.Equal(t, "env-client-secret", cfg.OIDCClientSecret, "an unset secret flag keeps the environment's value")
 }

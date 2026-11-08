@@ -84,6 +84,20 @@ type Config struct {
 	SessionTTL time.Duration `yaml:"sessionTtl"`
 }
 
+// flagOutput receives flag errors and the -help text (tests replace it).
+var flagOutput io.Writer = os.Stderr
+
+// secretFlag registers a flag for a secret. Unlike the other flags it does
+// not show the value so far (from the config file or environment) as its
+// default, so -help and the usage text printed on a mistyped flag, which
+// often end up in service logs, never contain the secret.
+func secretFlag(fs *flag.FlagSet, dst *string, name, usage string) {
+	fs.Func(name, usage, func(v string) error {
+		*dst = v
+		return nil
+	})
+}
+
 // defaultConfig is the configuration without any file, env or flag.
 func defaultConfig() Config {
 	return Config{
@@ -127,7 +141,7 @@ func loadConfig(args []string, getenv func(string) string) (Config, bool, error)
 	// 3. Flags, whose defaults are the values so far, so an unset flag
 	// keeps what file and environment said.
 	fs := flag.NewFlagSet("go-red", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	fs.SetOutput(flagOutput)
 	fs.String("config", file, "YAML config file (keys: port, dataDir, webDir, maxInflight, maxMessages, messageLog, logLevel, authToken, allowedOrigins, rateLimit, backupKeep, backupInterval, oidcIssuer, oidcClientId, oidcClientSecret, oidcRedirectUrl, oidcScopes, oidcAllowedEmails, oidcAllowedGroups, oidcGroupsClaim, oidcAllowAnyUser, sessionSecret, sessionTtl)")
 	fs.IntVar(&cfg.Port, "port", cfg.Port, "Port to listen on")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "Directory for flow data")
@@ -136,21 +150,21 @@ func loadConfig(args []string, getenv func(string) string) (Config, bool, error)
 	fs.IntVar(&cfg.MaxMessages, "max-messages", cfg.MaxMessages, "Message queue size per flow")
 	fs.IntVar(&cfg.MessageLog, "message-log", cfg.MessageLog, "Number of routed messages to keep for GET /api/messages (0 disables)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level: debug, info, warn, error")
-	fs.StringVar(&cfg.AuthToken, "auth-token", cfg.AuthToken, "Bearer token required on /api/*, /ws and /metrics (empty: no authentication)")
+	secretFlag(fs, &cfg.AuthToken, "auth-token", "Bearer token required on /api/*, /ws and /metrics (prefer GORED_AUTH_TOKEN or the config file; empty: no authentication)")
 	origins := fs.String("allowed-origins", strings.Join(cfg.AllowedOrigins, ","), "Comma-separated browser origins allowed to use the API cross-site, or * (the editor's own origin is always allowed)")
 	fs.IntVar(&cfg.RateLimit, "rate-limit", cfg.RateLimit, "Import and deploy requests allowed per client and minute (0 disables)")
 	fs.IntVar(&cfg.BackupKeep, "backup-keep", cfg.BackupKeep, "Backups to keep per flow file (0 disables)")
 	fs.DurationVar(&cfg.BackupInterval, "backup-interval", cfg.BackupInterval, "Minimum time between two backups of the same flow")
 	fs.StringVar(&cfg.OIDCIssuer, "oidc-issuer", cfg.OIDCIssuer, "OpenID Connect issuer URL; turns on editor sign-in (empty: off)")
 	fs.StringVar(&cfg.OIDCClientID, "oidc-client-id", cfg.OIDCClientID, "OpenID Connect client ID")
-	fs.StringVar(&cfg.OIDCClientSecret, "oidc-client-secret", cfg.OIDCClientSecret, "OpenID Connect client secret (prefer GORED_OIDC_CLIENT_SECRET or the config file)")
+	secretFlag(fs, &cfg.OIDCClientSecret, "oidc-client-secret", "OpenID Connect client secret (prefer GORED_OIDC_CLIENT_SECRET or the config file)")
 	fs.StringVar(&cfg.OIDCRedirectURL, "oidc-redirect-url", cfg.OIDCRedirectURL, "Callback URL as the browser sees it: scheme://host[:port]/auth/callback")
 	scopes := fs.String("oidc-scopes", strings.Join(cfg.OIDCScopes, ","), "Comma-separated scopes requested besides openid")
 	emails := fs.String("oidc-allowed-emails", strings.Join(cfg.OIDCAllowedEmails, ","), "Comma-separated verified e-mail addresses (or @domain) allowed to sign in")
 	groups := fs.String("oidc-allowed-groups", strings.Join(cfg.OIDCAllowedGroups, ","), "Comma-separated groups allowed to sign in")
 	fs.StringVar(&cfg.OIDCGroupsClaim, "oidc-groups-claim", cfg.OIDCGroupsClaim, "ID token claim that holds the user's groups")
 	fs.BoolVar(&cfg.OIDCAllowAnyUser, "oidc-allow-any-user", cfg.OIDCAllowAnyUser, "Let every account the provider authenticates sign in (no allowlist)")
-	fs.StringVar(&cfg.SessionSecret, "session-secret", cfg.SessionSecret, "Key that signs session cookies, at least 32 characters (empty: random, sessions end on restart)")
+	secretFlag(fs, &cfg.SessionSecret, "session-secret", "Key that signs session cookies, at least 32 characters (prefer GORED_SESSION_SECRET or the config file; empty: random, sessions end on restart)")
 	fs.DurationVar(&cfg.SessionTTL, "session-ttl", cfg.SessionTTL, "How long an editor sign-in lasts")
 	showVersion := fs.Bool("version", false, "Print the version and exit")
 	if err := fs.Parse(args); err != nil {

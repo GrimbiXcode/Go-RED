@@ -108,6 +108,12 @@ the bearer token while people sign in.
 | `-session-secret` | at least 32 characters; signs the cookies. Empty: a random key per process, so sessions end when the server restarts |
 | `-session-ttl` | how long a sign-in lasts (default `12h`) |
 
+`-help` and the usage text printed after a mistyped flag never show the
+value of `-auth-token`, `-oidc-client-secret` or `-session-secret`, so a
+typo does not put a secret into service logs. Values given on the command
+line are still visible to other local users in the process list; prefer
+the environment or the config file for them.
+
 The flow is the authorization code flow with PKCE:
 
 1. `GET /auth/login?next=/path` stores state, nonce and the PKCE verifier in
@@ -159,7 +165,9 @@ written (`sessionStorage` full or unavailable), the browser's leave prompt
 still warns before the sign-in navigation. A token entered
 while the editor is in use retries the failed requests in place instead of
 reloading. Undo history and edit-tray fields not yet confirmed with *Done*
-do not survive a sign-in round trip.
+do not survive a sign-in round trip. The stash is a copy of the open flow,
+including credentials kept in node configuration (MQTT broker, HTTP
+proxy); it stays in that tab only and is never sent anywhere else.
 
 Import and deploy are rate limited per client address: `-rate-limit N`
 requests per minute (default 60, burst of a quarter of that, `0` disables);

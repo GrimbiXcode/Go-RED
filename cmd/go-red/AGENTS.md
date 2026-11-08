@@ -124,8 +124,14 @@ oidcScopes, oidcAllowedEmails, oidcAllowedGroups, oidcGroupsClaim,
 oidcAllowAnyUser, sessionSecret, sessionTtl (table in the root README).
 `validateOIDC` requires client ID, a redirect URL ending in `/auth/callback`
 and an allowlist (or `oidcAllowAnyUser`) once `oidcIssuer` is set, and a
-session secret of at least 32 characters. Secrets are never logged. A new setting touches `Config`, `defaultConfig`,
-`applyEnv`, the flag list, `validate`, `config_test.go` and that table.
+session secret of at least 32 characters. Secrets are never logged, and
+the secret flags (`-auth-token`, `-oidc-client-secret`, `-session-secret`)
+are registered with `secretFlag`, so `-help` and the usage text after a
+mistyped flag never show a value taken from the file or environment (a new
+secret setting must use it too; `TestSecretsStayOutOfUsageText`).
+
+A new setting touches `Config`, `defaultConfig`, `applyEnv`, the flag list,
+`validate`, `config_test.go` and that table.
 
 ## The editor
 
