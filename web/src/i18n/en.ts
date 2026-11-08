@@ -27,6 +27,8 @@ const en = {
     deployThis: 'Deploy this flow',
     deployAll_one: 'Deploy all modified flows ({{count}})',
     deployAll_other: 'Deploy all modified flows ({{count}})',
+    account: 'Account',
+    signOut: 'Sign out',
   },
   context: {
     configure: 'Configure…',
@@ -286,6 +288,8 @@ const en = {
   },
   toast: {
     flowCreateFailed: 'Could not create the flow: {{message}}',
+    unsavedRestored: 'Your unsaved changes from before signing in were restored',
+    saveKeepsConflicting: 'Could not save: the flow keeps changing elsewhere. Your changes are still here; the next edit tries again.',
     flowDeleted: 'Flow deleted',
     flowDeleteFailed: 'Could not delete the flow: {{message}}',
     deployed: 'Flow deployed',
@@ -318,6 +322,11 @@ const en = {
     text: 'This Go-RED server requires an access token. Enter the token it was started with (-auth-token or GORED_AUTH_TOKEN).',
     placeholder: 'Access token',
     submit: 'Continue',
+    ssoText: 'Sign in with the account your organization uses for this Go-RED server.',
+    ssoButton: 'Sign in with single sign-on',
+    or: 'or',
+    signedOut: 'You are signed out.',
+    signOutFailed: 'Could not sign out: {{message}}',
   },
   common: {
     close: 'Close',

@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, Menu, Monitor, Moon, Redo2, Sun, Undo2 } from 'lucide-react';
+import { ChevronDown, LogOut, Menu, Monitor, Moon, Redo2, Sun, Undo2 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES, setLanguage, type Language } from '../i18n';
 import { THEME_PREFERENCES, useThemeStore, type ThemePreference } from '../lib/theme';
+import { signOutAndReload, useAuthStore } from '../lib/auth';
+import { signOut } from '../utils/api';
+import { notify } from '../store/notificationStore';
+import { useFlowStore } from '../store/flowStore';
 import { WebSocketStatus } from './WebSocketStatus';
 
 export interface HeaderProps {
@@ -92,6 +96,17 @@ export function Header({
   const deployRef = useRef<HTMLDivElement>(null);
   const themePreference = useThemeStore((state) => state.preference);
   const setThemePreference = useThemeStore((state) => state.setPreference);
+  const user = useAuthStore((state) => state.user);
+
+  const handleSignOut = () => {
+    // Save pending edits while the session still works, then sign out.
+    signOutAndReload(async () => {
+      await useFlowStore.getState().flushSave();
+      return signOut();
+    }).catch((error: unknown) =>
+      notify('error', t('auth.signOutFailed', { message: error instanceof Error ? error.message : String(error) }))
+    );
+  };
 
   useEffect(() => {
     if (!menuOpen && !deployMenuOpen) return;
@@ -216,6 +231,19 @@ export function Header({
                   {t(`theme.${preference}`)}
                 </MenuItem>
               ))}
+              {user?.method === 'oidc' && (
+                <>
+                  <div className="my-1 border-t border-line" />
+                  <MenuSection label={t('header.account')} />
+                  <div className="px-3 pb-1 text-xs text-muted truncate" title={user.email || user.name} data-testid="signed-in-user">
+                    {user.name || user.email}
+                  </div>
+                  <MenuItem onClick={runAndClose(handleSignOut)}>
+                    <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
+                    {t('header.signOut')}
+                  </MenuItem>
+                </>
+              )}
             </div>
           )}
         </div>

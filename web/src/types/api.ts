@@ -8,7 +8,7 @@ export type { Flow, FlowNode, NodeConnection, FlowConfig, FlowStatus, NodeMetada
 // FlowSummary, FlowCreateRequest, and FlowUpdateRequest are generated from
 // the Go backend (see internal/dto) via `go generate ./internal/dto/...` —
 // do not hand-describe their shape here.
-export type { FlowSummary, FlowCreateRequest, FlowUpdateRequest, DeployResponse, ErrorResponse } from './generated';
+export type { FlowSummary, FlowCreateRequest, FlowUpdateRequest, DeployResponse, ErrorResponse, AuthInfo, AuthUser } from './generated';
 
 export interface PaginatedResponse<T> {
   data: T[];

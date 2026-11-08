@@ -35,6 +35,9 @@ var (
 	ErrFlowExists = errors.New("flow already exists")
 	// ErrFlowNotDeployed means the flow is known but not currently running.
 	ErrFlowNotDeployed = errors.New("flow is not deployed")
+	// ErrFlowConflict means an update was based on a revision of the flow
+	// that is no longer current: someone else saved it in between.
+	ErrFlowConflict = errors.New("the flow was changed by someone else")
 	// ErrInvalidFlowID means the ID does not match the allowed pattern.
 	ErrInvalidFlowID = errors.New("invalid flow ID")
 	// ErrInvalidFlow means the flow definition failed validation.
@@ -1102,11 +1105,24 @@ func (e *FlowEngine) AddFlow(flow *Flow) error {
 	return nil
 }
 
+// UpdateOptions tunes UpdateFlowWith.
+type UpdateOptions struct {
+	// NotAnEdit keeps UpdatedAt: the change (a tab moved) is not an edit of
+	// the flow, so it neither marks a deployed flow as changed nor counts as
+	// a new version.
+	NotAnEdit bool
+}
+
 // UpdateFlow applies mutate to the definition of a known flow under the
 // engine lock, bumps UpdatedAt, persists the result and returns a copy of
 // it. If mutate returns an error nothing is persisted. A running instance of
 // the flow is not affected until it is redeployed.
 func (e *FlowEngine) UpdateFlow(flowID string, mutate func(*Flow) error) (*Flow, error) {
+	return e.UpdateFlowWith(flowID, UpdateOptions{}, mutate)
+}
+
+// UpdateFlowWith is UpdateFlow with options.
+func (e *FlowEngine) UpdateFlowWith(flowID string, opts UpdateOptions, mutate func(*Flow) error) (*Flow, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -1115,11 +1131,21 @@ func (e *FlowEngine) UpdateFlow(flowID string, mutate func(*Flow) error) (*Flow,
 		return nil, fmt.Errorf("%w: %s", ErrFlowNotFound, flowID)
 	}
 
+	updatedAt := def.UpdatedAt
 	if err := mutate(def); err != nil {
 		return nil, err
 	}
 	def.ID = flowID
-	def.UpdatedAt = time.Now().UTC()
+	def.UpdatedAt = updatedAt
+	if !opts.NotAnEdit {
+		// Strictly later than the previous edit, so every edit is a new
+		// revision even within the clock's resolution or after a clock step.
+		now := time.Now().UTC()
+		if !now.After(updatedAt) {
+			now = updatedAt.Add(time.Nanosecond)
+		}
+		def.UpdatedAt = now
+	}
 
 	if err := e.persistLocked(def); err != nil {
 		return nil, err

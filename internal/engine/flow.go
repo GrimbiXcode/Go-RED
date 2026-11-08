@@ -296,6 +296,19 @@ func (f *Flow) Validate() error {
 	return nil
 }
 
+// RevisionOf turns an UpdatedAt into the flow's revision: an opaque token
+// that changes with every edit (nanosecond precision, persisted with the
+// flow, so it survives a restart). Clients send it back as the base of an
+// update; a different current revision means someone else saved since.
+func RevisionOf(updatedAt time.Time) string {
+	return updatedAt.UTC().Format(time.RFC3339Nano)
+}
+
+// Revision is the flow's current revision (see RevisionOf).
+func (f *Flow) Revision() string {
+	return RevisionOf(f.UpdatedAt)
+}
+
 // Clone creates a deep copy of the flow.
 func (f *Flow) Clone() *Flow {
 	clone := &Flow{

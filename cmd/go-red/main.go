@@ -95,7 +95,7 @@ func main() {
 	}
 	setupLogging(config.LogLevel)
 	slog.Info("starting Go-RED", "version", version, "port", config.Port, "dataDir", config.DataDir, "webDir", config.WebUIDir,
-		"auth", config.AuthToken != "", "allowedOrigins", config.AllowedOrigins, "rateLimit", config.RateLimit)
+		"auth", config.AuthToken != "", "oidc", config.OIDCIssuer, "allowedOrigins", config.AllowedOrigins, "rateLimit", config.RateLimit)
 
 	nodeRegistry := registry.GetGlobalRegistry()
 	slog.Info("node registry initialized", "nodeTypes", len(nodeRegistry.GetAllNodes()))
@@ -124,6 +124,22 @@ func main() {
 		slog.Warn("failed to load existing flows", "err", err)
 	}
 
+	var sessions *oidcAuth
+	if settings, ok := config.oidcSettings(); ok {
+		sessions, err = newOIDCAuth(settings, nil)
+		if err != nil {
+			slog.Error("failed to set up OIDC sign-in", "err", err)
+			os.Exit(1)
+		}
+		// Discover the provider now so a misconfiguration shows up in the
+		// log at startup; sign-in retries on its own if this fails.
+		go func() {
+			if _, err := sessions.discover(); err != nil {
+				slog.Warn("oidc provider discovery failed, will retry on sign-in", "issuer", settings.Issuer, "err", err)
+			}
+		}()
+	}
+
 	wsHub := websocket.NewHub()
 	wsHub.CheckOrigin = func(r *http.Request) bool { return originAllowed(r, config.AllowedOrigins) }
 	wsHandler := websocket.NewWebSocketHandler(wsHub, flowEngine, nodeRegistry)
@@ -134,6 +150,7 @@ func main() {
 		Handler: newRouter(flowEngine, nodeRegistry, wsHandler, routerOptions{
 			WebDir:             config.WebUIDir,
 			AuthToken:          config.AuthToken,
+			OIDC:               sessions,
 			AllowedOrigins:     config.AllowedOrigins,
 			RateLimitPerMinute: config.RateLimit,
 		}),
@@ -201,31 +218,45 @@ type server struct {
 	notify    Notifier
 	webDir    string
 	startedAt time.Time
+	authToken bool      // a bearer token is configured
+	sessions  *oidcAuth // OIDC sign-in, nil when off
 }
 
 // routerOptions is the part of the configuration the HTTP layer needs.
 type routerOptions struct {
 	WebDir             string
 	AuthToken          string
+	OIDC               *oidcAuth // nil: no editor sign-in
 	AllowedOrigins     []string
 	RateLimitPerMinute int
 }
 
 // newRouter wires every REST route, the WebSocket endpoint (when ws is not
 // nil), the operational endpoints and the static WebUI with SPA fallback
-// into one handler, guarded by the origin policy and the optional token.
+// into one handler, guarded by the origin policy and the optional token or
+// OIDC sign-in.
 func newRouter(e *engine.FlowEngine, reg *registry.NodeRegistry, ws *websocket.WebSocketHandler, opts routerOptions) http.Handler {
 	var notify Notifier = noopNotifier{}
 	if ws != nil {
 		notify = ws
 	}
-	s := &server{engine: e, registry: reg, notify: notify, webDir: opts.WebDir, startedAt: time.Now()}
+	s := &server{engine: e, registry: reg, notify: notify, webDir: opts.WebDir, startedAt: time.Now(),
+		authToken: opts.AuthToken != "", sessions: opts.OIDC}
 	limiter := newRateLimiter(opts.RateLimitPerMinute)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/version", s.handleVersion)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
+	mux.HandleFunc("GET /api/auth/info", s.handleAuthInfo)
+	mux.HandleFunc("GET /api/auth/me", s.handleAuthMe)
+	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	if opts.OIDC != nil {
+		// Top-level navigations, outside /api so the origin policy does not
+		// apply; the callback costs a token exchange, hence the limit.
+		mux.HandleFunc("GET "+oidcLoginPath, limiter.limit(opts.OIDC.handleLogin))
+		mux.HandleFunc("GET "+oidcCallbackPath, limiter.limit(opts.OIDC.handleCallback))
+	}
 	mux.HandleFunc("GET /api/flows", s.handleGetFlows)
 	mux.HandleFunc("POST /api/flows", s.handleCreateFlow)
 	mux.HandleFunc("POST /api/flows/import", limiter.limit(s.handleImportFlow))
@@ -242,7 +273,7 @@ func newRouter(e *engine.FlowEngine, reg *registry.NodeRegistry, ws *websocket.W
 		mux.HandleFunc("GET /ws", ws.ServeWebSocket)
 	}
 	mux.Handle("/", webHandler(opts.WebDir))
-	return corsMiddleware(opts.AllowedOrigins, requireAuth(opts.AuthToken, mux))
+	return corsMiddleware(opts.AllowedOrigins, requireAuth(opts.AuthToken, opts.OIDC, mux))
 }
 
 // webHandler serves the editor: from dir when one is configured (-web-dir,
@@ -357,7 +388,7 @@ func statusForError(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, engine.ErrFlowExists):
 		return http.StatusConflict
-	case errors.Is(err, engine.ErrFlowNotDeployed):
+	case errors.Is(err, engine.ErrFlowNotDeployed), errors.Is(err, engine.ErrFlowConflict):
 		return http.StatusConflict
 	case errors.Is(err, engine.ErrInvalidFlowID):
 		return http.StatusBadRequest
@@ -466,10 +497,24 @@ func (s *server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 		request.Nodes[id] = node
 	}
 
-	flow, err := s.engine.UpdateFlow(r.PathValue("id"), func(f *engine.Flow) error {
+	// A body with only order moves the tab; that is not an edit of the flow.
+	opts := engine.UpdateOptions{NotAnEdit: request.OnlyOrder()}
+	var current *dto.Flow
+	flow, err := s.engine.UpdateFlowWith(r.PathValue("id"), opts, func(f *engine.Flow) error {
+		// Checked under the engine lock, so two saves on the same base
+		// cannot both pass; the 409 carries the flow as it is right now.
+		if request.BaseRevision != "" && request.BaseRevision != f.Revision() {
+			wire := dto.ToWire(f.Clone())
+			current = &wire
+			return engine.ErrFlowConflict
+		}
 		request.ApplyTo(f)
 		return nil
 	})
+	if errors.Is(err, engine.ErrFlowConflict) && current != nil {
+		writeJSON(w, http.StatusConflict, dto.FlowConflictResponse{Error: engine.ErrFlowConflict.Error(), Code: dto.RevisionConflictCode, Flow: *current})
+		return
+	}
 	if err != nil {
 		writeEngineError(w, err)
 		return

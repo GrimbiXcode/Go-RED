@@ -100,6 +100,9 @@ type Flow struct {
 	UpdatedAt   string          `json:"updatedAt"`
 	DeployedAt  string          `json:"deployedAt,omitempty"`
 	Version     string          `json:"version"`
+	// Revision changes with every edit of the definition (opaque; send it
+	// back as FlowUpdateRequest.BaseRevision).
+	Revision string `json:"revision"`
 }
 
 // FlowSummary is the canonical wire representation of a flow listing entry,
@@ -114,6 +117,7 @@ type FlowSummary struct {
 	CreatedAt   string     `json:"createdAt"`
 	UpdatedAt   string     `json:"updatedAt"`
 	DeployedAt  string     `json:"deployedAt,omitempty"`
+	Revision    string     `json:"revision"`
 }
 
 // FlowCreateRequest is the request body for POST /api/flows and the
@@ -135,6 +139,23 @@ type FlowUpdateRequest struct {
 	Nodes       map[string]Node `json:"nodes,omitempty"`
 	Connections []Connection    `json:"connections,omitempty"`
 	Config      *FlowConfig     `json:"config,omitempty"`
+	// BaseRevision, when set, is the revision the change was made on; if
+	// the flow has a different one now, nothing is changed and the answer
+	// is 409 FlowConflictResponse with the current flow.
+	BaseRevision string `json:"baseRevision,omitempty"`
+}
+
+// RevisionConflictCode is FlowConflictResponse.Code.
+const RevisionConflictCode = "revision_conflict"
+
+// FlowConflictResponse is the 409 body of PUT /api/flows/{id} when
+// BaseRevision is not the flow's current revision.
+type FlowConflictResponse struct {
+	Error string `json:"error"`
+	// Code is "revision_conflict" (409 has other meanings too).
+	Code string `json:"code"`
+	// Flow is the flow as it is now, to pull and reapply the change on.
+	Flow Flow `json:"flow"`
 }
 
 // DeployResponse is the response body of POST /api/flows/{id}/deploy and

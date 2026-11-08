@@ -6,15 +6,36 @@ import type {
   FlowSummary,
   NodeMetadata,
   DeployResponse,
+  AuthUser,
 } from '../types/api';
 
 import { authHeaders, authRequired } from '../lib/auth';
+import type { FlowConflictResponse, LogoutResponse } from '../types/generated';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 export interface RequestOptions {
   /** Let the request outlive the page (used to flush a save on unload). */
   keepalive?: boolean;
+}
+
+/** A request the server answered with an error status; body is its JSON (or {}). */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body: Record<string, unknown>
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+/** The current flow from a 409 revision conflict, or null for any other error. */
+export function revisionConflict(error: unknown): Flow | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const body = error.body as Partial<FlowConflictResponse>;
+  return body.code === 'revision_conflict' && body.flow ? (body.flow as Flow) : null;
 }
 
 async function apiRequest<T, U = undefined>(
@@ -42,7 +63,7 @@ async function apiRequest<T, U = undefined>(
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     const detail = errorData.error || errorData.message || response.statusText;
-    throw new Error(detail ? String(detail) : `Request failed with status ${response.status}`);
+    throw new ApiError(detail ? String(detail) : `Request failed with status ${response.status}`, response.status, errorData);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -149,17 +170,21 @@ export const exportFlow = async (flowId: string, format: ExportFormat = 'go-red'
     throw new Error('No data in response');
   }
 
-  const dataStr = JSON.stringify(response, null, 2);
-  const dataBlob = new Blob([dataStr], { type: 'application/json' });
+  downloadJson(response, format === 'node-red' ? `flow-${flowId}.node-red.json` : `flow-${flowId}.json`);
+};
+
+/** Saves data as a pretty-printed JSON file through the browser's download. */
+export function downloadJson(data: unknown, filename: string): void {
+  const dataBlob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(dataBlob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = format === 'node-red' ? `flow-${flowId}.node-red.json` : `flow-${flowId}.json`;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
-};
+}
 
 export interface ImportedFlow {
   flowId: string;
@@ -194,3 +219,9 @@ export const importFlow = async (file: File): Promise<ImportResult> => {
     message: response.message,
   };
 };
+
+/** Who the editor is authenticated as (method "none" without authentication). */
+export const fetchAuthUser = (): Promise<AuthUser> => apiRequest<AuthUser>('GET', '/auth/me');
+
+/** Ends the OIDC session; logoutUrl, when set, ends the provider's session too. */
+export const signOut = (): Promise<LogoutResponse> => apiRequest<LogoutResponse>('POST', '/auth/logout');

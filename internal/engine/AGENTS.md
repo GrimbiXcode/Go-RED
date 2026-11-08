@@ -34,7 +34,9 @@ pointer; callers must not mutate it afterwards.
   `SetStateManager`/`GetStateManager`, `Start` (event dispatcher + metrics loop),
   `Stop` (stops every flow, idempotent).
 - Definitions: `CreateFlow(id, name, description)`, `AddFlow(flow)`,
-  `UpdateFlow(id, func(*Flow) error)`, `DeleteFlow`, `GetFlow`, `GetAllFlows` (sorted by
+  `UpdateFlow(id, func(*Flow) error)` (bumps `UpdatedAt`; the engine is its only
+  writer for definitions), `UpdateFlowWith(id, UpdateOptions{NotAnEdit}, ...)` (keeps
+  it, for a tab move), `DeleteFlow`, `GetFlow`, `GetAllFlows` (sorted by
   `Order`, `CreatedAt`, ID), `GetFlowStatus`, `LoadAllFlows` (redeploys flows that were
   `FlowStatusActive` when saved; failures become `FlowStatusError`).
 - Runtime: `Deploy(flow)`, `DeployFlow(id)`, `Undeploy(id)`, `IsDeployed`,

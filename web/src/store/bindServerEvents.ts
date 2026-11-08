@@ -18,6 +18,7 @@ export function bindServerEvents(): () => void {
           status: data.status,
           updatedAt: data.updatedAt,
           deployedAt: data.deployedAt,
+          revision: typeof data.revision === 'string' ? data.revision : undefined,
         });
         useRuntimeStore.getState().applyFlowStatus(data.flowId, data.status);
       }

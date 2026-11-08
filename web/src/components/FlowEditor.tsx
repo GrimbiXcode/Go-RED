@@ -17,6 +17,7 @@ import { useFlowStore, selectCanDeploy, selectCanRedo, selectCanUndeploy, select
 import { connectionsOnMissingPorts, outputPortIds } from '../schema/ports';
 import { useEditorStore, type SidebarTab } from '../store/editorStore';
 import { notify } from '../store/notificationStore';
+import { isSigningIn } from '../lib/auth';
 import { deployFlow } from '../utils/api';
 import { NoFlowsState } from './EmptyStates';
 import { ShortcutHelp } from './ShortcutHelp';
@@ -93,22 +94,34 @@ export function FlowEditor() {
     }
   }, [flowId, flows, navigate]);
 
-  // Never lose a pending autosave to a reload or tab close.
+  // Never lose a pending autosave to a reload or tab close. Leaving for the
+  // sign-in needs neither: the request would be refused, and the flow store
+  // has stashed the unsaved work to restore it afterwards.
   useEffect(() => {
     const onPageHide = () => {
+      if (isSigningIn()) return;
       void flushSave({ keepalive: true });
     };
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (useFlowStore.getState().saveState === 'idle') return;
+      if (isSigningIn() || useFlowStore.getState().saveState === 'idle') return;
       void flushSave({ keepalive: true });
       event.preventDefault();
       event.returnValue = '';
     };
+    // A hidden tab saves while it can still handle the answer: a keepalive
+    // save during unload cannot pull and retry if someone else saved first.
+    // Back in view, it catches up on saves it skipped while hidden.
+    const onVisibilityChange = () => {
+      if (document.hidden) void flushSave();
+      else void useFlowStore.getState().syncWithServer();
+    };
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('beforeunload', onBeforeUnload);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('beforeunload', onBeforeUnload);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [flushSave]);
 

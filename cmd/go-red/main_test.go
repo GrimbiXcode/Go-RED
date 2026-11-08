@@ -416,3 +416,33 @@ func TestFlowValidation(t *testing.T) {
 		assert.Contains(t, err.Error(), "non-existent")
 	})
 }
+
+func TestOnlyEditsBumpUpdatedAt(t *testing.T) {
+	e, h := newTestServer(t)
+	require.Equal(t, http.StatusCreated, do(t, h, http.MethodPost, "/api/flows", dto.FlowCreateRequest{ID: "edits", Name: "Edits"}).Code)
+	nodes := map[string]dto.Node{"n1": {ID: "n1", Type: "debug", Config: map[string]interface{}{}}}
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPut, "/api/flows/edits", dto.FlowUpdateRequest{Nodes: nodes}).Code)
+	updatedAt := func() time.Time {
+		flow, err := e.GetFlow("edits")
+		require.NoError(t, err)
+		return flow.UpdatedAt
+	}
+	created := updatedAt()
+
+	order := 7
+	w := do(t, h, http.MethodPut, "/api/flows/edits", dto.FlowUpdateRequest{Order: &order})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, created, updatedAt(), "moving the tab is not an edit")
+	flow, err := e.GetFlow("edits")
+	require.NoError(t, err)
+	assert.Equal(t, 7, flow.Order)
+
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPost, "/api/flows/edits/deploy", nil).Code)
+	assert.Equal(t, created, updatedAt(), "deploying is not an edit")
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPost, "/api/flows/edits/undeploy", nil).Code)
+	assert.Equal(t, created, updatedAt(), "undeploying is not an edit")
+
+	name := "Renamed"
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPut, "/api/flows/edits", dto.FlowUpdateRequest{Name: &name, Order: &order}).Code)
+	assert.True(t, updatedAt().After(created), "a rename is")
+}

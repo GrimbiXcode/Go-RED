@@ -40,6 +40,11 @@ export default defineConfig({
         target: 'ws://localhost:8080',
         ws: true,
       },
+      // OIDC sign-in (login redirect and the provider's callback); register
+      // http://localhost:5173/auth/callback as the redirect URL for dev.
+      '/auth': {
+        target: 'http://localhost:8080',
+      },
     },
   },
 });

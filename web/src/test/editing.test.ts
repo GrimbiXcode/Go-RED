@@ -38,6 +38,7 @@ function makeFlow(): Flow {
     config: { timeout: 30, maxConcurrency: 100, retryPolicy: { maxRetries: 3, backoff: 1, maxBackoff: 30, retryOn: [] }, environment: {} },
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
+    revision: 'r1',
     version: '1.0',
   };
 }
@@ -197,9 +198,9 @@ describe('flows', () => {
     vi.mocked(api.updateFlow).mockClear();
     useFlowStore.setState({
       flows: [
-        { id: 'x', name: 'X', status: 'draft', nodeCount: 0, createdAt: '', updatedAt: '', order: 1 },
-        { id: 'y', name: 'Y', status: 'draft', nodeCount: 0, createdAt: '', updatedAt: '', order: 2 },
-        { id: 'z', name: 'Z', status: 'draft', nodeCount: 0, createdAt: '', updatedAt: '', order: 3 },
+        { id: 'x', name: 'X', status: 'draft', nodeCount: 0, createdAt: '', updatedAt: '', revision: 'r1', order: 1 },
+        { id: 'y', name: 'Y', status: 'draft', nodeCount: 0, createdAt: '', updatedAt: '', revision: 'r1', order: 2 },
+        { id: 'z', name: 'Z', status: 'draft', nodeCount: 0, createdAt: '', updatedAt: '', revision: 'r1', order: 3 },
       ],
     });
     await store().reorderFlows(['z', 'x', 'y']);

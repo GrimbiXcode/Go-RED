@@ -41,6 +41,7 @@ const mockFlow: Flow = {
   config: defaultConfig,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
+  revision: 'r1',
   version: '1.0',
 };
 
@@ -70,6 +71,7 @@ describe('Flow Types', () => {
         config: defaultConfig,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        revision: 'r1',
         version: '1.0',
       };
       expect(flowWithoutDescription.description).toBe('');
@@ -86,6 +88,7 @@ describe('Flow Types', () => {
         config: defaultConfig,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        revision: 'r1',
         version: '1.0',
       };
       expect(flowWithConfig.config).toEqual(defaultConfig);
@@ -205,6 +208,7 @@ describe('Flow Types', () => {
           config: defaultConfig,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
+          revision: 'r1',
           version: '1.0',
         };
         expect(flow.status).toBe(status);
@@ -278,6 +282,7 @@ describe('Flow Types', () => {
         config: defaultConfig,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        revision: 'r1',
         version: '1.0',
       };
 
@@ -303,6 +308,7 @@ describe('Flow Types', () => {
         config: defaultConfig,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        revision: 'r1',
         version: '1.0',
       };
 
@@ -325,6 +331,7 @@ describe('Flow Types', () => {
         config: defaultConfig,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        revision: 'r1',
         version: '1.0',
       };
 
@@ -350,6 +357,7 @@ describe('Flow Types', () => {
         config: defaultConfig,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        revision: 'r1',
         version: '1.0',
       };
 

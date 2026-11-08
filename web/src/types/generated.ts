@@ -56,6 +56,7 @@ export interface Flow {
   updatedAt: string;
   deployedAt?: string;
   version: string;
+  revision: string;
 }
 
 export interface FlowSummary {
@@ -68,6 +69,7 @@ export interface FlowSummary {
   createdAt: string;
   updatedAt: string;
   deployedAt?: string;
+  revision: string;
 }
 
 export interface FlowCreateRequest {
@@ -83,6 +85,7 @@ export interface FlowUpdateRequest {
   nodes?: Record<string, Node>;
   connections?: Connection[];
   config?: FlowConfig;
+  baseRevision?: string;
 }
 
 export interface Message {
@@ -106,11 +109,34 @@ export interface ErrorResponse {
   error: string;
 }
 
+export interface FlowConflictResponse {
+  error: string;
+  code: string;
+  flow: Flow;
+}
+
+export interface AuthInfo {
+  methods: string[];
+  loginUrl?: string;
+}
+
+export interface AuthUser {
+  method: string;
+  subject?: string;
+  email?: string;
+  name?: string;
+}
+
+export interface LogoutResponse {
+  logoutUrl?: string;
+}
+
 export interface FlowStatusEvent {
   flowId: string;
   status: FlowStatus;
   updatedAt?: string;
   deployedAt?: string;
+  revision?: string;
   error?: string;
 }
 
