@@ -10,13 +10,32 @@ import type {
 } from '../types/api';
 
 import { authHeaders, authRequired } from '../lib/auth';
-import type { LogoutResponse } from '../types/generated';
+import type { FlowConflictResponse, LogoutResponse } from '../types/generated';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 export interface RequestOptions {
   /** Let the request outlive the page (used to flush a save on unload). */
   keepalive?: boolean;
+}
+
+/** A request the server answered with an error status; body is its JSON (or {}). */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body: Record<string, unknown>
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+/** The current flow from a 409 revision conflict, or null for any other error. */
+export function revisionConflict(error: unknown): Flow | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const body = error.body as Partial<FlowConflictResponse>;
+  return body.code === 'revision_conflict' && body.flow ? (body.flow as Flow) : null;
 }
 
 async function apiRequest<T, U = undefined>(
@@ -44,7 +63,7 @@ async function apiRequest<T, U = undefined>(
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     const detail = errorData.error || errorData.message || response.statusText;
-    throw new Error(detail ? String(detail) : `Request failed with status ${response.status}`);
+    throw new ApiError(detail ? String(detail) : `Request failed with status ${response.status}`, response.status, errorData);
   }
   if (response.status === 204) {
     return undefined as T;

@@ -4,6 +4,7 @@ import type { FlowSummary } from '../types/api';
 import type { NodeMetadata } from '../types/node';
 import * as api from '../utils/api';
 import i18n from '../i18n';
+import { rebase, sameContent, type FlowContent } from './rebase';
 import { onReauthentication } from '../lib/auth';
 import { notify } from './notificationStore';
 import {
@@ -36,6 +37,8 @@ export interface FlowStatusEvent {
   status: FlowStatus;
   updatedAt?: string;
   deployedAt?: string;
+  /** The flow's revision now; another one than the open flow's base means someone else saved. */
+  revision?: string;
 }
 
 export interface NodeMove {
@@ -74,13 +77,14 @@ interface FlowState {
   /** editVersion at the time of the last deploy in this session. */
   deployedVersion: number;
   /**
-   * The server's updatedAt for the version the working copy is based on:
-   * set on load and after each successful save, never by status events
-   * (those only report that someone saved, not what).
+   * The server revision the working copy is based on, and that version's
+   * content as the server stored it: set from GET and PUT responses (and a
+   * conflict's current flow), never by status events, which only say that
+   * someone saved, not what. Saves send baseRevision; when the server has
+   * moved on, the tab pulls and reapplies its own changes (rebase.ts).
    */
-  baseUpdatedAt: string | null;
-  /** Unsaved work from before a sign-in whose flow has changed on the server since; waits for resolveStaleStash. */
-  staleStash: UnsavedStash | null;
+  baseRevision: string | null;
+  baseContent: FlowContent | null;
 
   loadFlows: () => Promise<void>;
   loadNodeTypes: () => Promise<void>;
@@ -89,8 +93,14 @@ interface FlowState {
   deleteFlow: (flowId: string) => Promise<void>;
   renameFlow: (name: string, description?: string) => void;
   flushSave: (options?: { keepalive?: boolean }) => Promise<void>;
-  /** Applies ('keep') or drops ('server') the stale stash. */
-  resolveStaleStash: (choice: 'keep' | 'server') => void;
+  /**
+   * Pulls a newer server version of the open flow: adopted as it is when
+   * this tab has no unsaved changes, else with those changes reapplied on
+   * top (and then saved).
+   */
+  pullRemote: (remote: Flow) => void;
+  /** Fetches the open flow and pulls it if the server has a newer revision. */
+  syncWithServer: () => Promise<void>;
   deploy: () => Promise<void>;
   undeploy: () => Promise<void>;
 
@@ -130,16 +140,17 @@ export const UNSAVED_STASH_KEY = 'go-red.unsavedFlow';
 /** A stash older than this is not replayed. */
 const UNSAVED_STASH_MAX_AGE_MS = 60 * 60 * 1000;
 
-export interface UnsavedStash {
+export interface UnsavedStash extends FlowContent {
   flowId: string;
-  name: string;
-  description: Flow['description'];
-  nodes: Flow['nodes'];
-  connections: Flow['connections'];
-  config: Flow['config'];
-  /** baseUpdatedAt when the work was stashed: the server version it was made on. */
-  baseUpdatedAt: string | null;
+  /** The server version the work was made on, to reapply it on whatever the server has later. */
+  baseRevision: string | null;
+  baseContent: FlowContent | null;
   stashedAt: number;
+}
+
+/** The part of a flow the editor edits and autosaves. */
+export function contentOf(flow: Flow): FlowContent {
+  return { name: flow.name, description: flow.description, nodes: flow.nodes, connections: flow.connections, config: flow.config };
 }
 
 /** Stores or removes the stash; false when sessionStorage refused (full or unavailable). */
@@ -191,10 +202,25 @@ function readStash(flowId: string): UnsavedStash | null {
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let saveInFlight: Promise<void> | null = null;
 
+/** Debounce for following other sessions' saves (an active one saves every AUTOSAVE_DELAY_MS). */
+export const SYNC_DELAY_MS = 300;
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
+/** The newest revision a flow:status event reported for the open flow. */
+let latestRemoteRevision: string | null = null;
+/** Conflicts in a row before a save gives up (another session saving nonstop). */
+const MAX_CONFLICT_RETRIES = 5;
+
 function clearSaveTimer() {
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
+  }
+}
+
+function clearSyncTimer() {
+  if (syncTimer) {
+    clearTimeout(syncTimer);
+    syncTimer = null;
   }
 }
 
@@ -249,8 +275,8 @@ const initialDocumentState = {
   editVersion: 0,
   savedVersion: 0,
   deployedVersion: 0,
-  baseUpdatedAt: null as string | null,
-  staleStash: null as UnsavedStash | null,
+  baseRevision: null as string | null,
+  baseContent: null as FlowContent | null,
 };
 
 export const useFlowStore = create<FlowState>((set, get) => {
@@ -289,32 +315,48 @@ export const useFlowStore = create<FlowState>((set, get) => {
     }, AUTOSAVE_DELAY_MS);
   };
 
+  /** Replaces the open flow's content, keeping everything else (status, revision...). */
+  const withContent = (flow: Flow, content: FlowContent): Flow => ({ ...flow, ...content });
+
   /**
    * Puts edits that could not be saved before a sign-in back over the open
-   * flow as one undoable step (undo returns to the server's version) and
-   * lets autosave send them.
+   * flow, reapplied on whatever the server has now, as one undoable step
+   * (undo returns to the server's version), and lets autosave send them.
    */
-  const applyStash = (stash: UnsavedStash) => {
+  const restoreStash = (stash: UnsavedStash) => {
     const { flow } = get();
     if (!flow || flow.id !== stash.flowId) return;
     writeStash(null);
+    if (!stash.baseContent) return;
+    const server = contentOf(flow);
+    const merged = rebase(stash.baseContent, stash, server);
+    if (sameContent(merged, server)) return;
     set((state) => ({
-      flow: {
-        ...flow,
-        name: stash.name,
-        description: stash.description,
-        nodes: stash.nodes,
-        connections: stash.connections,
-        config: stash.config,
-      },
-      flows: state.flows.map((f) => (f.id === flow.id ? { ...f, name: stash.name, description: stash.description } : f)),
+      flow: withContent(flow, merged),
+      flows: state.flows.map((f) => (f.id === flow.id ? { ...f, name: merged.name, description: merged.description } : f)),
       history: pushHistory(state.history, documentOf(flow)),
       editVersion: state.editVersion + 1,
       saveState: 'pending',
-      staleStash: null,
     }));
     scheduleSave();
     notify('info', i18n.t('toast.unsavedRestored'));
+  };
+
+  /** Whether the open flow has changes that are not saved yet (or being saved). */
+  const hasLocalChanges = () => saveInFlight !== null || get().editVersion !== get().savedVersion;
+
+  /** Follows another session's save soon, once this tab is idle and visible. */
+  const scheduleSync = () => {
+    clearSyncTimer();
+    syncTimer = setTimeout(() => {
+      syncTimer = null;
+      if (typeof document !== 'undefined' && document.hidden) return; // caught up on visibilitychange
+      if (hasLocalChanges()) return; // the next save is checked against the server anyway
+      // The echo of this tab's own save can arrive before its response; by
+      // now the response may have made it the base, and there is nothing to pull.
+      if (latestRemoteRevision === get().baseRevision) return;
+      void get().syncWithServer();
+    }, SYNC_DELAY_MS);
   };
 
   return {
@@ -361,16 +403,10 @@ export const useFlowStore = create<FlowState>((set, get) => {
       try {
         const flow = await api.fetchFlow(flowId);
         if (get().selectedFlowId !== flowId) return;
-        set({ flow, flowLoading: false, baseUpdatedAt: flow.updatedAt ?? null });
+        latestRemoteRevision = flow.revision;
+        set({ flow, flowLoading: false, baseRevision: flow.revision, baseContent: contentOf(flow) });
         const stash = readStash(flowId);
-        if (!stash) return;
-        if (stash.baseUpdatedAt !== null && stash.baseUpdatedAt === flow.updatedAt) {
-          applyStash(stash);
-        } else {
-          // Someone saved the flow since the edits were made: applying them
-          // would silently replace that, so the user decides.
-          set({ staleStash: stash });
-        }
+        if (stash) restoreStash(stash);
       } catch (error) {
         if (get().selectedFlowId !== flowId) return;
         set({ flowLoading: false, flowError: errorMessage(error) });
@@ -411,71 +447,121 @@ export const useFlowStore = create<FlowState>((set, get) => {
       if (saveInFlight) {
         await saveInFlight;
       }
-      const { flow, editVersion, savedVersion } = get();
-      if (!flow || editVersion === savedVersion) {
-        if (get().saveState === 'pending') set({ saveState: 'idle' });
-        return;
-      }
-      const version = editVersion;
-      const flowId = flow.id;
-      set({ saveState: 'saving' });
-      saveInFlight = (async () => {
-        try {
-          const saved = await api.updateFlow(
-            flowId,
-            {
-              name: flow.name,
-              description: flow.description,
-              nodes: flow.nodes,
-              connections: flow.connections,
-              config: flow.config,
-            },
-            { keepalive: options.keepalive }
-          );
-          dropStashFor(flowId);
-          set((state) => {
-            if (!state.flow || state.flow.id !== flowId) return state;
-            const stillDirty = state.editVersion !== version;
-            const nextFlow = {
-              ...state.flow,
-              status: saved.status,
-              updatedAt: saved.updatedAt,
-              deployedAt: saved.deployedAt,
-            };
-            return {
-              flow: nextFlow,
-              flows: replaceSummary(state.flows, summaryFromFlow(nextFlow)),
-              savedVersion: version,
-              baseUpdatedAt: saved.updatedAt ?? state.baseUpdatedAt,
-              saveState: stillDirty ? 'pending' : 'idle',
-              saveError: null,
-            };
-          });
-        } catch (error) {
-          set({ saveState: 'error', saveError: errorMessage(error) });
-          throw error;
-        } finally {
-          saveInFlight = null;
+      for (let attempt = 0; ; attempt++) {
+        const { flow, editVersion, savedVersion, baseRevision } = get();
+        if (!flow || editVersion === savedVersion) {
+          if (get().saveState === 'pending') set({ saveState: 'idle' });
+          return;
         }
-      })();
-      try {
-        await saveInFlight;
-      } catch {
+        const version = editVersion;
+        const flowId = flow.id;
+        let conflict: Flow | null = null;
+        set({ saveState: 'saving' });
+        saveInFlight = (async () => {
+          try {
+            const saved = await api.updateFlow(
+              flowId,
+              {
+                name: flow.name,
+                description: flow.description,
+                nodes: flow.nodes,
+                connections: flow.connections,
+                config: flow.config,
+                baseRevision: baseRevision ?? undefined,
+              },
+              { keepalive: options.keepalive }
+            );
+            dropStashFor(flowId);
+            set((state) => {
+              if (!state.flow || state.flow.id !== flowId) return state;
+              const stillDirty = state.editVersion !== version;
+              const nextFlow = {
+                ...state.flow,
+                status: saved.status,
+                updatedAt: saved.updatedAt,
+                deployedAt: saved.deployedAt,
+                revision: saved.revision,
+              };
+              return {
+                flow: nextFlow,
+                flows: replaceSummary(state.flows, summaryFromFlow(nextFlow)),
+                savedVersion: version,
+                // The base is what the server stored, not what was sent: the
+                // server normalizes, and later comparisons must not see that
+                // as a change of this tab's.
+                baseRevision: saved.revision,
+                baseContent: contentOf(saved),
+                saveState: stillDirty ? 'pending' : 'idle',
+                saveError: null,
+              };
+            });
+          } catch (error) {
+            conflict = api.revisionConflict(error);
+            if (!conflict) {
+              set({ saveState: 'error', saveError: errorMessage(error) });
+              throw error;
+            }
+          } finally {
+            saveInFlight = null;
+          }
+        })();
+        try {
+          await saveInFlight;
+        } catch {
+          return;
+        }
+        if (conflict) {
+          // Someone else saved first: pull their version, reapply ours on
+          // top, and save again on their revision.
+          if (attempt >= MAX_CONFLICT_RETRIES) {
+            set({ saveState: 'error', saveError: i18n.t('toast.saveKeepsConflicting') });
+            return;
+          }
+          get().pullRemote(conflict);
+          clearSaveTimer();
+          continue;
+        }
+        if (get().flow?.id !== flowId) return;
+        if (get().editVersion !== version) {
+          scheduleSave();
+        } else if (latestRemoteRevision && latestRemoteRevision !== get().baseRevision) {
+          scheduleSync(); // someone saved while this save was on its way
+        }
         return;
-      }
-      if (get().flow?.id === flowId && get().editVersion !== version) {
-        scheduleSave();
       }
     },
 
-    resolveStaleStash: (choice) => {
-      const stash = get().staleStash;
-      if (!stash) return;
-      if (choice === 'keep') {
-        applyStash(stash);
-      } else {
-        writeStash(null);
-        set({ staleStash: null });
+    pullRemote: (remote) => {
+      const { flow, baseContent, baseRevision } = get();
+      if (!flow || flow.id !== remote.id || remote.revision === baseRevision) return;
+      const server = contentOf(remote);
+      const local = get().editVersion !== get().savedVersion;
+      const merged = local && baseContent ? rebase(baseContent, contentOf(flow), server) : server;
+      const pending = local && !sameContent(merged, server);
+      // Undo history is dropped: undoing to a document from before the pull
+      // would silently revert the other session's changes.
+      set((state) => ({
+        flow: withContent({ ...state.flow!, status: remote.status, updatedAt: remote.updatedAt, deployedAt: remote.deployedAt, revision: remote.revision }, merged),
+        flows: replaceSummary(state.flows, summaryFromFlow(withContent(remote, merged))),
+        history: emptyHistory(),
+        baseRevision: remote.revision,
+        baseContent: server,
+        editVersion: state.editVersion + 1,
+        savedVersion: pending ? state.savedVersion : state.editVersion + 1,
+        saveState: pending ? 'pending' : state.saveState === 'error' ? 'error' : 'idle',
+      }));
+      if (pending) scheduleSave();
+    },
+
+    syncWithServer: async () => {
+      const flowId = get().flow?.id;
+      if (!flowId) return;
+      try {
+        const remote = await api.fetchFlow(flowId);
+        latestRemoteRevision = remote.revision;
+        if (get().flow?.id === flowId) get().pullRemote(remote);
+      } catch {
+        // Offline or signed out: the next save or event tries again.
       }
     },
 
@@ -712,7 +798,11 @@ export const useFlowStore = create<FlowState>((set, get) => {
       if (result) restore(result.document, result.history);
     },
 
-    applyFlowStatus: (event) =>
+    applyFlowStatus: (event) => {
+      if (event.revision && get().flow?.id === event.flowId) {
+        latestRemoteRevision = event.revision;
+        if (event.revision !== get().baseRevision) scheduleSync();
+      }
       set((state) => {
         const flows = state.flows.map((f) =>
           f.id === event.flowId
@@ -721,6 +811,7 @@ export const useFlowStore = create<FlowState>((set, get) => {
                 status: event.status,
                 updatedAt: event.updatedAt || f.updatedAt,
                 deployedAt: event.deployedAt || f.deployedAt,
+                revision: event.revision || f.revision,
               }
             : f
         );
@@ -734,7 +825,8 @@ export const useFlowStore = create<FlowState>((set, get) => {
               }
             : state.flow;
         return { flows, flow };
-      }),
+      });
+    },
 
     applyFlowList: (flows) => set({ flows }),
 
@@ -771,7 +863,9 @@ export const selectCanUndeploy = (state: FlowState) => !!state.flow && state.flo
 /** Test helper: clears pending autosave timers and in-flight bookkeeping. */
 export function __resetFlowStoreForTests(): void {
   clearSaveTimer();
+  clearSyncTimer();
   saveInFlight = null;
+  latestRemoteRevision = null;
   useFlowStore.setState({
     flows: [],
     flowsLoading: false,
@@ -794,16 +888,8 @@ export function __resetFlowStoreForTests(): void {
 export function stashUnsavedWork(): boolean {
   const { flow, editVersion, savedVersion } = useFlowStore.getState();
   if (!flow || editVersion === savedVersion) return true;
-  return writeStash({
-    flowId: flow.id,
-    name: flow.name,
-    description: flow.description,
-    nodes: flow.nodes,
-    connections: flow.connections,
-    config: flow.config,
-    baseUpdatedAt: useFlowStore.getState().baseUpdatedAt,
-    stashedAt: Date.now(),
-  });
+  const { baseRevision, baseContent } = useFlowStore.getState();
+  return writeStash({ flowId: flow.id, ...contentOf(flow), baseRevision, baseContent, stashedAt: Date.now() });
 }
 
 /** Retries what failed while the editor was unauthenticated (token entered in place). */

@@ -291,6 +291,7 @@ const de: TranslationResource = {
   toast: {
     flowCreateFailed: 'Flow konnte nicht angelegt werden: {{message}}',
     unsavedRestored: 'Deine ungespeicherten Änderungen von vor der Anmeldung wurden wiederhergestellt',
+    saveKeepsConflicting: 'Speichern nicht möglich: Der Flow wird gerade woanders laufend geändert. Deine Änderungen sind noch da; die nächste Bearbeitung versucht es erneut.',
     flowDeleted: 'Flow gelöscht',
     flowDeleteFailed: 'Flow konnte nicht gelöscht werden: {{message}}',
     deployed: 'Flow deployed',
@@ -317,13 +318,6 @@ const de: TranslationResource = {
     error: 'Fehler',
     deploying: 'wird deployed',
     undeploying: 'wird gestoppt',
-  },
-  staleDraft: {
-    title: 'Dieser Flow hat sich während der Anmeldung geändert',
-    text: 'Deine ungespeicherten Änderungen an „{{name}}“ beruhen auf einer älteren Version. Inzwischen hat jemand den Flow gespeichert; behältst du deine Änderungen, ersetzen sie diese Version (ein Rückgängig holt sie zurück).',
-    keep: 'Meine Änderungen behalten',
-    server: 'Serverversion verwenden',
-    download: 'Meine Änderungen herunterladen',
   },
   auth: {
     title: 'Anmelden',

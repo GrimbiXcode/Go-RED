@@ -289,6 +289,7 @@ const en = {
   toast: {
     flowCreateFailed: 'Could not create the flow: {{message}}',
     unsavedRestored: 'Your unsaved changes from before signing in were restored',
+    saveKeepsConflicting: 'Could not save: the flow keeps changing elsewhere. Your changes are still here; the next edit tries again.',
     flowDeleted: 'Flow deleted',
     flowDeleteFailed: 'Could not delete the flow: {{message}}',
     deployed: 'Flow deployed',
@@ -315,13 +316,6 @@ const en = {
     error: 'error',
     deploying: 'deploying',
     undeploying: 'stopping',
-  },
-  staleDraft: {
-    title: 'This flow changed while you were signing in',
-    text: 'Your unsaved changes to “{{name}}” were made on an older version. Someone has saved the flow since, so keeping your changes replaces their version (one undo brings it back).',
-    keep: 'Keep my changes',
-    server: 'Use the server version',
-    download: 'Download my changes',
   },
   auth: {
     title: 'Sign in',

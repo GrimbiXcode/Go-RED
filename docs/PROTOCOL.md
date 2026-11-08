@@ -189,14 +189,11 @@ token field. The main menu shows the signed-in user and *Sign out*.
 Re-authenticating never loses unsaved edits. Before the page leaves for the
 sign-in (or reloads after *Sign out*, which saves first), the editor keeps
 the draft that could not be saved in `sessionStorage`
-(`go-red.unsavedFlow`, at most an hour) together with the `updatedAt` of
-the server version it was made on. When that flow opens again and the
-server still has that version, the draft is put back as one undoable step
-and autosave sends it. When someone has saved the flow since, the server's
-version is shown and the editor asks: keep the changes (one undoable step
-over the other version), use the server version, or download the changes
-as an importable flow file; the stash stays until the user decides, and
-is dropped as soon as that flow saves successfully. If the stash cannot be
+(`go-red.unsavedFlow`, at most an hour) together with the revision and
+content of the server version it was made on. When that flow opens again,
+the draft's own changes are reapplied on whatever the server has now (see
+*Concurrent editing*) as one undoable step, and autosave sends them; the
+stash is dropped as soon as that flow saves successfully. If the stash cannot be
 written (`sessionStorage` full or unavailable), the browser's leave prompt
 still warns before the sign-in navigation. A token entered
 while the editor is in use retries the failed requests in place instead of
@@ -204,6 +201,28 @@ reloading. Undo history and edit-tray fields not yet confirmed with *Done*
 do not survive a sign-in round trip. The stash is a copy of the open flow,
 including credentials kept in node configuration (MQTT broker, HTTP
 proxy); it stays in that tab only and is never sent anywhere else.
+
+### Concurrent editing
+
+The editor saves with `baseRevision`, so saves of one flow are ordered and
+none silently overwrites another; nobody is asked to resolve anything.
+
+- A tab without unsaved changes follows other sessions: a `flow:status`
+  with another revision makes it fetch the flow (debounced, and only while
+  it is visible; it catches up when shown again) and show it as it is.
+- A tab whose save was overtaken gets `409`, pulls the current flow from
+  the answer and reapplies only what it changed itself since its base
+  version, field by field (node name, position, config, ...; flow name,
+  description, config keys), then saves again on the new revision. Fields
+  it did not touch keep the other session's values; a field both changed
+  keeps this later save's value; a node deleted on either side stays
+  deleted; wires merge by their endpoints. After five conflicts in a row
+  it stops and reports the save as failed.
+- Pulling another session's changes clears the undo history, because
+  undoing to a state from before would revert them.
+- A hidden tab saves right away, while it can still handle a `409`. A save
+  sent while the page unloads (keepalive) cannot be retried; if another
+  session saved in the same moment, that last edit is lost.
 
 Import and deploy are rate limited per client address: `-rate-limit N`
 requests per minute (default 60, burst of a quarter of that, `0` disables);

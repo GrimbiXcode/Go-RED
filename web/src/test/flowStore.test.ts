@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Flow } from '../types/flow';
 
-vi.mock('../utils/api', () => ({
+vi.mock('../utils/api', async () => {
+  const actual = await vi.importActual<typeof import('../utils/api')>('../utils/api');
+  return {
+  ApiError: actual.ApiError,
+  revisionConflict: actual.revisionConflict,
   fetchFlows: vi.fn(),
   fetchFlow: vi.fn(),
   createFlow: vi.fn(),
@@ -11,9 +15,11 @@ vi.mock('../utils/api', () => ({
   undeployFlow: vi.fn(),
   getNodes: vi.fn(),
   generateId: () => 'generated',
-}));
+  };
+});
 
 import * as api from '../utils/api';
+import { ApiError } from '../utils/api';
 import { isSigningIn, onReauthentication, resumeAfterToken, startSignIn, useAuthStore } from '../lib/auth';
 import {
   UNSAVED_STASH_KEY,
@@ -22,6 +28,7 @@ import {
   useFlowStore,
   __resetFlowStoreForTests,
   AUTOSAVE_DELAY_MS,
+  SYNC_DELAY_MS,
   hasUndeployedChanges,
   selectCanDeploy,
   selectCanUndo,
@@ -59,13 +66,11 @@ beforeEach(() => {
   __resetFlowStoreForTests();
   vi.useFakeTimers();
   vi.mocked(api.updateFlow).mockReset();
-  vi.mocked(api.updateFlow).mockImplementation(async (id, data) => ({
-    ...makeFlow(),
-    ...(data as Partial<Flow>),
-    id,
-    updatedAt: '2026-01-01T00:00:10Z',
-    revision: 'r1',
-  }));
+  let saves = 0;
+  vi.mocked(api.updateFlow).mockImplementation(async (id, data) => {
+    const { baseRevision: _base, ...content } = data;
+    return { ...makeFlow(), ...(content as Partial<Flow>), id, updatedAt: '2026-01-01T00:00:10Z', revision: `saved-${++saves}` };
+  });
   vi.mocked(api.deployFlow).mockReset();
   vi.mocked(api.deployFlow).mockImplementation(async (id) => ({
     flowId: id,
@@ -362,65 +367,41 @@ describe('unsaved work across re-authentication', () => {
     expect(stashed()).toBeNull();
   });
 
-  /** A stash with one debug node, made on the server version `base`. */
-  function stashOn(base: string | null) {
-    const stash = { flowId: 'f1', name: 'Mine', description: '', nodes: { mine: { id: 'mine', type: 'debug', name: 'Mine', position: { x: 0, y: 0 }, config: {}, disabled: false } }, connections: [], config: makeFlow().config, baseUpdatedAt: base, stashedAt: Date.now() };
-    window.sessionStorage.setItem(UNSAVED_STASH_KEY, JSON.stringify(stash));
-    return stash;
-  }
-  const serverNodes = { theirs: { id: 'theirs', type: 'inject', name: 'Theirs', position: { x: 0, y: 0 }, config: {}, disabled: false } };
-  const T1 = '2026-01-01T00:05:00Z';
+  const debugNode = (id: string, name = id) => ({ id, type: 'debug', name, position: { x: 0, y: 0 }, config: {}, disabled: false });
 
-  it('asks before applying a stash whose flow was saved by someone else since', async () => {
-    const stash = stashOn(T0);
-    await openFlow(makeFlow({ updatedAt: T1, nodes: serverNodes }));
-    expect(Object.keys(store().flow!.nodes)).toEqual(['theirs']);
-    expect(store().saveState).toBe('idle');
-    expect(store().staleStash).toEqual(stash);
-    expect(stashed()).toEqual(stash);
+  it('reapplies a stash on a version someone else saved since, keeping their changes', async () => {
+    // Made on r1 with node a; this tab renamed a. Since then someone renamed
+    // the flow and added a node (r2).
+    const baseContent = { name: 'Flow', description: '', nodes: { a: debugNode('a') }, connections: [], config: makeFlow().config };
+    window.sessionStorage.setItem(
+      UNSAVED_STASH_KEY,
+      JSON.stringify({ flowId: 'f1', ...baseContent, nodes: { a: debugNode('a', 'Mine') }, baseRevision: 'r1', baseContent, stashedAt: Date.now() })
+    );
+    await openFlow(makeFlow({ name: 'Theirs', revision: 'r2', nodes: { a: debugNode('a'), theirs: debugNode('theirs') } }));
 
-    // A reload before deciding asks again.
-    __resetFlowStoreForTests();
-    await openFlow(makeFlow({ updatedAt: T1, nodes: serverNodes }));
-    expect(store().staleStash).toEqual(stash);
-
-    store().resolveStaleStash('keep');
-    expect(store().staleStash).toBeNull();
+    expect(store().flow!.name).toBe('Theirs');
+    expect(store().flow!.nodes.a.name).toBe('Mine');
+    expect(Object.keys(store().flow!.nodes).sort()).toEqual(['a', 'theirs']);
     expect(stashed()).toBeNull();
-    expect(store().flow!.name).toBe('Mine');
-    expect(Object.keys(store().flow!.nodes)).toEqual(['mine']);
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
-    const calls = vi.mocked(api.updateFlow).mock.calls;
-    expect(Object.keys(calls[calls.length - 1][1].nodes!)).toEqual(['mine']);
+    expect(vi.mocked(api.updateFlow).mock.calls[0][1].baseRevision).toBe('r2');
 
     store().undo();
-    expect(Object.keys(store().flow!.nodes)).toEqual(['theirs']);
+    expect(store().flow!.nodes.a.name).toBe('a');
   });
 
-  it('drops a stale stash when the server version is chosen', async () => {
-    stashOn(T0);
-    await openFlow(makeFlow({ updatedAt: T1, nodes: serverNodes }));
-    store().resolveStaleStash('server');
-    expect(store().staleStash).toBeNull();
-    expect(stashed()).toBeNull();
-    expect(Object.keys(store().flow!.nodes)).toEqual(['theirs']);
-    expect(store().saveState).toBe('idle');
-    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
-    expect(api.updateFlow).not.toHaveBeenCalled();
-  });
-
-  it('keeps the base version when a status event reports someone else saving', async () => {
+  it('keeps the base revision when a status event reports someone else saving', async () => {
     await openFlow();
-    expect(store().baseUpdatedAt).toBe(T0);
-    store().applyFlowStatus({ flowId: 'f1', status: 'draft', updatedAt: T1 });
-    expect(store().flow!.updatedAt).toBe(T1);
-    expect(store().baseUpdatedAt).toBe(T0);
+    vi.mocked(api.fetchFlow).mockResolvedValue(makeFlow({ revision: 'r1' }));
+    store().applyFlowStatus({ flowId: 'f1', status: 'draft', updatedAt: '2026-01-01T00:05:00Z', revision: 'r9' });
+    expect(store().baseRevision).toBe('r1');
 
     vi.mocked(api.updateFlow).mockRejectedValueOnce(new Error('authentication required'));
     store().addNode('debug', { x: 0, y: 0 });
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
     stashUnsavedWork();
-    expect(stashed().baseUpdatedAt).toBe(T0);
+    expect(stashed().baseRevision).toBe('r1');
+    expect(stashed().baseContent.nodes).toEqual({});
   });
 
   it('drops the stash for a flow once it saves successfully', async () => {
@@ -478,5 +459,93 @@ describe('unsaved work across re-authentication', () => {
     useAuthStore.setState({ user: null });
     resumeAfterToken(reload);
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('saves ordered by revision', () => {
+  const debugNode = (id: string, name = id) => ({ id, type: 'debug', name, position: { x: 0, y: 0 }, config: {}, disabled: false });
+  const conflictWith = (flow: Flow) => new ApiError('the flow was changed by someone else', 409, { code: 'revision_conflict', flow });
+
+  it('sends the base revision and moves it to the saved one', async () => {
+    await openFlow();
+    store().addNode('debug', { x: 0, y: 0 });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    expect(vi.mocked(api.updateFlow).mock.calls[0][1].baseRevision).toBe('r1');
+    expect(store().baseRevision).toBe('saved-1');
+    store().addNode('debug', { x: 50, y: 0 });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    expect(vi.mocked(api.updateFlow).mock.calls[1][1].baseRevision).toBe('saved-1');
+  });
+
+  it('on a conflict pulls the other version, reapplies its own change and saves again', async () => {
+    await openFlow(makeFlow({ nodes: { a: debugNode('a'), b: debugNode('b') } }));
+    store().updateNode('a', { name: 'Mine' });
+    vi.mocked(api.updateFlow).mockRejectedValueOnce(conflictWith(makeFlow({ revision: 'r2', nodes: { a: debugNode('a'), b: debugNode('b', 'Theirs') } })));
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+
+    const calls = vi.mocked(api.updateFlow).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[1][1].baseRevision).toBe('r2');
+    expect(calls[1][1].nodes!.a.name).toBe('Mine');
+    expect(calls[1][1].nodes!.b.name).toBe('Theirs');
+    expect(store().flow!.nodes.b.name).toBe('Theirs');
+    expect(store().saveState).toBe('idle');
+    expect(selectCanUndo(store())).toBe(false);
+  });
+
+  it('gives up after repeated conflicts instead of looping', async () => {
+    await openFlow();
+    store().addNode('debug', { x: 0, y: 0 });
+    let n = 1;
+    vi.mocked(api.updateFlow).mockImplementation(async () => {
+      throw conflictWith(makeFlow({ revision: `other-${++n}` }));
+    });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    expect(store().saveState).toBe('error');
+    expect(vi.mocked(api.updateFlow).mock.calls.length).toBe(6);
+  });
+
+  it('an idle tab follows a save from another session; a busy one waits for its own save', async () => {
+    await openFlow();
+    vi.mocked(api.fetchFlow).mockClear();
+    vi.mocked(api.fetchFlow).mockResolvedValue(makeFlow({ revision: 'r2', nodes: { theirs: debugNode('theirs') } }));
+
+    // Its own save's echo is not a reason to fetch.
+    store().applyFlowStatus({ flowId: 'f1', status: 'draft', revision: 'r1' });
+    await vi.advanceTimersByTimeAsync(SYNC_DELAY_MS + 1);
+    expect(api.fetchFlow).not.toHaveBeenCalled();
+
+    store().applyFlowStatus({ flowId: 'f1', status: 'draft', revision: 'r2' });
+    store().applyFlowStatus({ flowId: 'f1', status: 'draft', revision: 'r2' });
+    await vi.advanceTimersByTimeAsync(SYNC_DELAY_MS + 1);
+    expect(api.fetchFlow).toHaveBeenCalledTimes(1);
+    expect(Object.keys(store().flow!.nodes)).toEqual(['theirs']);
+    expect(store().baseRevision).toBe('r2');
+    expect(store().saveState).toBe('idle');
+    expect(api.updateFlow).not.toHaveBeenCalled();
+
+    // The echo of its own save arriving before the save's response is no reason either.
+    vi.mocked(api.fetchFlow).mockClear();
+    let finish!: () => void;
+    vi.mocked(api.updateFlow).mockImplementationOnce(
+      (id, data) =>
+        new Promise((resolve) => {
+          finish = () => resolve({ ...makeFlow(), ...(data as Partial<Flow>), id, revision: 'r-own' });
+        })
+    );
+    store().addNode('debug', { x: 10, y: 0 });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 1);
+    store().applyFlowStatus({ flowId: 'f1', status: 'draft', revision: 'r-own' });
+    finish();
+    await vi.advanceTimersByTimeAsync(SYNC_DELAY_MS + 1);
+    expect(store().baseRevision).toBe('r-own');
+    expect(api.fetchFlow).not.toHaveBeenCalled();
+
+    // With an edit pending it does not fetch; its save is checked instead.
+    vi.mocked(api.fetchFlow).mockClear();
+    store().addNode('debug', { x: 0, y: 0 });
+    store().applyFlowStatus({ flowId: 'f1', status: 'draft', revision: 'r3' });
+    await vi.advanceTimersByTimeAsync(SYNC_DELAY_MS + 1);
+    expect(api.fetchFlow).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { test, expect, type Page } from '@playwright/test';
 import { OIDC_ISSUER, OIDC_SERVER_URL, startOidcProvider, type FakeProvider } from './oidcProvider';
 
@@ -142,20 +141,20 @@ test.describe('OIDC sign-in', () => {
       .toBe('After expiry');
   });
 
-  test('edits made on a version someone has saved over since are not applied without asking', async ({ page, context, browser }) => {
+  test('edits made on a version someone has saved over since are reapplied on top of it', async ({ page, context, browser }) => {
     await page.goto(`${OIDC_SERVER_URL}/`);
     await signInAtProvider(page, 'ada');
     await page.waitForURL(`${OIDC_SERVER_URL}/`);
     const flowId = `stale-${Date.now()}`;
     const write = { headers: { Origin: OIDC_SERVER_URL } };
-    const node = (name: string) => ({ n1: { id: 'n1', type: 'debug', name, position: { x: 120, y: 120 }, config: {}, disabled: false } });
+    const node = (id: string, name: string) => ({ id, type: 'debug', name, position: { x: 120, y: id === 'n1' ? 120 : 260 }, config: {}, disabled: false });
     expect((await page.request.post(`${OIDC_SERVER_URL}/api/flows`, { ...write, data: { id: flowId, name: 'Stale' } })).status()).toBe(201);
-    expect((await page.request.put(`${OIDC_SERVER_URL}/api/flows/${flowId}`, { ...write, data: { nodes: node('Before'), connections: [] } })).ok()).toBeTruthy();
+    expect((await page.request.put(`${OIDC_SERVER_URL}/api/flows/${flowId}`, { ...write, data: { nodes: { n1: node('n1', 'Before') }, connections: [] } })).ok()).toBeTruthy();
     await page.goto(`${OIDC_SERVER_URL}/flow/${flowId}`);
     const n1 = page.locator('.react-flow__node[data-id="n1"]');
     await expect(n1).toContainText('Before');
 
-    // The session ends, the user edits, and leaves for the sign-in...
+    // The session ends, the user renames n1, and leaves for the sign-in...
     await context.clearCookies();
     await n1.dblclick();
     const tray = page.getByTestId('node-config');
@@ -164,38 +163,26 @@ test.describe('OIDC sign-in', () => {
     await page.getByTestId('sso-button').click();
     await page.waitForURL(`${OIDC_ISSUER}/authorize?**`);
 
-    // ...while someone else saves the flow.
+    // ...while someone else renames n1 too and adds n2.
     const other = await browser.newContext();
     const otherPage = await other.newPage();
     await otherPage.goto(`${OIDC_SERVER_URL}/`);
     await signInAtProvider(otherPage, 'ada');
     await otherPage.waitForURL(`${OIDC_SERVER_URL}/`);
-    expect((await otherPage.request.put(`${OIDC_SERVER_URL}/api/flows/${flowId}`, { ...write, data: { nodes: node('Theirs'), connections: [] } })).ok()).toBeTruthy();
+    const theirs = { n1: node('n1', 'Theirs'), n2: node('n2', 'Added') };
+    expect((await otherPage.request.put(`${OIDC_SERVER_URL}/api/flows/${flowId}`, { ...write, data: { nodes: theirs, connections: [] } })).ok()).toBeTruthy();
     await other.close();
 
-    // Back: the server's version is shown and the user is asked.
+    // Back: their node stays, this later rename wins, nobody is asked.
     await page.getByTestId('idp-user-ada').click();
     await page.waitForURL(`${OIDC_SERVER_URL}/flow/${flowId}`);
-    const dialog = page.getByTestId('stale-draft');
-    await expect(dialog).toBeVisible();
-    await expect(n1).toContainText('Theirs');
-    const serverName = async () => (await (await page.request.get(`${OIDC_SERVER_URL}/api/flows/${flowId}`)).json()).nodes.n1.name;
-    expect(await serverName()).toBe('Theirs');
-
-    const download = page.waitForEvent('download');
-    await dialog.getByRole('button', { name: 'Download my changes' }).click();
-    const file = await download;
-    expect(file.suggestedFilename()).toBe(`flow-${flowId}.unsaved.json`);
-    expect(JSON.parse(await readFile((await file.path())!, 'utf8')).nodes.n1.name).toBe('Mine');
-
-    // Keeping them is one undoable step over the other version.
-    await dialog.getByRole('button', { name: 'Keep my changes' }).click();
-    await expect(dialog).toBeHidden();
+    await expect(page.getByText('Your unsaved changes from before signing in were restored')).toBeVisible();
     await expect(n1).toContainText('Mine');
-    await expect.poll(serverName, { timeout: 10_000 }).toBe('Mine');
-    await page.getByRole('button', { name: 'Undo' }).click();
-    await expect(n1).toContainText('Theirs');
-    await expect.poll(serverName, { timeout: 10_000 }).toBe('Theirs');
+    await expect(page.locator('.react-flow__node[data-id="n2"]')).toContainText('Added');
+    const serverNodes = async () => (await (await page.request.get(`${OIDC_SERVER_URL}/api/flows/${flowId}`)).json()).nodes;
+    await expect.poll(async () => (await serverNodes()).n1.name, { timeout: 10_000 }).toBe('Mine');
+    expect((await serverNodes()).n2.name).toBe('Added');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 
   test('an account that is not on the allowlist is refused, without a redirect loop', async ({ page, context }) => {

@@ -117,16 +117,25 @@ ESLint rules to know: `no-console` (only `warn` and `error` allowed),
   adds `reauth=1`, so the provider checks the user again.
   Unsaved work survives re-authentication: `flowStore` registers
   `onReauthentication` hooks; `startSignIn` and sign-out stash the unsaved
-  draft in `sessionStorage` (`go-red.unsavedFlow`) with `baseUpdatedAt`, the
-  server version it was made on (set on load and save, never by status
-  events). `selectFlow` restores it as one undoable step when the server
-  still has that version; otherwise it sets `staleStash` and
-  `StaleDraftDialog` asks (keep, server version, download) through
-  `resolveStaleStash`. A successful save drops that flow's stash. The leave
+  draft in `sessionStorage` (`go-red.unsavedFlow`) with its base revision
+  and content; `selectFlow` reapplies it on the server's current version
+  (`rebase`) as one undoable step. A successful save drops that flow's stash. The leave
   prompt is skipped only while `isSigningIn()` (stash written, or nothing to
   stash), which `pageshow` from the back/forward cache resets. A token
   entered mid-session retries in place (`resumeAfterToken`) instead of
   reloading.
+- Concurrent editing (`flowStore`, `store/rebase.ts`, PROTOCOL.md
+  *Concurrent editing*): the store keeps `baseRevision` and `baseContent`,
+  the server's stored version the working copy is based on, taken from GET
+  and PUT responses only. Saves send `baseRevision`; a 409
+  (`api.revisionConflict`) calls `pullRemote`, which reapplies this tab's
+  changes since the base with `rebase` (field by field, local wins a field
+  both changed, deletion wins, wires by endpoints, values compared through
+  a canonical form so the server's normalization is not a change), clears
+  the undo history and saves again (at most 5 times in a row). A
+  `flow:status` with another revision schedules `syncWithServer` after
+  `SYNC_DELAY_MS` if the tab is visible and has nothing unsaved;
+  `FlowEditor` saves on `visibilitychange` to hidden and syncs when shown.
 - Types (`src/types/`): `generated.ts` comes from
   `go generate ./internal/dto/...` and is never edited by hand; the other
   files re-export it and add UI-only types.

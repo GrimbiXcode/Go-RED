@@ -13,7 +13,6 @@ import { SidebarTabs, InfoTabIcon, DebugTabIcon } from './SidebarTabs';
 import { StatusBar } from './StatusBar';
 import { ExportModal } from './ExportModal';
 import { ImportModal } from './ImportModal';
-import { StaleDraftDialog } from './StaleDraftDialog';
 import { useFlowStore, selectCanDeploy, selectCanRedo, selectCanUndeploy, selectCanUndo, hasUndeployedChanges, type NodePatch } from '../store/flowStore';
 import { connectionsOnMissingPorts, outputPortIds } from '../schema/ports';
 import { useEditorStore, type SidebarTab } from '../store/editorStore';
@@ -109,11 +108,20 @@ export function FlowEditor() {
       event.preventDefault();
       event.returnValue = '';
     };
+    // A hidden tab saves while it can still handle the answer: a keepalive
+    // save during unload cannot pull and retry if someone else saved first.
+    // Back in view, it catches up on saves it skipped while hidden.
+    const onVisibilityChange = () => {
+      if (document.hidden) void flushSave();
+      else void useFlowStore.getState().syncWithServer();
+    };
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('beforeunload', onBeforeUnload);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('beforeunload', onBeforeUnload);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [flushSave]);
 
@@ -356,7 +364,6 @@ export function FlowEditor() {
       {flow && <ExportModal flowId={flow.id} flowName={flow.name} isOpen={showExport} onClose={() => setShowExport(false)} />}
 
       <ImportModal isOpen={showImport} onClose={() => setShowImport(false)} onFlowImported={handleFlowImported} />
-      <StaleDraftDialog />
 
       <ShortcutHelp isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </div>
