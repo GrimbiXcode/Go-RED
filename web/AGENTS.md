@@ -46,6 +46,8 @@ src/
   types/                 generated.ts (from Go) plus hand-written UI types
   utils/                 api.ts (REST client), markdown.ts, nodeCategories.ts
 e2e/editor.spec.ts       Playwright suite
+e2e/oidc.spec.ts         OIDC sign-in against a second server (:8082) and
+e2e/oidcProvider.ts      the fake OIDC provider it starts (:8083)
 ```
 
 ## Scripts (`package.json`)

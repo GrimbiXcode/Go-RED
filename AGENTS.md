@@ -34,7 +34,7 @@ docs/                  PROTOCOL, ARCHITECTURE, NODE_DEVELOPMENT, PERFORMANCE, pl
 | Go tests | `go test -race ./...` |
 | Benchmarks | `go test ./internal/engine -run '^$' -bench . -benchtime 20000x` (numbers in `docs/PERFORMANCE.md`) |
 | Editor checks | `cd web && npm run typecheck && npm run lint && npx vitest run` |
-| End-to-end | `cd web && npm run build && npx playwright test` (real server on port 8081), or `make e2e-docker` to run it in the Playwright container without installing browsers |
+| End-to-end | `cd web && npm run build && npx playwright test` (real server on port 8081, a second one with OIDC sign-in on 8082 against a fake provider on 8083), or `make e2e-docker` to run it in the Playwright container without installing browsers |
 | Regenerate types | `make generate-types` after changing `internal/dto`, `internal/registry` metadata or WebSocket message types; commit the result |
 | Run it | `make start` (checks Go and Node, installs, builds, runs on :8080; `PORT=` and `DATA_DIR=` override) |
 | Run for development | `make dev` (both servers, Ctrl+C stops them), which is `go run ./cmd/go-red` plus `cd web && npm run dev` (Vite proxies /api and /ws to :8080), or `go run ./cmd/go-red -web-dir internal/webui/dist` after `npm run build` |
