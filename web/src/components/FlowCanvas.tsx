@@ -19,6 +19,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import '../styles/reactflow-overrides.css';
+import { editorKeysBlocked } from '../lib/keyboard';
 import { useTranslation } from 'react-i18next';
 import {
   AlignCenterHorizontal,
@@ -151,12 +152,6 @@ export function edgeIdAt(clientX: number, clientY: number): string | null {
   return null;
 }
 
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
-}
-
 interface MenuState {
   x: number;
   y: number;
@@ -174,7 +169,7 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
   const wrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
+  const { screenToFlowPosition, zoomIn, zoomOut, fitView, deleteElements, getNodes, getEdges } = useReactFlow<CanvasNode, Edge>();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [quickAdd, setQuickAdd] = useState<{ x: number; y: number } | null>(null);
 
@@ -282,11 +277,22 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
     [selectedNodeIds, setNodes, setSelection]
   );
 
-  // Canvas-local keys: arrows nudge the selection, +/- zoom, Ctrl+A selects all.
+  // Canvas-local keys: arrows nudge the selection, +/- zoom, Ctrl+A selects
+  // all, Delete/Backspace delete the selected nodes and wires. Delete is ours
+  // rather than xyflow's (deleteKeyCode={null}) so it obeys the same guard and
+  // never removes a node behind the edit tray or a dialog.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target) || !flow) return;
+      if (editorKeysBlocked(event) || !flow) return;
       const mod = event.ctrlKey || event.metaKey;
+      if (!mod && !event.altKey && (event.key === 'Delete' || event.key === 'Backspace')) {
+        const selectedNodes = getNodes().filter((node) => node.selected);
+        const selectedEdges = getEdges().filter((edge) => edge.selected);
+        if (selectedNodes.length === 0 && selectedEdges.length === 0) return;
+        event.preventDefault();
+        void deleteElements({ nodes: selectedNodes, edges: selectedEdges });
+        return;
+      }
       if (mod && !event.shiftKey && event.key.toLowerCase() === 'a') {
         event.preventDefault();
         selectAll();
@@ -313,7 +319,7 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [flow, selectedNodeIds, nudgeNodes, selectAll, zoomIn, zoomOut]);
+  }, [flow, selectedNodeIds, nudgeNodes, selectAll, zoomIn, zoomOut, deleteElements, getNodes, getEdges]);
 
   const onSelectionChange = useCallback(
     ({ nodes: selected }: OnSelectionChangeParams) => {
@@ -508,7 +514,7 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
         onEdgeContextMenu={onEdgeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
         onDelete={onDelete}
-        deleteKeyCode={['Backspace', 'Delete']}
+        deleteKeyCode={null}
         nodeTypes={nodeTypeComponents}
         fitView
         fitViewOptions={{ padding: 0.5 }}

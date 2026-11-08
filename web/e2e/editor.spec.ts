@@ -333,6 +333,46 @@ test.describe('flow editor', () => {
     await expect(page.locator('.react-flow__edge')).toHaveCount(3);
   });
 
+  test('keys go to the edit tray or the dialog, not to the canvas behind it', async ({ page, request }) => {
+    await page.goto(`/flow/${FLOW_ID}`);
+    const n2 = page.locator('.react-flow__node[data-id="n2"]');
+
+    // Delete with focus in the edit tray leaves the node being edited alone.
+    await n2.dblclick();
+    const tray = page.getByTestId('node-config');
+    await tray.getByRole('button', { name: 'Close' }).focus();
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Backspace');
+    await expect(tray).toBeVisible();
+    await expect(n2).toHaveCount(1);
+    await tray.getByRole('button', { name: 'Close' }).click();
+
+    // Nothing reaches the canvas while a modal dialog is open.
+    await n2.click();
+    const before = await n2.getAttribute('style');
+    await page.getByRole('button', { name: 'Main menu' }).click();
+    await page.getByRole('menuitem', { name: 'Import…' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Import flow' });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Control+z');
+    await expect(n2).toHaveCount(1);
+    expect(await n2.getAttribute('style')).toBe(before);
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+
+    // On the canvas, Delete removes the selected node and its wires.
+    await n2.click();
+    await page.keyboard.press('Delete');
+    await expect(n2).toHaveCount(0);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(0);
+    await waitForSaved(page);
+    const saved = await flowFromServer(request);
+    expect(saved.nodes.n2).toBeUndefined();
+    expect(saved.connections).toHaveLength(0);
+  });
+
   test('required fields block Done and the function node is edited in a code editor', async ({ page, request }) => {
     await seedFlow(
       request,

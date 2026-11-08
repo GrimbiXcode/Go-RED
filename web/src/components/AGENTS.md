@@ -26,7 +26,7 @@ import.
 
 | Component | Role |
 |---|---|
-| `FlowCanvas.tsx` | The `@xyflow/react` canvas for one flow: converts `flow.nodes`/`connections` to canvas nodes and edges (`flowNodeToCanvasNode`, `connectionToEdge`), merges store updates without disturbing a drag or the selection (`mergeCanvasNodes`), handles palette drop, connect, delete, Ctrl+A, arrow-key nudge, zoom, node and pane context menus (`ContextMenu`), double-click quick add (`QuickAdd`) and dropping a node onto a wire (`edgeIdAt` plus `insertNodeOnEdge`/`spliceNodeIntoEdge`). Node type map: `default: NodeComponent`, `inject: InjectNode`, `debug: DebugNode`. |
+| `FlowCanvas.tsx` | The `@xyflow/react` canvas for one flow: converts `flow.nodes`/`connections` to canvas nodes and edges (`flowNodeToCanvasNode`, `connectionToEdge`), merges store updates without disturbing a drag or the selection (`mergeCanvasNodes`), handles palette drop, connect, Delete/Backspace (its own, behind `lib/keyboard`'s guard), Ctrl+A, arrow-key nudge, zoom, node and pane context menus (`ContextMenu`), double-click quick add (`QuickAdd`) and dropping a node onto a wire (`edgeIdAt` plus `insertNodeOnEdge`/`spliceNodeIntoEdge`). Node type map: `default: NodeComponent`, `inject: InjectNode`, `debug: DebugNode`. |
 | `canvasTypes.ts` | `CanvasNodeData` (`label`, `node`, `metadata`, `outputs`, `flowId`) and `CanvasNode`. |
 | `NodeShell.tsx` | Visual shell of a node: category color through `--node-color`, icon well, label, optional control, Node-RED style status line; geometry lives in the `.gr-node*` CSS rules. |
 | `NodeHandles.tsx` | Input and output handles from `outputs`, evenly spaced, labels for multi-output nodes (`port-label`). When the set of ports changes (`portLayoutKey`) it has xyflow measure the node again, since the node keeps its size and xyflow would keep the old handle positions. |
@@ -78,7 +78,10 @@ in `test/editTray.test.tsx` and show it in `pages/StyleGuide.tsx`.
   per-component code.
 - Dialogs use `role="dialog"` with an `aria-label`, menus `role="menu"` and
   `menuitem`, tabs `role="tab"` with `aria-selected`; the e2e suite selects
-  by these roles and by `data-testid`. Keep both when refactoring.
+  by these roles and by `data-testid`. Keep both when refactoring. Overlays
+  that cover the editor (import, export, shortcut help, sign-in) also carry
+  `aria-modal="true"`, which switches the editor's keys off
+  (`lib/keyboard.ts`); a new modal needs it too.
 - Node help and descriptions are Markdown rendered by `utils/markdown.ts`
   (DOMPurify); never put unsanitized input into `dangerouslySetInnerHTML`.
 - Canvas behavior that does not need the DOM lives in exported pure helpers

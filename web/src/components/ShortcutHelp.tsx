@@ -47,7 +47,7 @@ export function ShortcutHelp({ isOpen, onClose }: ShortcutHelpProps) {
   const { t } = useTranslation();
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-label={t('shortcuts.title')} onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label={t('shortcuts.title')} onClick={onClose}>
       <div className="bg-panel rounded-md shadow-float w-full max-w-lg" onClick={(event) => event.stopPropagation()} data-testid="shortcut-help">
         <div className="flex items-center justify-between px-4 py-3 border-b border-line">
           <h3 className="font-semibold text-sm text-fg">{t('shortcuts.title')}</h3>

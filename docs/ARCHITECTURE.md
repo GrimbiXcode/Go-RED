@@ -270,7 +270,10 @@ implementation:
 - **Shortcuts** (`hooks/useEditorShortcuts.ts`): `Ctrl+Z/Y`, `Ctrl+S`
   deploy, `Ctrl+C/V/D`, `Ctrl+A`, `Ctrl+F` palette search, `Ctrl+E`
   export, `Space+drag` pans, `+`/`-` zoom, `?` opens the reference
-  (`components/ShortcutHelp.tsx`). Shortcuts are ignored while typing.
+  (`components/ShortcutHelp.tsx`). Shortcuts, `Delete`/`Backspace` and
+  the arrow keys are ignored while typing, with focus in a dialog (such as
+  the edit tray) and while a modal dialog is open (`lib/keyboard.ts`), so
+  they never act on the canvas behind it.
 - **Flow tabs** (`components/FlowTabs.tsx`): double-click renames inline,
   dragging reorders (persisted as `Flow.order`, see `docs/PROTOCOL.md`),
   the context menu duplicates or deletes, and a dot marks flows that

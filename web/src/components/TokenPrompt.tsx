@@ -27,7 +27,7 @@ export function TokenPrompt({ onDone = () => window.location.reload() }: TokenPr
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-label={t('auth.title')}>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label={t('auth.title')}>
       <form className="bg-panel rounded-md shadow-float w-full max-w-sm" onSubmit={submit} data-testid="token-prompt">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-line">
           <KeyRound className="w-4 h-4 text-accent-text" aria-hidden="true" />
