@@ -61,21 +61,30 @@ test.describe('OIDC sign-in', () => {
     await page.reload();
     await expect(page.getByRole('tab', { name })).toBeVisible();
 
-    // Signing out clears the cookie and shows the dialog instead of going
-    // straight back to the provider.
+    // The provider's own session is alive: signing in again needs no click.
+    await page.goto(`${OIDC_SERVER_URL}/auth/login?next=${encodeURIComponent('/?again=1')}`);
+    await page.waitForURL(`${OIDC_SERVER_URL}/?again=1`);
+    await expect(page.getByRole('dialog', { name: 'Sign in' })).toHaveCount(0);
+
+    // Signing out ends both sessions: Go-RED's cookie, then the provider's
+    // (RP-initiated logout), which sends the browser back to the editor,
+    // where the signed-out dialog waits instead of a new sign-in.
     const infoLoaded = page.waitForResponse((response) => response.url().endsWith('/api/auth/info'));
     await openMenu(page);
     await page.getByRole('menuitem', { name: 'Sign out' }).click();
     await infoLoaded;
     await expect(page.getByTestId('signed-out')).toBeVisible();
-    expect(page.url().startsWith(OIDC_SERVER_URL)).toBe(true);
+    expect(page.url()).toBe(`${OIDC_SERVER_URL}/`);
+    expect(provider.logouts()).toBe(1);
     expect((await context.cookies()).find((cookie) => cookie.name === 'gored_session')).toBeUndefined();
     expect((await page.request.get(`${OIDC_SERVER_URL}/api/flows`)).status()).toBe(401);
 
-    // The dialog's button signs in again.
+    // The dialog's button signs in again, and the provider has to ask: its
+    // session is gone, and Go-RED asks it to check the user again anyway.
     const issued = provider.issued();
     await page.getByTestId('sso-button').click();
     await signInAtProvider(page, 'ada');
+    expect(provider.prompts().at(-1)).toBe('login');
     await page.waitForURL(`${OIDC_SERVER_URL}/**`);
     await expect(page.getByRole('tab', { name })).toBeVisible();
     expect(provider.issued()).toBe(issued + 1);

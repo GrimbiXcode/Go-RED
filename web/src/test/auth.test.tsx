@@ -146,7 +146,8 @@ describe('single sign-on', () => {
     expect(screen.getByTestId('signed-out')).toBeInTheDocument();
     expect(screen.queryByTestId('token-input')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('sso-button'));
-    expect(assign).toHaveBeenCalledWith('/auth/login?next=%2Fflow%2Fdemo%3Fx%3D1');
+    // After a sign-out the provider is asked to check the user again.
+    expect(assign).toHaveBeenCalledWith('/auth/login?next=%2Fflow%2Fdemo%3Fx%3D1&reauth=1');
     expect(mayRedirectAutomatically()).toBe(true);
   });
 
@@ -182,6 +183,13 @@ describe('single sign-on', () => {
     await signOutAndReload(logout, reload);
     expect(logout).toHaveBeenCalledTimes(1);
     expect(reload).toHaveBeenCalledTimes(1);
+    expect(mayRedirectAutomatically()).toBe(false);
+
+    // With a provider logout URL the browser goes there instead of reloading.
+    reload.mockClear();
+    await signOutAndReload(async () => ({ logoutUrl: 'https://idp.example/end-session?client_id=c' }), reload);
+    expect(assign).toHaveBeenCalledWith('https://idp.example/end-session?client_id=c');
+    expect(reload).not.toHaveBeenCalled();
     expect(mayRedirectAutomatically()).toBe(false);
   });
 });

@@ -102,7 +102,7 @@ export function Header({
     // Save pending edits while the session still works, then sign out.
     signOutAndReload(async () => {
       await useFlowStore.getState().flushSave();
-      await signOut();
+      return signOut();
     }).catch((error: unknown) =>
       notify('error', t('auth.signOutFailed', { message: error instanceof Error ? error.message : String(error) }))
     );

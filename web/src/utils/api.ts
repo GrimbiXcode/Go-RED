@@ -10,6 +10,7 @@ import type {
 } from '../types/api';
 
 import { authHeaders, authRequired } from '../lib/auth';
+import type { LogoutResponse } from '../types/generated';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
@@ -203,5 +204,5 @@ export const importFlow = async (file: File): Promise<ImportResult> => {
 /** Who the editor is authenticated as (method "none" without authentication). */
 export const fetchAuthUser = (): Promise<AuthUser> => apiRequest<AuthUser>('GET', '/auth/me');
 
-/** Ends the OIDC session (clears the cookie; the provider's session stays). */
-export const signOut = (): Promise<void> => apiRequest<void>('POST', '/auth/logout');
+/** Ends the OIDC session; logoutUrl, when set, ends the provider's session too. */
+export const signOut = (): Promise<LogoutResponse> => apiRequest<LogoutResponse>('POST', '/auth/logout');

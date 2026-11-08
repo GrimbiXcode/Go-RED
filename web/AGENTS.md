@@ -111,7 +111,10 @@ ESLint rules to know: `no-console` (only `warn` and `error` allowed),
   the prompt offers the SSO button and/or the token field (a token reloads
   the page on save). `App` loads `GET /api/auth/me` into `useAuthStore.user`;
   the header menu shows an OIDC user and *Sign out* (saves, then
-  `POST /api/auth/logout`, then reloads into the signed-out dialog).
+  `POST /api/auth/logout`; with a `logoutUrl` the browser goes to the
+  provider's logout, which comes back to the editor, else it reloads;
+  either way into the signed-out dialog). After a sign-out the SSO button
+  adds `reauth=1`, so the provider checks the user again.
   Unsaved work survives re-authentication: `flowStore` registers
   `onReauthentication` hooks; `startSignIn` and sign-out stash the unsaved
   draft in `sessionStorage` (`go-red.unsavedFlow`) with `baseUpdatedAt`, the

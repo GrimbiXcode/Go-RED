@@ -128,9 +128,9 @@ export function mayRedirectAutomatically(now = Date.now()): boolean {
 }
 
 /** The sign-in URL for info, returning to the current page afterwards. */
-export function signInUrl(info: AuthInfo): string {
+export function signInUrl(info: AuthInfo, reauth = false): string {
   const next = `${window.location.pathname}${window.location.search}`;
-  return `${info.loginUrl ?? '/auth/login'}?next=${encodeURIComponent(next)}`;
+  return `${info.loginUrl ?? '/auth/login'}?next=${encodeURIComponent(next)}${reauth ? '&reauth=1' : ''}`;
 }
 
 interface ReauthenticationHooks {
@@ -174,9 +174,12 @@ if (typeof window !== 'undefined') {
 
 /** Sends the browser to the OIDC sign-in, stashing unsaved work first. */
 export function startSignIn(info: AuthInfo, automatic = false): void {
+  // After an explicit sign-out the provider must check the user again, even
+  // if its own session survived (a provider without logout, or local logout).
+  const reauth = isSignedOut();
   prepareToLeave();
   writeMark(automatic ? String(Date.now()) : null);
-  window.location.assign(signInUrl(info));
+  window.location.assign(signInUrl(info, reauth));
 }
 
 /**
@@ -205,13 +208,22 @@ export function isSignedOut(): boolean {
 /**
  * Ends the OIDC session: logout (the caller saves pending edits, then POSTs
  * /api/auth/logout) runs first; whatever is still unsaved is stashed for
- * the next sign-in, and the page reloads into the signed-out dialog.
+ * the next sign-in. The browser then goes to the provider's logout when
+ * the server named one (it comes back to the editor), else reloads; either
+ * way it lands in the signed-out dialog.
  */
-export async function signOutAndReload(logout: () => Promise<void>, reload = () => window.location.reload()): Promise<void> {
-  await logout();
+export async function signOutAndReload(
+  logout: () => Promise<{ logoutUrl?: string } | void>,
+  reload = () => window.location.reload()
+): Promise<void> {
+  const result = await logout();
   prepareToLeave();
   markSignedOut();
-  reload();
+  // Sign out at the provider too when the server says how (RP-initiated
+  // logout); the provider sends the browser back to the editor afterwards.
+  const logoutUrl = result ? result.logoutUrl : undefined;
+  if (logoutUrl) window.location.assign(logoutUrl);
+  else reload();
 }
 
 /** The user is signed in: automatic sign-in may be used again next time. */

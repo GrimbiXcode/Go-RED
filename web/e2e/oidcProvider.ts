@@ -5,7 +5,10 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
  * A minimal OpenID Connect provider for the sign-in end-to-end tests:
  * discovery, JWKS, an authorization page with one button per test user and
  * a token endpoint that checks the client, the redirect URI and the PKCE
- * verifier before it hands out an RS256-signed ID token.
+ * verifier before it hands out an RS256-signed ID token. Like a real one it
+ * keeps a session (a cookie): while it lives, authorization is silent unless
+ * the request says prompt=login, and the end-session endpoint (RP-initiated
+ * logout) ends it and sends the browser back.
  *
  * The ports and client settings are shared with playwright.config.ts, which
  * starts a second Go-RED instance configured against this provider.
@@ -18,6 +21,9 @@ export const OIDC_ISSUER = `http://localhost:${OIDC_PROVIDER_PORT}`;
 export const OIDC_CLIENT_ID = 'go-red-e2e';
 export const OIDC_CLIENT_SECRET = 'e2e-client-secret';
 export const OIDC_ALLOWED_EMAIL = 'ada@example.com';
+/** Where the provider may send the browser after a logout (registered for the client). */
+export const OIDC_POST_LOGOUT_URL = `${OIDC_SERVER_URL}/`;
+const SESSION_COOKIE = 'fake_idp_session';
 
 export interface TestUser {
   sub: string;
@@ -47,6 +53,10 @@ const token = () => randomBytes(16).toString('base64url');
 export interface FakeProvider {
   /** How often the token endpoint issued an ID token. */
   issued: () => number;
+  /** prompt of every authorization request so far ('' when absent). */
+  prompts: () => string[];
+  /** How many logouts ended a session through the end-session endpoint. */
+  logouts: () => number;
   close: () => Promise<void>;
 }
 
@@ -56,7 +66,33 @@ export async function startOidcProvider(): Promise<FakeProvider> {
   const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'e2e', alg: 'RS256', use: 'sig' };
   const pending = new Map<string, Authorization>(); // authorization page id -> request
   const grants = new Map<string, Grant>(); // code -> grant
+  const sessions = new Map<string, TestUser>(); // session cookie -> user
+  const idTokens = new Set<string>();
+  const prompts: string[] = [];
   let issued = 0;
+  let logouts = 0;
+
+  const sessionOf = (req: IncomingMessage) => {
+    const match = (req.headers.cookie ?? '').match(new RegExp(`${SESSION_COOKIE}=([^;]+)`));
+    return match ? match[1] : undefined;
+  };
+
+  /** Sends the browser back to the client with a code for user. */
+  const approve = (res: ServerResponse, request: Authorization, user: TestUser, setSession: boolean) => {
+    const code = token();
+    grants.set(code, { ...request, user });
+    const target = new URL(request.redirectUri);
+    target.searchParams.set('code', code);
+    target.searchParams.set('state', request.state);
+    const headers: Record<string, string> = { Location: target.toString() };
+    if (setSession) {
+      const session = token();
+      sessions.set(session, user);
+      headers['Set-Cookie'] = `${SESSION_COOKIE}=${session}; Path=/; HttpOnly; SameSite=Lax`;
+    }
+    res.writeHead(302, headers);
+    res.end();
+  };
 
   const json = (res: ServerResponse, status: number, body: unknown) => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -100,6 +136,7 @@ export async function startOidcProvider(): Promise<FakeProvider> {
         authorization_endpoint: `${OIDC_ISSUER}/authorize`,
         token_endpoint: `${OIDC_ISSUER}/token`,
         jwks_uri: `${OIDC_ISSUER}/keys`,
+        end_session_endpoint: `${OIDC_ISSUER}/end-session`,
         response_types_supported: ['code'],
         subject_types_supported: ['public'],
         id_token_signing_alg_values_supported: ['RS256'],
@@ -123,8 +160,14 @@ export async function startOidcProvider(): Promise<FakeProvider> {
         res.writeHead(400, { 'Content-Type': 'text/plain' });
         return res.end('invalid authorization request');
       }
+      const request = { redirectUri: q.get('redirect_uri')!, state: q.get('state')!, nonce: q.get('nonce')!, challenge: q.get('code_challenge')! };
+      prompts.push(q.get('prompt') ?? '');
+      // A live session signs the user in without asking, unless the client
+      // wants the user checked again.
+      const user = sessions.get(sessionOf(req) ?? '');
+      if (user && q.get('prompt') !== 'login') return approve(res, request, user, false);
       const id = token();
-      pending.set(id, { redirectUri: q.get('redirect_uri')!, state: q.get('state')!, nonce: q.get('nonce')!, challenge: q.get('code_challenge')! });
+      pending.set(id, request);
       const buttons = Object.entries(USERS)
         .map(([key, user]) => `<p><a data-testid="idp-user-${key}" href="/approve?id=${id}&amp;user=${key}">Sign in as ${user.name}</a></p>`)
         .join('');
@@ -139,12 +182,20 @@ export async function startOidcProvider(): Promise<FakeProvider> {
         return res.end('unknown authorization');
       }
       pending.delete(q.get('id')!);
-      const code = token();
-      grants.set(code, { ...request, user });
-      const target = new URL(request.redirectUri);
-      target.searchParams.set('code', code);
-      target.searchParams.set('state', request.state);
-      res.writeHead(302, { Location: target.toString() });
+      return approve(res, request, user, true);
+    }
+    if (req.method === 'GET' && url.pathname === '/end-session') {
+      // RP-initiated logout: a hint we issued, our client, and only the
+      // registered place to come back to.
+      const hint = q.get('id_token_hint');
+      if ((hint && !idTokens.has(hint)) || q.get('client_id') !== OIDC_CLIENT_ID || q.get('post_logout_redirect_uri') !== OIDC_POST_LOGOUT_URL) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        return res.end('invalid logout request');
+      }
+      const session = sessionOf(req);
+      if (session) sessions.delete(session);
+      logouts++;
+      res.writeHead(302, { Location: OIDC_POST_LOGOUT_URL, 'Set-Cookie': `${SESSION_COOKIE}=; Path=/; Max-Age=0` });
       return res.end();
     }
     if (req.method === 'POST' && url.pathname === '/token') {
@@ -172,7 +223,9 @@ export async function startOidcProvider(): Promise<FakeProvider> {
         return json(res, 400, { error: 'invalid_grant' });
       }
       issued++;
-      return json(res, 200, { access_token: token(), token_type: 'Bearer', expires_in: 300, id_token: idToken(grant) });
+      const issuedToken = idToken(grant);
+      idTokens.add(issuedToken);
+      return json(res, 200, { access_token: token(), token_type: 'Bearer', expires_in: 300, id_token: issuedToken });
     }
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('not found');
@@ -190,6 +243,8 @@ export async function startOidcProvider(): Promise<FakeProvider> {
   });
   return {
     issued: () => issued,
+    prompts: () => [...prompts],
+    logouts: () => logouts,
     close: () =>
       new Promise<void>((resolve) => {
         server.closeAllConnections();
