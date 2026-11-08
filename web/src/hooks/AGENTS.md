@@ -65,14 +65,18 @@ export function useEditorShortcuts(handlers: EditorShortcutHandlers): void;
 A `keydown` listener on `window` for the editor page: Ctrl/Cmd+Z undo,
 Ctrl/Cmd+Shift+Z and Ctrl/Cmd+Y redo, Ctrl/Cmd+S deploy, Ctrl/Cmd+E export,
 Ctrl/Cmd+C, V and D copy, paste and duplicate, `?` help. Everything is
-ignored while the event target is an input, textarea, select or
-contenteditable, so form fields keep the browser's own clipboard. Optional
+ignored when `editorKeysBlocked` (`src/lib/keyboard.ts`) says so: the
+target is an input, textarea, select or contenteditable (form fields keep
+the browser's own clipboard), focus is inside a dialog such as the edit
+tray, or a modal dialog (`aria-modal="true"`) is open. Optional
 handlers that are absent leave the browser default in place. Mounted once by
 `FlowEditor` with handlers that call `flowStore` and `store/editorActions`.
 
 Keys handled elsewhere: arrows (nudge), Ctrl/Cmd+A (select all), zoom and
-delete in `components/FlowCanvas.tsx`; `/` (focus search) in
-`components/NodePalette.tsx`; Escape in the dialogs and menus themselves.
+Delete/Backspace in `components/FlowCanvas.tsx` (behind the same guard;
+xyflow's own delete key is off); `/` and Ctrl/Cmd+F (focus search) in
+`components/NodePalette.tsx` (not while in a dialog); Escape in the dialogs
+and menus themselves.
 
 ## Adding a hook
 

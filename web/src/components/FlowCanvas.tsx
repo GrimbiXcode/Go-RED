@@ -8,6 +8,8 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  useStore,
+  useUpdateNodeInternals,
   type Connection,
   type Edge,
   type NodeTypes,
@@ -17,6 +19,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import '../styles/reactflow-overrides.css';
+import { editorKeysBlocked } from '../lib/keyboard';
 import { useTranslation } from 'react-i18next';
 import {
   AlignCenterHorizontal,
@@ -115,6 +118,30 @@ export function mergeCanvasNodes(current: CanvasNode[], incoming: CanvasNode[]):
   });
 }
 
+/** The parts of an xyflow internal node that {@link nodesMissingHandles} reads. */
+export interface MeasuredNode {
+  id: string;
+  hidden?: boolean;
+  measured?: { width?: number; height?: number };
+  internals: { handleBounds?: unknown };
+}
+
+/**
+ * Ids of nodes that xyflow shows (it has measured their size) but cannot
+ * attach wires to, because it holds no handle positions for them. xyflow
+ * drops the handle positions when it is handed a node without `measured`,
+ * which happens when a store update reaches it between its own measurement
+ * and the matching dimensions change. It only measures again when the size
+ * changes, so without a nudge those nodes keep their wires hidden for good.
+ */
+export function nodesMissingHandles(nodes: Iterable<MeasuredNode>): string[] {
+  const ids: string[] = [];
+  for (const node of nodes) {
+    if (!node.hidden && node.measured?.width && node.measured?.height && !node.internals.handleBounds) ids.push(node.id);
+  }
+  return ids;
+}
+
 /** The wire under a screen point, if any (edges carry their id as data-id). */
 export function edgeIdAt(clientX: number, clientY: number): string | null {
   if (typeof document === 'undefined' || typeof document.elementsFromPoint !== 'function') return null;
@@ -123,12 +150,6 @@ export function edgeIdAt(clientX: number, clientY: number): string | null {
     if (edge) return edge.getAttribute('data-id');
   }
   return null;
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
 }
 
 interface MenuState {
@@ -148,7 +169,7 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
   const wrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
+  const { screenToFlowPosition, zoomIn, zoomOut, fitView, deleteElements, getNodes, getEdges } = useReactFlow<CanvasNode, Edge>();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [quickAdd, setQuickAdd] = useState<{ x: number; y: number } | null>(null);
 
@@ -221,8 +242,19 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
 
   useEffect(() => {
     setNodes((current) => mergeCanvasNodes(current, flowNodes));
+  }, [flowNodes, setNodes]);
+  useEffect(() => {
     setEdges(flowEdges);
-  }, [flowNodes, flowEdges, setNodes, setEdges]);
+  }, [flowEdges, setEdges]);
+
+  // Measures again the nodes that lost their handle positions (see
+  // nodesMissingHandles), so their wires come back.
+  const updateNodeInternals = useUpdateNodeInternals();
+  const missingHandles = useStore((state) => JSON.stringify(nodesMissingHandles(state.nodeLookup.values())));
+  useEffect(() => {
+    const ids: string[] = JSON.parse(missingHandles);
+    if (ids.length > 0) updateNodeInternals(ids);
+  }, [missingHandles, updateNodeInternals]);
 
   // A paste or duplicate asks for its new nodes to be selected.
   useEffect(() => {
@@ -245,11 +277,22 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
     [selectedNodeIds, setNodes, setSelection]
   );
 
-  // Canvas-local keys: arrows nudge the selection, +/- zoom, Ctrl+A selects all.
+  // Canvas-local keys: arrows nudge the selection, +/- zoom, Ctrl+A selects
+  // all, Delete/Backspace delete the selected nodes and wires. Delete is ours
+  // rather than xyflow's (deleteKeyCode={null}) so it obeys the same guard and
+  // never removes a node behind the edit tray or a dialog.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target) || !flow) return;
+      if (editorKeysBlocked(event) || !flow) return;
       const mod = event.ctrlKey || event.metaKey;
+      if (!mod && !event.altKey && (event.key === 'Delete' || event.key === 'Backspace')) {
+        const selectedNodes = getNodes().filter((node) => node.selected);
+        const selectedEdges = getEdges().filter((edge) => edge.selected);
+        if (selectedNodes.length === 0 && selectedEdges.length === 0) return;
+        event.preventDefault();
+        void deleteElements({ nodes: selectedNodes, edges: selectedEdges });
+        return;
+      }
       if (mod && !event.shiftKey && event.key.toLowerCase() === 'a') {
         event.preventDefault();
         selectAll();
@@ -276,7 +319,7 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [flow, selectedNodeIds, nudgeNodes, selectAll, zoomIn, zoomOut]);
+  }, [flow, selectedNodeIds, nudgeNodes, selectAll, zoomIn, zoomOut, deleteElements, getNodes, getEdges]);
 
   const onSelectionChange = useCallback(
     ({ nodes: selected }: OnSelectionChangeParams) => {
@@ -471,7 +514,7 @@ export function FlowCanvas({ flow }: FlowCanvasProps) {
         onEdgeContextMenu={onEdgeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
         onDelete={onDelete}
-        deleteKeyCode={['Backspace', 'Delete']}
+        deleteKeyCode={null}
         nodeTypes={nodeTypeComponents}
         fitView
         fitViewOptions={{ padding: 0.5 }}

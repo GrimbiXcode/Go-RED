@@ -26,10 +26,10 @@ import.
 
 | Component | Role |
 |---|---|
-| `FlowCanvas.tsx` | The `@xyflow/react` canvas for one flow: converts `flow.nodes`/`connections` to canvas nodes and edges (`flowNodeToCanvasNode`, `connectionToEdge`), merges store updates without disturbing a drag or the selection (`mergeCanvasNodes`), handles palette drop, connect, delete, Ctrl+A, arrow-key nudge, zoom, node and pane context menus (`ContextMenu`), double-click quick add (`QuickAdd`) and dropping a node onto a wire (`edgeIdAt` plus `insertNodeOnEdge`/`spliceNodeIntoEdge`). Node type map: `default: NodeComponent`, `inject: InjectNode`, `debug: DebugNode`. |
+| `FlowCanvas.tsx` | The `@xyflow/react` canvas for one flow: converts `flow.nodes`/`connections` to canvas nodes and edges (`flowNodeToCanvasNode`, `connectionToEdge`), merges store updates without disturbing a drag or the selection (`mergeCanvasNodes`), handles palette drop, connect, Delete/Backspace (its own, behind `lib/keyboard`'s guard), Ctrl+A, arrow-key nudge, zoom, node and pane context menus (`ContextMenu`), double-click quick add (`QuickAdd`) and dropping a node onto a wire (`edgeIdAt` plus `insertNodeOnEdge`/`spliceNodeIntoEdge`). Node type map: `default: NodeComponent`, `inject: InjectNode`, `debug: DebugNode`. |
 | `canvasTypes.ts` | `CanvasNodeData` (`label`, `node`, `metadata`, `outputs`, `flowId`) and `CanvasNode`. |
 | `NodeShell.tsx` | Visual shell of a node: category color through `--node-color`, icon well, label, optional control, Node-RED style status line; geometry lives in the `.gr-node*` CSS rules. |
-| `NodeHandles.tsx` | Input and output handles from `outputs`, evenly spaced, labels for multi-output nodes (`port-label`). |
+| `NodeHandles.tsx` | Input and output handles from `outputs`, evenly spaced, labels for multi-output nodes (`port-label`). When the set of ports changes (`portLayoutKey`) it has xyflow measure the node again, since the node keeps its size and xyflow would keep the old handle positions. |
 | `NodeComponent.tsx` | Generic node: `NodeShell` plus `NodeHandles`. |
 | `InjectNode.tsx` | Inject node whose icon well is the trigger button (sends `message:send` through `wsClient`). |
 | `DebugNode.tsx` | Debug node rendering; no interactive control. |
@@ -78,13 +78,16 @@ in `test/editTray.test.tsx` and show it in `pages/StyleGuide.tsx`.
   per-component code.
 - Dialogs use `role="dialog"` with an `aria-label`, menus `role="menu"` and
   `menuitem`, tabs `role="tab"` with `aria-selected`; the e2e suite selects
-  by these roles and by `data-testid`. Keep both when refactoring.
+  by these roles and by `data-testid`. Keep both when refactoring. Overlays
+  that cover the editor (import, export, shortcut help, sign-in) also carry
+  `aria-modal="true"`, which switches the editor's keys off
+  (`lib/keyboard.ts`); a new modal needs it too.
 - Node help and descriptions are Markdown rendered by `utils/markdown.ts`
   (DOMPurify); never put unsanitized input into `dangerouslySetInnerHTML`.
 - Canvas behavior that does not need the DOM lives in exported pure helpers
-  (`flowNodeToCanvasNode`, `mergeCanvasNodes`, `filterNodeTypes`,
-  `previewNodeRed`, `settingsRows`, ...) so it can be unit-tested; the rest
-  is covered by the e2e suite.
+  (`flowNodeToCanvasNode`, `mergeCanvasNodes`, `nodesMissingHandles`,
+  `portLayoutKey`, `filterNodeTypes`, `previewNodeRed`, `settingsRows`,
+  ...) so it can be unit-tested; the rest is covered by the e2e suite.
 - Component tests: `test/components.test.tsx`, `test/editTray.test.tsx`,
   `test/debugPanel.test.tsx`, `test/flowCanvas.test.tsx`, `test/auth.test.tsx`.
 
@@ -102,7 +105,12 @@ in `test/editTray.test.tsx` and show it in `pages/StyleGuide.tsx`.
    status line) and `NodeHandles`.
 4. Store updates (autosave results, server events) are folded in with
    `mergeCanvasNodes`, which keeps the on-screen position of a node being
-   dragged and the current selection.
+   dragged, the current selection and xyflow's measured size. xyflow
+   forgets a node's handle positions when an update without `measured`
+   lands between its measurement and the matching dimensions change, and
+   then draws the node but none of its wires; `nodesMissingHandles` finds
+   such nodes in xyflow's store and `FlowCanvas` has them measured again
+   (`useUpdateNodeInternals`).
 5. Selection goes to `editorStore.selectedNodeIds`; a double-click sets
    `configNodeId`, which opens `NodeEditTray`; its `onSave` calls
    `updateNode`, and the cycle starts again from the store.

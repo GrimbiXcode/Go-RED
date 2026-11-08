@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { editorKeysBlocked } from '../lib/keyboard';
 
 export interface EditorShortcutHandlers {
   undo: () => void;
@@ -11,24 +12,19 @@ export interface EditorShortcutHandlers {
   duplicate?: () => void;
 }
 
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
-}
-
 /**
  * Global editor keyboard shortcuts: Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z and
  * Ctrl/Cmd+Y redo, Ctrl/Cmd+S deploys, Ctrl/Cmd+E exports, Ctrl/Cmd+C/V/D
  * copy, paste and duplicate the selection, "?" opens the shortcut help.
  * All are ignored while typing in a form field (so the browser keeps its
- * own copy/paste there). Canvas-local keys (arrows, zoom, select all) live
+ * own copy/paste there), with focus in a dialog and while a modal is open
+ * (`lib/keyboard`). Canvas-local keys (arrows, zoom, select all) live
  * in FlowCanvas.
  */
 export function useEditorShortcuts({ undo, redo, deploy, exportFlow, help, copy, paste, duplicate }: EditorShortcutHandlers): void {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) return;
+      if (editorKeysBlocked(event)) return;
       const mod = event.ctrlKey || event.metaKey;
       if (event.key === '?' && !mod && !event.altKey) {
         event.preventDefault();

@@ -98,6 +98,9 @@ stores directly: `copySelection`, `pasteClipboard(at?)`,
   `data-theme` on `<html>`.
 - `clipboard.ts`: `clipFromSelection`, `writeClipboard`/`readClipboard`
   (in memory plus `localStorage`), `materializeClip` (fresh ids, offset).
+- `keyboard.ts`: `isEditableTarget`, `inDialog` (focus inside a
+  `role="dialog"` or an `aria-modal` dialog open), `editorKeysBlocked`
+  (either); the guard of every window-wide editor key handler.
 - `layout.ts`: `NODE_WIDTH` 140, `NODE_HEIGHT` 36, `GRID` 20, `snap`,
   `alignNodes`, `distributeNodes`, `autoLayout` (dagre, left to right).
 

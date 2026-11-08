@@ -1,5 +1,5 @@
-import type { CSSProperties } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { useEffect, useRef, type CSSProperties } from 'react';
+import { Handle, Position, useNodeId, useUpdateNodeInternals } from '@xyflow/react';
 import type { Port } from '../types/node';
 
 /**
@@ -7,6 +7,12 @@ import type { Port } from '../types/node';
  * evenly spaced, drawn in the node's own color (`--node-color`, set by
  * NodeShell). Multi-output nodes get a small label next to each output.
  * Falls back to one input and one output when a type declares no ports.
+ *
+ * xyflow measures handle positions only when a node's size changes, and a
+ * node keeps its 36 px height whatever its ports, so a change of ports (a
+ * switch rule added, the node types arriving after the flow) has the node
+ * measured again; otherwise wires would start at the old positions or, on a
+ * new port, not be drawn or connectable at all.
  */
 
 export interface NodeHandlesProps {
@@ -17,6 +23,11 @@ export interface NodeHandlesProps {
 const PORT_SIZE = 10;
 
 const defaultPort = (id: string): Port => ({ id, name: '', description: '', required: false });
+
+/** Identifies a node's handle layout: which ports there are, in which order. */
+export function portLayoutKey(inputs: Port[], outputs: Port[]): string {
+  return JSON.stringify([inputs.map((port) => port.id), outputs.map((port) => port.id)]);
+}
 
 function portTop(index: number, total: number): string {
   return `calc(var(--gr-node-height) * ${(index + 1) / (total + 1)})`;
@@ -40,6 +51,16 @@ export function NodeHandles({ inputPorts, outputPorts }: NodeHandlesProps) {
   const noPortsDefined = inputPorts.length === 0 && outputPorts.length === 0;
   const inputs = noPortsDefined ? [defaultPort('input')] : inputPorts;
   const outputs = noPortsDefined ? [defaultPort('output')] : outputPorts;
+
+  const nodeId = useNodeId();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const layout = portLayoutKey(inputs, outputs);
+  const measuredLayout = useRef(layout);
+  useEffect(() => {
+    if (measuredLayout.current === layout) return;
+    measuredLayout.current = layout;
+    if (nodeId) updateNodeInternals(nodeId);
+  }, [layout, nodeId, updateNodeInternals]);
 
   return (
     <>

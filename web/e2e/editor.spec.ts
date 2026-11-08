@@ -65,6 +65,32 @@ async function dragNode(page: Page, nodeId: string, dx: number, dy: number) {
   await page.mouse.up();
 }
 
+const switchNode = (rules: unknown[]): SeedNode => ({
+  id: 'sw',
+  type: 'switch',
+  name: 'Route',
+  position: { x: 320, y: 120 },
+  config: { property: { type: 'msg', path: 'payload' }, rules, checkAll: true },
+  disabled: false,
+});
+const debugNode = (id: string, y: number): SeedNode => ({ id, type: 'debug', name: id, position: { x: 600, y }, config: {}, disabled: false });
+
+/** Vertical distance in pixels between where a wire starts and the center of its source port. */
+function wireOffset(page: Page, edgeId: string, nodeId: string, handleId: string) {
+  return page.evaluate(
+    ([edgeId, nodeId, handleId]) => {
+      const path = document.querySelector<SVGPathElement>(`.react-flow__edge[data-id="${edgeId}"] path.react-flow__edge-path`);
+      const handle = document.querySelector(`.react-flow__node[data-id="${nodeId}"] .react-flow__handle[data-handleid="${handleId}"]`);
+      const matrix = path?.getScreenCTM();
+      if (!path || !handle || !matrix) return null;
+      const start = path.getPointAtLength(0);
+      const box = handle.getBoundingClientRect();
+      return Math.abs(start.x * matrix.b + start.y * matrix.d + matrix.f - (box.top + box.height / 2));
+    },
+    [edgeId, nodeId, handleId]
+  );
+}
+
 function openDebugTab(page: Page) {
   return page.getByRole('button', { name: 'Debug', exact: true }).click();
 }
@@ -248,6 +274,103 @@ test.describe('flow editor', () => {
     await page.keyboard.press('Control+z');
     await expect(switchNode.locator('.react-flow__handle.source')).toHaveCount(2);
     await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+  });
+
+  test('a port added in the tray can be wired and existing wires move with their ports', async ({ page, request }) => {
+    await seedFlow(
+      request,
+      { n1: demoNodes.n1, sw: switchNode([{ operator: 'eq', value: { type: 'str', value: 'a' } }, { operator: 'else' }]), d1: debugNode('d1', 40), d2: debugNode('d2', 140), d3: debugNode('d3', 240) },
+      [
+        { id: 'c1', sourceNode: 'n1', sourcePort: 'output', targetNode: 'sw', targetPort: 'input' },
+        { id: 'c2', sourceNode: 'sw', sourcePort: '0', targetNode: 'd1', targetPort: 'input' },
+        { id: 'c3', sourceNode: 'sw', sourcePort: '1', targetNode: 'd2', targetPort: 'input' },
+      ]
+    );
+    await page.goto(`/flow/${FLOW_ID}`);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+    const sw = page.locator('.react-flow__node[data-id="sw"]');
+    await sw.dblclick();
+    const tray = page.getByTestId('node-config');
+    await tray.getByTestId('list-add-rules').click();
+    await tray.getByTestId('config-done').click();
+    await expect(sw.locator('.react-flow__handle.source')).toHaveCount(3);
+
+    // The wires on ports 0 and 1 start where those ports now are.
+    await expect.poll(() => wireOffset(page, 'c2', 'sw', '0')).toBeLessThanOrEqual(1);
+    await expect.poll(() => wireOffset(page, 'c3', 'sw', '1')).toBeLessThanOrEqual(1);
+
+    // The new port can be wired, and the wire is drawn.
+    await sw.locator('.react-flow__handle[data-handleid="2"]').dragTo(page.locator('.react-flow__node[data-id="d3"] .react-flow__handle.target'));
+    await expect(page.locator('.react-flow__edge')).toHaveCount(4);
+    await waitForSaved(page);
+    const saved = await flowFromServer(request);
+    expect(saved.connections.some((c: SeedConnection) => c.sourceNode === 'sw' && c.sourcePort === '2' && c.targetNode === 'd3')).toBe(true);
+  });
+
+  test('on a slow network the wires on switch outputs appear once the node types arrive', async ({ page, request }) => {
+    await seedFlow(
+      request,
+      { n1: demoNodes.n1, sw: switchNode([{ operator: 'eq', value: { type: 'str', value: 'a' } }, { operator: 'else' }]), d1: debugNode('d1', 40), d2: debugNode('d2', 200) },
+      [
+        { id: 'c1', sourceNode: 'n1', sourcePort: 'output', targetNode: 'sw', targetPort: 'input' },
+        { id: 'c2', sourceNode: 'sw', sourcePort: '0', targetNode: 'd1', targetPort: 'input' },
+        { id: 'c3', sourceNode: 'sw', sourcePort: '1', targetNode: 'd2', targetPort: 'input' },
+      ]
+    );
+    // Throttled, the node types (tens of kB) arrive well after the flow
+    // (about 1 kB), so the canvas first draws the switch without its ports.
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Network.enable');
+    await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 100, downloadThroughput: 200 * 1024, uploadThroughput: 200 * 1024 });
+    const finished: string[] = [];
+    page.on('requestfinished', (req) => {
+      const path = new URL(req.url()).pathname;
+      if (path === '/api/nodes' || path === `/api/flows/${FLOW_ID}`) finished.push(path);
+    });
+    await page.goto(`/flow/${FLOW_ID}`);
+    await expect(page.locator('.react-flow__node[data-id="sw"] .react-flow__handle.source')).toHaveCount(2, { timeout: 30_000 });
+    expect(finished).toEqual([`/api/flows/${FLOW_ID}`, '/api/nodes']);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+  });
+
+  test('keys go to the edit tray or the dialog, not to the canvas behind it', async ({ page, request }) => {
+    await page.goto(`/flow/${FLOW_ID}`);
+    const n2 = page.locator('.react-flow__node[data-id="n2"]');
+
+    // Delete with focus in the edit tray leaves the node being edited alone.
+    await n2.dblclick();
+    const tray = page.getByTestId('node-config');
+    await tray.getByRole('button', { name: 'Close' }).focus();
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Backspace');
+    await expect(tray).toBeVisible();
+    await expect(n2).toHaveCount(1);
+    await tray.getByRole('button', { name: 'Close' }).click();
+
+    // Nothing reaches the canvas while a modal dialog is open.
+    await n2.click();
+    const before = await n2.getAttribute('style');
+    await page.getByRole('button', { name: 'Main menu' }).click();
+    await page.getByRole('menuitem', { name: 'Import…' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Import flow' });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Control+z');
+    await expect(n2).toHaveCount(1);
+    expect(await n2.getAttribute('style')).toBe(before);
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+
+    // On the canvas, Delete removes the selected node and its wires.
+    await n2.click();
+    await page.keyboard.press('Delete');
+    await expect(n2).toHaveCount(0);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(0);
+    await waitForSaved(page);
+    const saved = await flowFromServer(request);
+    expect(saved.nodes.n2).toBeUndefined();
+    expect(saved.connections).toHaveLength(0);
   });
 
   test('required fields block Done and the function node is edited in a code editor', async ({ page, request }) => {

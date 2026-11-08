@@ -131,7 +131,7 @@ export function ImportModal({ isOpen, onClose, onFlowImported }: ImportModalProp
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-label={t('import.title')}>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label={t('import.title')}>
       <div className="bg-panel rounded shadow-xl w-full max-w-md">
         <div className="flex items-center justify-between px-4 py-3 border-b border-line">
           <h3 className="font-semibold text-sm text-fg">{t('import.title')}</h3>

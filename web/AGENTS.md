@@ -37,7 +37,7 @@ src/
   components/config/     edit-tray widgets
   hooks/                 useWebSocket, useEditorShortcuts
   i18n/                  en.ts, de.ts, index.ts (detectLanguage, setLanguage)
-  lib/                   auth, clipboard, layout, theme, wsClient
+  lib/                   auth, clipboard, keyboard, layout, theme, wsClient
   pages/StyleGuide.tsx   living style guide at /styleguide
   schema/                node config schema -> widgets, defaults, validation, ports
   store/                 Zustand stores, bindServerEvents, editorActions

@@ -5,6 +5,7 @@ import type { NodeMetadata } from '../types/node';
 import { NodeIcon } from './CategoryIcon';
 import { getCategoryColor, sortCategories } from '../utils/nodeCategories';
 import { useFlowStore } from '../store/flowStore';
+import { inDialog, isEditableTarget } from '../lib/keyboard';
 
 const COLLAPSED_KEY = 'go-red.palette.collapsed';
 
@@ -54,12 +55,6 @@ function writeCollapsed(collapsed: Set<string>): void {
   } catch {
     // Not remembered, still applied for this session.
   }
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
 }
 
 /** A palette row is a miniature of the node: icon well in the category color plus the label. */
@@ -156,6 +151,7 @@ export function NodePalette(props: NodePaletteProps) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (inDialog(event)) return;
       const mod = event.ctrlKey || event.metaKey;
       const slash = event.key === '/' && !mod && !event.altKey && !isEditableTarget(event.target);
       const find = mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'f';
